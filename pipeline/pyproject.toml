@@ -1,0 +1,39 @@
+[project]
+name = "noteacademy-pipeline"
+version = "0.1.0"
+description = "Past-paper ingestion: render, extract, segment, match, tag, embed, load."
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.40",
+  "pymupdf>=1.24",
+  "pydantic>=2.7",
+  "psycopg[binary]>=3.1",
+  "httpx",
+  "typer>=0.12",
+  "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+noteacademy = "noteacademy_pipeline.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer declares CLI arguments as call expressions in parameter defaults. That is
+# the library's interface, not an accident.
+"noteacademy_pipeline/cli.py" = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
