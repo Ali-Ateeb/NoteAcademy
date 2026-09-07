@@ -1,0 +1,30 @@
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Env
+.env
+.env.local
+.env*.local
+
+# Pipeline working data
+pipeline/work/
+pipeline/out/
+*.pdf
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
