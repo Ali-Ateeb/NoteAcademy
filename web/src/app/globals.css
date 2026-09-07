@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+/* --------------------------------------------------------------------------
+   Design tokens.
+
+   Every colour is defined once on :root and only *redefined* in the two dark
+   blocks, so no colour has its sole definition inside a media query. The
+   [data-theme] blocks let an explicit toggle win in both directions.
+
+   The palette is deliberately quiet: a warm paper ground rather than pure
+   white, one accent, and semantic colours reserved for meaning (correct,
+   incorrect, marks). A revision tool is looked at for four hours at a stretch —
+   restraint is the feature.
+   -------------------------------------------------------------------------- */
+
+:root {
+  --paper:        #faf9f7;
+  --surface:      #ffffff;
+  --surface-2:    #f4f2ee;
+  --border:       #e4e1da;
+  --border-strong:#d2cec4;
+
+  --ink:          #17181c;
+  --ink-2:        #4a4d57;
+  --ink-3:        #7c8089;
+
+  --accent:       #2f4bd4;
+  --accent-ink:   #ffffff;
+  --accent-soft:  #eaeeff;
+
+  --correct:      #1f7a4d;
+  --correct-soft: #e6f4ec;
+  --incorrect:    #c0392b;
+  --incorrect-soft:#fbeae8;
+  --marks:        #9a6b1f;
+  --marks-soft:   #f8f0df;
+
+  --shadow-sm: 0 1px 2px rgb(20 22 28 / 0.05);
+  --shadow-md: 0 4px 16px -4px rgb(20 22 28 / 0.10), 0 1px 3px rgb(20 22 28 / 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:        #0b0c0f;
+    --surface:      #131519;
+    --surface-2:    #1a1d23;
+    --border:       #262a32;
+    --border-strong:#363b45;
+
+    --ink:          #eceef2;
+    --ink-2:        #a8adb8;
+    --ink-3:        #767c88;
+
+    --accent:       #8b9dff;
+    --accent-ink:   #0b0c0f;
+    --accent-soft:  #1b2140;
+
+    --correct:      #4ade80;
+    --correct-soft: #10281c;
+    --incorrect:    #f87171;
+    --incorrect-soft:#2b1616;
+    --marks:        #e0b063;
+    --marks-soft:   #2a2113;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper:        #0b0c0f;
+  --surface:      #131519;
+  --surface-2:    #1a1d23;
+  --border:       #262a32;
+  --border-strong:#363b45;
+
+  --ink:          #eceef2;
+  --ink-2:        #a8adb8;
+  --ink-3:        #767c88;
+
+  --accent:       #8b9dff;
+  --accent-ink:   #0b0c0f;
+  --accent-soft:  #1b2140;
+
+  --correct:      #4ade80;
+  --correct-soft: #10281c;
+  --incorrect:    #f87171;
+  --incorrect-soft:#2b1616;
+  --marks:        #e0b063;
+  --marks-soft:   #2a2113;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
+@theme inline {
+  --color-paper:         var(--paper);
+  --color-surface:       var(--surface);
+  --color-surface-2:     var(--surface-2);
+  --color-line:          var(--border);
+  --color-line-strong:   var(--border-strong);
+  --color-ink:           var(--ink);
+  --color-ink-2:         var(--ink-2);
+  --color-ink-3:         var(--ink-3);
+  --color-accent:        var(--accent);
+  --color-accent-ink:    var(--accent-ink);
+  --color-accent-soft:   var(--accent-soft);
+  --color-correct:       var(--correct);
+  --color-correct-soft:  var(--correct-soft);
+  --color-incorrect:     var(--incorrect);
+  --color-incorrect-soft:var(--incorrect-soft);
+  --color-marks:         var(--marks);
+  --color-marks-soft:    var(--marks-soft);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --shadow-card: var(--shadow-sm);
+  --shadow-lift: var(--shadow-md);
+}
+
+/* These belong in @layer base, and the layer is not decoration.
+   Tailwind's utilities live in a cascade layer; unlayered rules beat every
+   layered rule regardless of specificity. An unlayered `* { border-color }`
+   therefore silently overrides border-accent, border-line-strong and every
+   other border colour utility in the codebase. */
+@layer base {
+  * { border-color: var(--border); }
+
+  html {
+    background: var(--paper);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Speed is what reads as premium. A focus ring that is always correct does
+     more for perceived quality than any amount of gradient. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Wide content — mark scheme tables, long question stems — scrolls inside its
+   own box. The page body never scrolls sideways. */
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
