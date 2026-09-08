@@ -1,10 +1,43 @@
-"""Runtime configuration, read once from the environment."""
+"""Runtime configuration, read once from the environment.
+
+A `.env` at the repository root is loaded first, so the CLI works from a
+checkout without exporting anything by hand. Real environment variables always
+win over the file — that is what lets CI and production override it without
+editing anything on disk.
+"""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    """Read KEY=VALUE lines from the repository root's .env, if present.
+
+    Deliberately hand-rolled and tiny: the pipeline should not grow a dependency
+    to read eight lines of config, and this avoids any chance of a library
+    silently overriding a variable the environment already set.
+    """
+    for directory in [Path.cwd(), *Path.cwd().parents]:
+        candidate = directory / ".env"
+        if not candidate.is_file():
+            continue
+
+        for raw in candidate.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip("\"'")
+            # Never clobber a variable the environment already provides.
+            if key and key not in os.environ:
+                os.environ[key] = value
+        return
+
+
+_load_dotenv()
 
 
 @dataclass(frozen=True)

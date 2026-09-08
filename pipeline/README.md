@@ -13,8 +13,16 @@ deployment target that earns nothing. It runs, it writes to Postgres, it exits.
 ```bash
 cd pipeline
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-export ANTHROPIC_API_KEY=... VOYAGE_API_KEY=... DATABASE_URL=...
 ```
+
+Configuration comes from a `.env` at the repository root (copy `.env.example`),
+found by walking up from wherever the CLI is run. Real environment variables
+always override it, so CI and production set variables directly.
+
+**Multiple-choice papers need no keys at all** — `segment-mcq` and `mcq-key` are
+deterministic. `ANTHROPIC_API_KEY` is required only for structured papers, topic
+tagging and the vision fallback; `VOYAGE_API_KEY` only for the retrieval index;
+`DATABASE_URL` only to load results.
 
 ## Stages
 

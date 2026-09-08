@@ -8,6 +8,15 @@ npm install
 npm run dev            # works immediately: no database, no API keys
 ```
 
+To point it at a real backend, copy `web/.env.example` to `web/.env.local` and
+fill it in. **Next.js reads `.env.local` from this directory only** — a `.env` at
+the repository root configures the database and pipeline and is never read by the
+web app.
+
+`SUPABASE_SERVICE_ROLE_KEY` bypasses row level security. Never prefix it
+`NEXT_PUBLIC_` and never import it into a client component; it belongs in server
+components and route handlers alone.
+
 The app reads seed fixtures when `NEXT_PUBLIC_SUPABASE_URL` is unset, so a fresh
 clone is a working site. `src/lib/data/catalog.ts` is the only file that changes
 when real content arrives — every function there becomes a query and no page

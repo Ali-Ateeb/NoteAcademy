@@ -21,6 +21,34 @@ That is the whole setup. The app runs against seed fixtures with no database and
 no API keys, so a fresh clone is a working site. See `web/README.md` for checks,
 `db/README.md` for the schema, and `pipeline/README.md` for ingestion.
 
+## Where the keys go
+
+**Two files, in two places.** They are not interchangeable: Next.js reads
+`.env.local` from `web/` and never looks at the repository root, so a key put in
+the wrong file silently does nothing.
+
+| File | Configures | Copy from |
+|---|---|---|
+| `web/.env.local` | The web app — Supabase URL and keys | `web/.env.example` |
+| `.env` (repo root) | Database, ingestion pipeline, storage | `.env.example` |
+
+Both are gitignored. A real environment variable always overrides the file, so
+CI and production set variables directly and never ship a `.env`.
+
+**You need very little to start.** `DATABASE_URL` plus the two
+`NEXT_PUBLIC_SUPABASE_*` values are enough to run against a real database.
+`ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` are not needed for multiple-choice
+ingestion at all — that path is fully deterministic — only for structured papers,
+topic tagging and the solver. Storage keys can wait until the viewer serves real
+documents.
+
+**One rule worth stating plainly:** `SUPABASE_SERVICE_ROLE_KEY` bypasses row
+level security completely. It must never be prefixed `NEXT_PUBLIC_` and never
+imported into a client component — in a browser bundle it grants every visitor
+full read and write on every table. The anon key is the opposite: it is designed
+to be public, and RLS (`db/migrations/0008_rls.sql`) is what actually protects
+the data.
+
 ## The thing to understand first
 
 The tech stack is not the hard part. Next.js, Postgres and an LLM are a solved
