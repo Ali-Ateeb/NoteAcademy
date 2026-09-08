@@ -22,6 +22,7 @@ venv/
 # Pipeline working data
 pipeline/work/
 pipeline/out/
+papers/
 *.pdf
 
 # OS / editor

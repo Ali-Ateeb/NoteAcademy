@@ -8,6 +8,7 @@ with the mark scheme and examiner report attached to each one.
 ├── web/       Next.js app — the whole front end and its API routes
 ├── db/        PostgreSQL schema as plain SQL migrations, plus a smoke test
 ├── pipeline/  Python batch jobs that turn paper PDFs into the question bank
+├── scripts/   Standalone tools; fetch_papers.py downloads the source PDFs
 └── docs/      Architecture notes and the build order
 ```
 
@@ -26,9 +27,11 @@ mixed in: a configured database that errors raises rather than quietly serving
 invented questions under the banner of real past papers.
 
 ```bash
-python db/apply.py --supabase              # schema
-psql "$DATABASE_URL" -f db/seed_catalog.sql  # levels, subjects, syllabus version
-cd pipeline && .venv/bin/noteacademy load-mcq 5054_s19_qp_11.pdf 5054_s19_ms_11.pdf
+python db/apply.py --supabase                 # schema
+psql "$DATABASE_URL" -f db/seed_catalog.sql   # levels, subjects, syllabus version
+python scripts/fetch_papers.py 5054 --components 1   # source PDFs
+noteacademy load-syllabus 5054-syllabus.pdf   # the topic tree
+noteacademy load-mcq papers/5054/5054_s19_qp_11.pdf papers/5054/5054_s19_ms_11.pdf
 ```
 
 Nothing from that last step is visible to anyone yet — it lands unapproved, and
