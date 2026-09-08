@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { currentDecisions, recordDecision, undoLastDecision } from "@/lib/review";
+import {
+  currentDecisions,
+  recordDecision,
+  reviewToken,
+  setReviewToken,
+  syncDecision,
+  syncUndo,
+  undoLastDecision,
+} from "@/lib/review";
 import {
   REVIEW_FLAG_HINTS,
   REVIEW_FLAG_LABELS,
@@ -13,6 +21,10 @@ import {
 interface Props {
   items: ReviewItem[];
   topicOptions: { code: string; title: string }[];
+  /** Is there a database behind this queue? With one, a decision has to reach
+   *  it to count. Without one, the queue is a scaffold on fixtures and the
+   *  browser is the only place a decision was ever going to live. */
+  persist: boolean;
 }
 
 /**
@@ -26,16 +38,22 @@ interface Props {
  * The queue is ordered worst-confidence first, so attention goes where the
  * pipeline is least sure rather than in page order.
  */
-export function ReviewQueue({ items, topicOptions }: Props) {
+export function ReviewQueue({ items, topicOptions, persist }: Props) {
   const [decisions, setDecisions] = useState<Map<string, ReviewDecision> | null>(null);
   const [index, setIndex] = useState(0);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [showAll, setShowAll] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = currentDecisions();
     setDecisions(new Map([...stored].map(([id, r]) => [id, r.decision])));
+    setUnlocked(Boolean(reviewToken()));
   }, []);
+
+  // Nothing to save to, so nothing to warn about or roll back.
+  const savesToDatabase = persist;
 
   const pending = useMemo(
     () => (decisions ? items.filter((item) => !decisions.has(item.id)) : []),
@@ -48,15 +66,34 @@ export function ReviewQueue({ items, topicOptions }: Props) {
   const decide = useCallback(
     (decision: ReviewDecision) => {
       if (!current) return;
-      recordDecision(current.id, decision, {
-        topicCode: overrides[current.id] ?? null,
-      });
-      setDecisions((prev) => new Map(prev).set(current.id, decision));
+      const topicCode = overrides[current.id] ?? null;
+      const questionId = current.id;
+
+      recordDecision(questionId, decision, { topicCode });
+      setDecisions((prev) => new Map(prev).set(questionId, decision));
+      setSaveError(null);
       // Index stays put: the decided item leaves the pending list, so the next
       // one slides into place. Advancing as well would skip a question.
       setIndex((i) => (showAll ? Math.min(i + 1, items.length - 1) : i));
+
+      if (!savesToDatabase) return;
+
+      // Optimistic, then reconciled. A reviewer clearing a queue of thousands
+      // cannot wait a round trip per keystroke — but a decision that never
+      // reached the database has not happened, so a failure is put back on
+      // screen rather than swallowed.
+      void syncDecision(questionId, decision, topicCode).then((result) => {
+        if (result.ok) return;
+        setSaveError(result.message ?? "Save failed.");
+        undoLastDecision();
+        setDecisions((prev) => {
+          const next = new Map(prev);
+          next.delete(questionId);
+          return next;
+        });
+      });
     },
-    [current, overrides, showAll, items.length],
+    [current, overrides, showAll, items.length, savesToDatabase],
   );
 
   const undo = useCallback(() => {
@@ -67,7 +104,12 @@ export function ReviewQueue({ items, topicOptions }: Props) {
       next.delete(last.questionId);
       return next;
     });
-  }, []);
+    setSaveError(null);
+    if (!savesToDatabase) return;
+    void syncUndo(last.questionId).then((result) => {
+      if (!result.ok) setSaveError(result.message ?? "Undo failed.");
+    });
+  }, [savesToDatabase]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -110,6 +152,24 @@ export function ReviewQueue({ items, topicOptions }: Props) {
 
   return (
     <>
+      {/* Whether decisions are reaching the database, stated rather than
+          implied. A queue that looks saved and is not is the worst outcome
+          here: the work is gone and nobody knows to redo it. */}
+      {savesToDatabase && !unlocked && (
+        <UnlockBar
+          onUnlock={(token) => {
+            setReviewToken(token);
+            setUnlocked(Boolean(token));
+          }}
+        />
+      )}
+
+      {saveError && (
+        <p className="mt-4 rounded-xl border border-incorrect/40 bg-incorrect/5 px-4 py-3 text-sm text-incorrect">
+          {saveError} The decision was rolled back — nothing was saved.
+        </p>
+      )}
+
       <div className="mt-8 flex flex-wrap items-center gap-3">
         <Stat label="Pending" value={String(pending.length)} />
         <Stat label="Approved" value={String(approved)} tone="correct" />
@@ -413,6 +473,49 @@ function ReviewCard({
         </p>
       </div>
     </div>
+  );
+}
+
+/** Takes the shared secret /api/review requires.
+ *
+ *  It is entered here rather than rendered into the page because a token in the
+ *  HTML is readable by everyone who can load the page — which is exactly who it
+ *  is meant to keep out. This is a stopgap for a single operator; /admin needs
+ *  real accounts before it is served publicly. */
+function UnlockBar({ onUnlock }: { onUnlock: (token: string) => void }) {
+  const [value, setValue] = useState("");
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        onUnlock(value.trim());
+      }}
+      className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
+    >
+      <div className="min-w-[16rem] flex-1">
+        <p className="text-sm text-ink">Decisions are not being saved.</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-ink-3">
+          Enter the review token (<span className="font-mono">REVIEW_TOKEN</span> in
+          web/.env.local) to write approvals to the database. Without it, this
+          queue only remembers them in this browser.
+        </p>
+      </div>
+      <input
+        type="password"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        placeholder="Review token"
+        aria-label="Review token"
+        className="rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-sm text-ink"
+      />
+      <button
+        type="submit"
+        className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+      >
+        Unlock
+      </button>
+    </form>
   );
 }
 

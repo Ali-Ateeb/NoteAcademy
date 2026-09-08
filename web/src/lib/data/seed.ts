@@ -72,6 +72,7 @@ export const topics: Topic[] = [
     ],
     questionCount: 2,
     parentCode: null,
+    isRevisable: true,
   },
   {
     code: "1.2",
@@ -84,6 +85,7 @@ export const topics: Topic[] = [
     ],
     questionCount: 3,
     parentCode: null,
+    isRevisable: true,
   },
   {
     code: "1.3",
@@ -96,6 +98,7 @@ export const topics: Topic[] = [
     ],
     questionCount: 3,
     parentCode: null,
+    isRevisable: true,
   },
   {
     code: "1.5",
@@ -108,6 +111,7 @@ export const topics: Topic[] = [
     ],
     questionCount: 2,
     parentCode: null,
+    isRevisable: true,
   },
   {
     code: "2.1",
@@ -119,6 +123,7 @@ export const topics: Topic[] = [
     ],
     questionCount: 1,
     parentCode: null,
+    isRevisable: true,
   },
   {
     code: "4.2",
@@ -130,6 +135,7 @@ export const topics: Topic[] = [
     ],
     questionCount: 1,
     parentCode: null,
+    isRevisable: true,
   },
 ];
 

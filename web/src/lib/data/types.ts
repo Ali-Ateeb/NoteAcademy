@@ -33,6 +33,13 @@ export interface Topic {
   /** '4.2.4' hangs off '4.2' hangs off '4'. Null for a top-level section.
    *  Enough to rebuild the tree without a recursive query. */
   parentCode: string | null;
+  /** Does this node carry learning outcomes of its own?
+   *
+   *  CAIE trees mix two kinds of node: '4.2 Electrical quantities' exists to
+   *  group '4.2.1'–'4.2.4' and has no outcomes, while '1.2 Motion' has
+   *  thirteen. Only the second kind is something a student revises or a
+   *  question is tagged against — the first is a heading. */
+  isRevisable: boolean;
 }
 
 export interface PaperDocument {

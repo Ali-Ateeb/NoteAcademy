@@ -2,9 +2,9 @@
 
 ## In the repo
 
-- **Schema** — fifteen migrations, applied to the live Supabase project and
-  verified there. `db/smoke_test.sql` exercises ten invariants and rolls back;
-  all ten pass against the hosted database.
+- **Schema** — seventeen migrations, applied to the live Supabase project and
+  verified there. `db/smoke_test.sql` exercises thirteen invariants and rolls
+  back; all thirteen pass against the hosted database, with real content in it.
 - **Pipeline** — render, vision extraction, cross-check, crop, mark-scheme
   matching, topic tagging, embedding, loading, deterministic multiple-choice
   ingestion, syllabus parsing, plus a cost estimator. 77 unit tests over the
@@ -50,21 +50,22 @@ through `noteacademy load-mcq`. Deterministic and free, and now a single command
 per paper. `/admin/review` already reads the database when the service role key
 is present.
 
-**4. Topic tagging.** The closed list the classifier picks from is now loaded:
+**4. Topic tagging.** The closed list the classifier picks from is loaded:
 Physics 5054 (2026-2028), parsed from the published syllabus by
 `noteacademy load-syllabus` — 6 sections, 83 topics, 270 learning outcomes. This
 is the first step that genuinely needs `ANTHROPIC_API_KEY`, and the one where
 the review queue earns its keep: tagging accuracy *is* the product, and a
 topical bank that is 80% right is worse than none.
 
-What is left on the tree itself is presentation. It is three deep, and the
-subject page renders topics as a flat list. `v_topics` carries `parent_code` and
-`depth` so the sidebar can nest them; until it does, the app lists the 63 nodes
-that carry outcomes and skips the 20 containers, which is correct but not the
-shape of the syllabus.
+Tag against the 63 nodes that carry outcomes, never the 20 containers —
+`revisableTopics()` is that list.
 
-**5. Object storage and the real viewer.** R2 or S3 behind short-lived signed
-URLs, PDF.js in `SplitViewer`, question crops served from `question_assets`.
+**5. ~~Object storage~~ and the real viewer.** Storage is done: crops upload to
+a private Supabase bucket as part of `load-mcq`, and the app serves them through
+`/api/asset`, which signs a URL only for a crop whose question the anonymous
+role can already see. What is left of this step is the *document* viewer —
+PDF.js in `SplitViewer` against the question papers themselves, which are
+recorded in `paper_documents` but not yet uploaded.
 
 **6. The AI solver.** `match_question()` first, RAG only as fallback, quota
 enforced through `consume_quota()`.
@@ -73,7 +74,12 @@ enforced through `consume_quota()`.
 
 ## Known gaps
 
-- The viewer renders placeholder panes; object storage is not wired up.
+- The split viewer still renders placeholder panes: question crops are served,
+  the source PDFs are not uploaded yet.
+- No authentication. `/admin/review` is reachable by anyone who can reach the
+  app, and its write endpoint is protected only by `REVIEW_TOKEN` — a stopgap
+  for a single operator. Real accounts are needed before /admin is public, and
+  `reviewed_by` should record which one made the call.
 - Structured (non-MCQ) questions have no arena — by design, since their
   segmentation is the part that needs the review queue first.
 - No auth. The app is single-user-per-browser.
@@ -82,8 +88,8 @@ enforced through `consume_quota()`.
 - The topic tree is loaded but rendered flat; the hierarchy is in the data and
   not yet in the UI.
 - Nothing is tagged to a topic yet, so every topic reads as 0 questions.
-- The reviewer's decisions are still local to the browser. Reading the queue is
-  wired to Postgres; writing approvals back is not.
+- Reviewer decisions are written to Postgres, but `reviewed_by` is null: there
+  is no identity to record yet.
 - `topic_mastery` is a materialised view with no refresh schedule yet.
 - The pipeline's model calls are not covered by tests; only the deterministic
   stages are. They should be exercised against a handful of real papers held as

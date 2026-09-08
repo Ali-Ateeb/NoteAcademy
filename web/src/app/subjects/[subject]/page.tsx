@@ -9,7 +9,7 @@ import {
   getSubjects,
   getTopics,
 } from "@/lib/data/catalog";
-import { paperName, SEASON_LABELS } from "@/lib/data/types";
+import { paperName, SEASON_LABELS, type Topic } from "@/lib/data/types";
 
 type Params = { params: Promise<{ subject: string }> };
 
@@ -124,25 +124,66 @@ export default async function SubjectPage({ params }: Params) {
           <p className="mt-2 text-sm leading-relaxed text-ink-2">
             Questions from every year, grouped by what they test.
           </p>
-          <div className="mt-5 space-y-1.5">
-            {topics.map((topic) => (
-              <Link
-                key={topic.code}
-                href={`/topics/${slug}/${topic.slug}`}
-                className="flex items-center justify-between rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm shadow-card transition-colors hover:border-line-strong"
-              >
-                <span className="text-ink">
-                  <span className="mr-2 font-mono text-xs text-ink-3">{topic.code}</span>
-                  {topic.title}
-                </span>
-                <span className="font-mono text-xs text-ink-3">
-                  {topic.questionCount}
-                </span>
-              </Link>
-            ))}
+          {/* The syllabus as printed. A CAIE tree is three deep and mixes
+              headings with revisable units — '4.2 Electrical quantities'
+              groups '4.2.1'–'4.2.4' and has no outcomes of its own — so a flat
+              list of eighty-three rows is both longer and less recognisable
+              than the contents page a student already knows. Headings are
+              text; only the units are links. */}
+          <div className="mt-5 space-y-4">
+            {topics
+              .filter((topic) => topic.parentCode === null)
+              .map((section) => (
+                <div key={section.code}>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-widest text-ink-3">
+                    <span className="mr-2 font-mono normal-case">{section.code}</span>
+                    {section.title}
+                  </p>
+                  <div className="space-y-1">
+                    {descendantsOf(section.code, topics).map((topic) => (
+                      <TopicRow key={topic.code} subject={slug} topic={topic} />
+                    ))}
+                  </div>
+                </div>
+              ))}
           </div>
         </aside>
       </div>
     </div>
+  );
+}
+
+/** A section's nodes, in document order, with containers kept in place.
+ *
+ *  Containers are rendered as sub-headings rather than dropped: '4.2' is how
+ *  the syllabus groups four units a student thinks of together, and removing it
+ *  leaves four rows that look unrelated. */
+function descendantsOf(sectionCode: string, topics: Topic[]): Topic[] {
+  return topics.filter((topic) => topic.code.startsWith(`${sectionCode}.`));
+}
+
+function TopicRow({ subject, topic }: { subject: string; topic: Topic }) {
+  const indent = topic.code.split(".").length > 2 ? "ml-3" : "";
+
+  if (!topic.isRevisable) {
+    return (
+      <p className={`${indent} pt-1.5 text-xs text-ink-3`}>
+        <span className="mr-2 font-mono">{topic.code}</span>
+        {topic.title}
+      </p>
+    );
+  }
+
+  return (
+    <Link
+      href={`/topics/${subject}/${topic.slug}`}
+      className={`${indent} flex items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm shadow-card transition-colors hover:border-line-strong`}
+    >
+      <span className="text-ink">
+        <span className="mr-2 font-mono text-xs text-ink-3">{topic.code}</span>
+        {topic.title}
+      </span>
+      <span className="font-mono text-xs text-ink-3">{topic.questionCount}</span>
+    </Link>
   );
 }

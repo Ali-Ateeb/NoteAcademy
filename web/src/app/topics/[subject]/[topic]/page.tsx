@@ -7,7 +7,7 @@ import {
   getSubject,
   getSubjects,
   getTopic,
-  getTopics,
+  revisableTopics,
 } from "@/lib/data/catalog";
 
 type Params = { params: Promise<{ subject: string; topic: string }> };
@@ -16,7 +16,7 @@ export async function generateStaticParams() {
   const subjects = await getSubjects();
   const params: { subject: string; topic: string }[] = [];
   for (const subject of subjects.filter((s) => s.isPublished)) {
-    for (const topic of await getTopics(subject.slug)) {
+    for (const topic of await revisableTopics(subject.slug)) {
       params.push({ subject: subject.slug, topic: topic.slug });
     }
   }

@@ -1,11 +1,10 @@
 /**
  * Reviewer decisions.
  *
- * Stored locally for now, in the same shape the database expects: approving a
- * question is an update to `questions.extraction_status` plus, when the reviewer
- * changed the topic, a `question_topics` row with `source = 'human'`. When this
- * moves server-side it becomes one transaction per decision and nothing about
- * the UI changes.
+ * Written to Postgres through /api/review, and mirrored locally. The local copy
+ * is not a fallback for a failed write — it is the record of what this browser
+ * did, which is what makes undo work and what keeps the queue responsive while
+ * a decision is in flight. A write that fails says so; it does not pretend.
  *
  * Decisions are recorded, never deleted. If a reviewer's judgement later turns
  * out to be wrong — and on a queue of thousands, some will be — you want to know
@@ -91,4 +90,75 @@ export function clearDecisions(): void {
   } catch {
     // Nothing to do.
   }
+}
+
+/* ---------------------------------------------------------------------------
+   The server side
+   --------------------------------------------------------------------------- */
+
+/** The shared secret /api/review requires.
+ *
+ *  Kept in the browser rather than embedded in the page: a token printed into
+ *  the HTML is available to everyone who can load the page, which is precisely
+ *  the set of people it is supposed to exclude. Entered once, per browser. */
+const TOKEN_KEY = "na-review-token";
+
+export function reviewToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setReviewToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // A browser refusing storage cannot hold the token; writes stay local.
+  }
+}
+
+export interface SyncResult {
+  ok: boolean;
+  /** Shown to the reviewer verbatim. A decision that did not reach the database
+   *  has not happened, and saying so beats a queue that looks saved. */
+  message?: string;
+}
+
+async function send(input: RequestInfo, init: RequestInit): Promise<SyncResult> {
+  const token = reviewToken();
+  if (!token) return { ok: false, message: "Not unlocked — decisions are local only." };
+
+  try {
+    const response = await fetch(input, {
+      ...init,
+      headers: { ...init.headers, "x-review-token": token },
+    });
+    if (response.ok) return { ok: true };
+
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, message: body.error ?? `Save failed (${response.status}).` };
+  } catch (error) {
+    return { ok: false, message: `Save failed: ${(error as Error).message}` };
+  }
+}
+
+export function syncDecision(
+  questionId: string,
+  decision: ReviewDecision,
+  topicCode: string | null,
+): Promise<SyncResult> {
+  return send("/api/review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ questionId, decision, topicCode }),
+  });
+}
+
+export function syncUndo(questionId: string): Promise<SyncResult> {
+  return send(`/api/review?questionId=${encodeURIComponent(questionId)}`, {
+    method: "DELETE",
+  });
 }

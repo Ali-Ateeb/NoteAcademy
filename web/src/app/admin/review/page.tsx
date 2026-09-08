@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 
 import { ReviewQueue } from "@/components/ReviewQueue";
-import { getReviewQueue, getReviewTopicOptions } from "@/lib/data/catalog";
+import {
+  getReviewQueue,
+  getReviewTopicOptions,
+  isBackedByDatabase,
+} from "@/lib/data/catalog";
 
 /** Rendered per request, not at build time. The queue changes as papers are
  *  ingested, and its crops are signed URLs that expire — a prerendered page
@@ -28,7 +32,15 @@ export default async function ReviewPage() {
         here is visible to students until it is approved — which is what keeps a
         wrong topic tag from quietly wasting someone&apos;s revision time.
       </p>
-      <ReviewQueue items={items} topicOptions={topicOptions} />
+      {/* With no database there is nothing to write to, and the queue is a
+          scaffold running on fixtures — decisions stay in the browser and that
+          is the whole intent. With one, a decision that does not reach it has
+          not happened, and the difference has to be visible. */}
+      <ReviewQueue
+        items={items}
+        topicOptions={topicOptions}
+        persist={isBackedByDatabase()}
+      />
     </div>
   );
 }

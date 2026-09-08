@@ -163,6 +163,7 @@ const toTopic = (row: TopicRow): Topic => ({
   learningObjectives: row.learning_objectives,
   questionCount: row.question_count,
   parentCode: row.parent_code,
+  isRevisable: row.is_revisable,
 });
 
 const toPaper = (row: PaperRow): Paper => ({
@@ -279,10 +280,18 @@ export async function getTopics(subjectSlug: string): Promise<Topic[]> {
       .order("sort_order")
       .order("code"),
   );
-  // Containers are dropped: a CAIE tree groups '4.2.1'-'4.2.4' under '4.2',
-  // and '4.2' itself has no learning outcomes, nothing tagged to it and
-  // nothing to show. Listing it is twenty links to an empty page.
-  return result.filter((row) => row.is_revisable).map(toTopic);
+  // The whole tree, containers included — they are the headings the sidebar
+  // nests under. Callers that mean "a topic someone can revise" say so with
+  // `revisableTopics`; a container is not one, and linking to it would be a
+  // link to an empty page.
+  return result.map(toTopic);
+}
+
+/** The nodes that carry learning outcomes: what a student revises, what a
+ *  question is tagged against, and the only ones with a page of their own. */
+export async function revisableTopics(subjectSlug: string): Promise<Topic[]> {
+  const topics = await getTopics(subjectSlug);
+  return topics.filter((topic) => topic.isRevisable);
 }
 
 export async function getTopic(
@@ -290,7 +299,8 @@ export async function getTopic(
   topicSlug: string,
 ): Promise<Topic | null> {
   const topics = await getTopics(subjectSlug);
-  return topics.find((t) => t.slug === topicSlug) ?? null;
+  // A container has no page: no outcomes to list and nothing tagged to it.
+  return topics.find((t) => t.slug === topicSlug && t.isRevisable) ?? null;
 }
 
 export async function getPapers(subjectSlug: string): Promise<Paper[]> {
@@ -505,7 +515,7 @@ export async function getReviewTopicOptions(): Promise<
   const client = db();
   if (!client) return reviewTopicOptions;
 
-  const topics = await getTopics("physics-5054");
+  const topics = await revisableTopics("physics-5054");
   return topics.map(({ code, title }) => ({ code, title }));
 }
 
