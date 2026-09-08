@@ -72,6 +72,37 @@ class TestSegmentMcqPaper:
         assert [r.number for r in regions] == [1, 2, 3, 4]
         assert [r.page_number for r in regions] == [1, 1, 2, 2]
 
+    def test_the_copyright_notice_is_not_part_of_the_last_question(self, tmp_path):
+        """The last question on the last page must not swallow the footer.
+
+        CAIE closes a paper with a hairline rule and several lines of copyright
+        acknowledgement at 7pt. Both are ink, so trimming the crop to "where the
+        ink stops" ran it to the bottom of the page: the student is shown a
+        paragraph of legal boilerplate under the question, and the text index
+        for that question *is* the boilerplate.
+        """
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        # Numbered 1 because validate_regions requires a contiguous 1..n; the
+        # point here is that it is the last question *on its page*.
+        page.insert_text((49.6, 100.0), "1", fontsize=11)
+        page.insert_text((72.3, 100.0), "The last question", fontsize=11)
+        page.insert_text((72.3, 130.0), "D 3 minutes", fontsize=11)
+        # The footer: separator rule, then the notice, both well below the last
+        # option and both unmistakably page furniture.
+        page.draw_line((48.1, 729.6), (547.2, 729.6), width=0.8)
+        for i, y in enumerate((740.5, 748.6, 756.6)):
+            page.insert_text((50, y), f"Permission to reproduce items {i}", fontsize=7)
+        path = tmp_path / "last-page.pdf"
+        doc.save(path)
+        doc.close()
+
+        regions, problems = segment_mcq_paper(path)
+        assert problems == []
+        assert len(regions) == 1
+        # Ends just after the final option, not down in the notice.
+        assert regions[0].bbox[3] < 200.0
+
     def test_a_question_stops_before_the_next_one(self, tmp_path):
         path = build_paper(tmp_path, [[(1, 100.0), (2, 400.0)]])
         regions, _ = segment_mcq_paper(path)

@@ -50,6 +50,27 @@ CROP_RIGHT = 555.0
 # Gap left above the following question so a crop does not clip its neighbour.
 CROP_GAP = 8.0
 
+# CAIE's running footer: the copyright acknowledgement, the UCLES line and the
+# paper code, set at 7-8pt in the bottom of the last page. Question text is
+# 11pt (9.8-10.4pt on the subjects with a data page), so size alone separates
+# them — but size alone would also catch a graph's axis labels, which are small
+# and *are* part of the question. Both tests together do not: the bottom 90pt
+# of the page is the template's footer strip, and no question's artwork lives
+# there.
+#
+# Without this the last question on the last page swallows the whole notice:
+# its crop shows a student a paragraph of legal boilerplate, and its text index
+# is the boilerplate rather than the question.
+FOOTER_MAX_SIZE = 9.0
+FOOTER_TOP = 690.0
+
+# The rule drawn above the copyright notice: full width, hairline. Narrow
+# enough a test that a question's own artwork cannot match it — a diagram that
+# happened to reach the footer strip would still have to be a 400pt-wide line
+# under 2pt tall to be mistaken for the separator.
+FOOTER_RULE_MIN_WIDTH = 400.0
+FOOTER_RULE_MAX_HEIGHT = 2.0
+
 
 @dataclass
 class QuestionRegion:
@@ -84,6 +105,20 @@ def find_question_starts(page: pymupdf.Page) -> list[tuple[int, float]]:
     return starts
 
 
+def is_footer(span: dict) -> bool:
+    """Is this span part of the page's running footer rather than a question?"""
+    return span["size"] < FOOTER_MAX_SIZE and span["bbox"][1] > FOOTER_TOP
+
+
+def is_footer_rule(rect: pymupdf.Rect) -> bool:
+    """Is this the hairline above the copyright notice rather than artwork?"""
+    return (
+        rect.y0 > FOOTER_TOP
+        and rect.height < FOOTER_RULE_MAX_HEIGHT
+        and rect.width > FOOTER_RULE_MIN_WIDTH
+    )
+
+
 def content_bottom(page: pymupdf.Page, top: float, limit: float) -> float | None:
     """Lowest point of any text or artwork between `top` and `limit`.
 
@@ -100,9 +135,13 @@ def content_bottom(page: pymupdf.Page, top: float, limit: float) -> float | None
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line.get("spans", []):
+                if is_footer(span):
+                    continue
                 consider(span["bbox"][3])
 
     for drawing in page.get_drawings():
+        if is_footer_rule(drawing["rect"]):
+            continue
         consider(drawing["rect"].y1)
 
     return lowest
