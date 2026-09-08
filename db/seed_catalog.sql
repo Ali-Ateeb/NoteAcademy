@@ -50,11 +50,11 @@ on conflict (level_id, syllabus_code) do update set
 -- the subject, so a 2015 question can be shown to a student sitting the current
 -- syllabus without serving them an outcome that has since been withdrawn.
 --
--- The topic tree itself is not seeded here. It has to be transcribed from the
--- published syllabus PDF, and a topic tree that is nearly right is worse than
--- none at all: it silently mistags the bank and sends students to revise the
--- wrong unit. Load it from the syllabus before running the tagger (roadmap
--- step 5); until then the topical browser is empty, which is honest.
+-- The topic tree itself is not seeded here: it comes from the published
+-- syllabus PDF, through `noteacademy load-syllabus`. A tree that is nearly
+-- right is worse than none at all — it silently mistags the bank and sends
+-- students to revise the wrong unit — so it is parsed from the source document
+-- rather than transcribed, and the version row below is what it hangs off.
 insert into syllabus_versions (subject_id, label, first_exam_year, last_exam_year, is_current)
 select s.id, '2023-2025', 2023, 2025, true
 from subjects s where s.slug = 'physics-5054'

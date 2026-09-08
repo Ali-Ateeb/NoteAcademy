@@ -117,6 +117,8 @@ interface TopicRow {
   title: string;
   learning_objectives: string[];
   question_count: number;
+  parent_code: string | null;
+  is_revisable: boolean;
 }
 
 interface PaperRow {
@@ -158,6 +160,7 @@ const toTopic = (row: TopicRow): Topic => ({
   title: row.title,
   learningObjectives: row.learning_objectives,
   questionCount: row.question_count,
+  parentCode: row.parent_code,
 });
 
 const toPaper = (row: PaperRow): Paper => ({
@@ -188,7 +191,8 @@ const toMcq = (row: McqRow): McqQuestion => ({
 });
 
 const SUBJECT_COLUMNS = "slug,level_code,syllabus_code,title,description,is_published";
-const TOPIC_COLUMNS = "code,slug,title,learning_objectives,question_count";
+const TOPIC_COLUMNS =
+  "code,slug,title,learning_objectives,question_count,parent_code,is_revisable";
 const PAPER_COLUMNS =
   "slug,subject_slug,year,season,component,variant,question_type,question_count,documents";
 // One string literal, not a concatenation: supabase-js infers the row type from
@@ -264,7 +268,10 @@ export async function getTopics(subjectSlug: string): Promise<Topic[]> {
       .order("sort_order")
       .order("code"),
   );
-  return result.map(toTopic);
+  // Containers are dropped: a CAIE tree groups '4.2.1'-'4.2.4' under '4.2',
+  // and '4.2' itself has no learning outcomes, nothing tagged to it and
+  // nothing to show. Listing it is twenty links to an empty page.
+  return result.filter((row) => row.is_revisable).map(toTopic);
 }
 
 export async function getTopic(

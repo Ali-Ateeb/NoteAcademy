@@ -2,12 +2,13 @@
 
 ## In the repo
 
-- **Schema** — fourteen migrations, applied to the live Supabase project and
+- **Schema** — fifteen migrations, applied to the live Supabase project and
   verified there. `db/smoke_test.sql` exercises ten invariants and rolls back;
   all ten pass against the hosted database.
 - **Pipeline** — render, vision extraction, cross-check, crop, mark-scheme
   matching, topic tagging, embedding, loading, deterministic multiple-choice
-  ingestion, plus a cost estimator. 68 unit tests over the deterministic stages.
+  ingestion, syllabus parsing, plus a cost estimator. 77 unit tests over the
+  deterministic stages.
 - **Web app** — landing, subject directory, subject hub, split-screen viewer,
   timed resumable MCQ arena, topical browser, untimed topic drills, dashboard,
   and the reviewer's queue at `/admin/review`. 28 browser checks.
@@ -49,6 +50,19 @@ through `noteacademy load-mcq`. Deterministic and free, and now a single command
 per paper. `/admin/review` already reads the database when the service role key
 is present.
 
+**4. Topic tagging.** The closed list the classifier picks from is now loaded:
+Physics 5054 (2026-2028), parsed from the published syllabus by
+`noteacademy load-syllabus` — 6 sections, 83 topics, 270 learning outcomes. This
+is the first step that genuinely needs `ANTHROPIC_API_KEY`, and the one where
+the review queue earns its keep: tagging accuracy *is* the product, and a
+topical bank that is 80% right is worse than none.
+
+What is left on the tree itself is presentation. It is three deep, and the
+subject page renders topics as a flat list. `v_topics` carries `parent_code` and
+`depth` so the sidebar can nest them; until it does, the app lists the 63 nodes
+that carry outcomes and skips the 20 containers, which is correct but not the
+shape of the syllabus.
+
 **5. Object storage and the real viewer.** R2 or S3 behind short-lived signed
 URLs, PDF.js in `SplitViewer`, question crops served from `question_assets`.
 
@@ -65,9 +79,9 @@ enforced through `consume_quota()`.
 - No auth. The app is single-user-per-browser.
 - Ingested questions carry no text and no option text, so they cannot be
   rendered yet. See step 0.
-- The topic tree is not loaded: it has to be transcribed from the published
-  syllabus, and a nearly-right tree is worse than an empty one. Tagging (which
-  needs `ANTHROPIC_API_KEY`) is blocked on it.
+- The topic tree is loaded but rendered flat; the hierarchy is in the data and
+  not yet in the UI.
+- Nothing is tagged to a topic yet, so every topic reads as 0 questions.
 - The reviewer's decisions are still local to the browser. Reading the queue is
   wired to Postgres; writing approvals back is not.
 - `topic_mastery` is a materialised view with no refresh schedule yet.

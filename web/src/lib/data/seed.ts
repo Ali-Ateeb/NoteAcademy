@@ -71,6 +71,7 @@ export const topics: Topic[] = [
       "distinguish between scalar and vector quantities",
     ],
     questionCount: 2,
+    parentCode: null,
   },
   {
     code: "1.2",
@@ -82,6 +83,7 @@ export const topics: Topic[] = [
       "state that acceleration of free fall near the Earth is constant",
     ],
     questionCount: 3,
+    parentCode: null,
   },
   {
     code: "1.3",
@@ -93,6 +95,7 @@ export const topics: Topic[] = [
       "recall and use the relationship between force, mass and acceleration",
     ],
     questionCount: 3,
+    parentCode: null,
   },
   {
     code: "1.5",
@@ -104,6 +107,7 @@ export const topics: Topic[] = [
       "define power as work done per unit time",
     ],
     questionCount: 2,
+    parentCode: null,
   },
   {
     code: "2.1",
@@ -114,6 +118,7 @@ export const topics: Topic[] = [
       "define specific heat capacity and use the associated equation",
     ],
     questionCount: 1,
+    parentCode: null,
   },
   {
     code: "4.2",
@@ -124,6 +129,7 @@ export const topics: Topic[] = [
       "calculate combined resistance of resistors in series and in parallel",
     ],
     questionCount: 1,
+    parentCode: null,
   },
 ];
 

@@ -288,6 +288,96 @@ def apply_tagging(
             )
 
 
+def upsert_syllabus_version(
+    conn: psycopg.Connection,
+    subject_slug: str,
+    *,
+    label: str,
+    first_exam_year: int,
+    last_exam_year: int | None,
+    source_url: str | None = None,
+    is_current: bool = False,
+) -> str:
+    """Insert or update a syllabus version, and settle which one is current.
+
+    Exactly one version per subject may be current — a partial unique index says
+    so — and the demotion has to happen in the same transaction as the
+    promotion, or the insert fails against the version it is replacing.
+    """
+    with conn.cursor() as cur:
+        cur.execute("select id from subjects where slug = %s", (subject_slug,))
+        subject = cur.fetchone()
+        if subject is None:
+            raise LookupError(f"unknown subject slug {subject_slug!r}")
+
+        if is_current:
+            cur.execute(
+                "update syllabus_versions set is_current = false "
+                " where subject_id = %s and label <> %s",
+                (subject["id"], label),
+            )
+
+        cur.execute(
+            """
+            insert into syllabus_versions
+              (subject_id, label, first_exam_year, last_exam_year, source_url, is_current)
+            values (%s, %s, %s, %s, %s, %s)
+            on conflict (subject_id, label) do update set
+              first_exam_year = excluded.first_exam_year,
+              last_exam_year  = excluded.last_exam_year,
+              source_url      = coalesce(excluded.source_url,
+                                         syllabus_versions.source_url),
+              is_current      = excluded.is_current
+            returning id
+            """,
+            (
+                subject["id"], label, first_exam_year, last_exam_year,
+                source_url, is_current,
+            ),
+        )
+        return cur.fetchone()["id"]
+
+
+def upsert_topic(
+    conn: psycopg.Connection,
+    syllabus_version_id: str,
+    *,
+    code: str,
+    title: str,
+    slug: str,
+    learning_objectives: Sequence[str],
+    parent_topic_id: str | None,
+    sort_order: int,
+) -> str:
+    """Insert or update one node of the topic tree, keyed on its CAIE code.
+
+    Keyed on the code rather than the title because the code is what questions
+    are tagged with. A retitled topic is the same topic; a renumbered one is a
+    different one, and should not silently inherit another topic's questions.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into topics
+              (syllabus_version_id, parent_topic_id, code, title, slug,
+               learning_objectives, sort_order)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            on conflict (syllabus_version_id, code) do update set
+              parent_topic_id     = excluded.parent_topic_id,
+              title               = excluded.title,
+              slug                = excluded.slug,
+              learning_objectives = excluded.learning_objectives,
+              sort_order          = excluded.sort_order
+            returning id
+            """,
+            (
+                syllabus_version_id, parent_topic_id, code, title, slug,
+                list(learning_objectives), sort_order,
+            ),
+        )
+        return cur.fetchone()["id"]
+
+
 def load_topic_codes(conn: psycopg.Connection, subject_slug: str) -> dict[str, str]:
     """Topic code -> id for the subject's current syllabus version."""
     with conn.cursor() as cur:

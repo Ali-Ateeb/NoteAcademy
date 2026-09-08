@@ -30,6 +30,9 @@ export interface Topic {
   title: string;
   learningObjectives: string[];
   questionCount: number;
+  /** '4.2.4' hangs off '4.2' hangs off '4'. Null for a top-level section.
+   *  Enough to rebuild the tree without a recursive query. */
+  parentCode: string | null;
 }
 
 export interface PaperDocument {

@@ -44,15 +44,36 @@ mark scheme PDF ──▶ render ──▶ extract entries ───────
 | embed | `embed.py` | Vectors for topical search and question identification |
 | load | `load.py` | Idempotent writes, as `extracted` / `needs_review` |
 | ingest (MCQ) | `ingest.py` | The three deterministic stages, straight into Postgres |
+| syllabus | `syllabus.py` | Read the published syllabus PDF into the topic tree |
 
 ```bash
 noteacademy render      paper.pdf --out work/5054-2026-mj-11
 noteacademy segment-mcq qp.pdf --out work/crops     # geometric, free
 noteacademy mcq-key     ms.pdf                      # text layer, free
 noteacademy load-mcq    5054_s19_qp_11.pdf 5054_s19_ms_11.pdf --crops work/crops
+noteacademy load-syllabus 5054-2026-2028-syllabus.pdf --source-url https://...
 noteacademy extract     work/5054-2026-mj-11 --pdf qp.pdf
 noteacademy estimate    --papers 3400 --pages 14
 ```
+
+`load-syllabus` reads the topic tree out of the published syllabus PDF. The tree
+is what tagging picks from, what the topical browser renders, and what carries a
+student across a syllabus revision, so transcribing it by hand is both a day per
+subject and the place the least visible errors get in: a missing outcome cannot
+be seen, and a mistyped code silently detaches every question tagged with it.
+
+CAIE typesets these from one template, and the parse reads the template's
+geometry rather than guessing from text: 13pt bold is a section, 10pt bold a
+topic, 10pt regular in the number gutter a sub-topic, and everything at x=85 the
+outcome beside it.
+
+The part worth knowing about is the equations. They are set as stacked
+fractions, so `speed = distance / time` extracts as two lines and joins into
+`speed = distance time` — not a worse rendering of the equation but a false one.
+The fraction *bar* is drawn on the page, so the parser pairs the lines above and
+below each bar and joins them with a slash, and reports any bar it could not
+resolve rather than flattening it. Measured on Physics 5054 (2026-2028): 6
+sections, 83 topics, 270 learning outcomes, 41 of 41 fraction bars resolved.
 
 `load-mcq` is the whole multiple-choice path in one command: segment, read the
 answer key, crop, and write the paper, its documents and its questions to the

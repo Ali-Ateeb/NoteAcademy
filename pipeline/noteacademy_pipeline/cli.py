@@ -9,6 +9,7 @@ Postgres, it exits.
     noteacademy extract  work/5054-2019-mj-12 --pdf paper.pdf
     noteacademy mcq-key  ms.pdf
     noteacademy load-mcq 5054_s19_qp_11.pdf 5054_s19_ms_11.pdf
+    noteacademy load-syllabus 5054-2026-2028-syllabus.pdf
     noteacademy estimate --papers 3400 --pages 14
 """
 
@@ -274,6 +275,100 @@ def load_mcq(
     console.print(
         "[dim]Loaded unapproved. Nothing here is visible to a student until it "
         "is approved in the review queue.[/dim]"
+    )
+
+@app.command(name="load-syllabus")
+def load_syllabus(
+    pdf: Path = typer.Argument(..., exists=True, help="The published syllabus PDF."),
+    subject: str = typer.Option(None, help="Subject slug. Inferred from the cover."),
+    source_url: str = typer.Option(None, help="Where the PDF was published."),
+    current: bool = typer.Option(True, help="Make this the subject's current version."),
+    dry_run: bool = typer.Option(False, help="Parse and report, write nothing."),
+) -> None:
+    """Read a syllabus PDF into the topic tree.
+
+    The topic tree is what tagging picks from, what the topical browser renders,
+    and what carries a student across a syllabus revision. Transcribing it by
+    hand is a day per subject and introduces the errors hardest to notice: a
+    missing outcome is invisible, and a mistyped code silently detaches every
+    question tagged with it.
+
+    Refuses rather than guesses. If the parse does not match the template — a
+    gap in the numbering, a topic with no outcomes, an equation whose fraction
+    bar it could not resolve — it reports and stops.
+    """
+    from .ingest import resolve_subject_slug
+    from .load import connect, upsert_syllabus_version, upsert_topic
+    from .syllabus import parse_syllabus
+
+    syllabus = parse_syllabus(pdf)
+
+    table = Table("", "", title=f"{syllabus.subject_title} {syllabus.syllabus_code}")
+    table.add_row("syllabus version", syllabus.label or "[red]not found[/red]")
+    table.add_row("sections", str(len(syllabus.sections)))
+    table.add_row("topics", str(sum(1 for _ in syllabus.walk())))
+    table.add_row("learning objectives", str(syllabus.objective_count))
+    table.add_row("equations resolved", f"{syllabus.fraction_bars - syllabus.unresolved_bars}"
+                                        f"/{syllabus.fraction_bars}")
+    console.print(table)
+
+    for problem in syllabus.problems:
+        console.print(f"[red]{problem}[/red]")
+    if syllabus.problems:
+        console.print(
+            "[yellow]Not loaded. A topic tree that is nearly right is worse than "
+            "none: it mistags the bank and sends students to the wrong unit.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    if not syllabus.label or syllabus.first_exam_year is None:
+        console.print("[red]the cover does not say which years this syllabus is for[/red]")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        for topic in syllabus.walk():
+            indent = "  " * topic.depth
+            console.print(
+                f"{indent}[bold]{topic.code}[/bold] {topic.title} "
+                f"[dim]({len(topic.learning_objectives)})[/dim]"
+            )
+        return
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        subject_slug = subject or resolve_subject_slug(conn, syllabus.syllabus_code)
+        version_id = upsert_syllabus_version(
+            conn,
+            subject_slug,
+            label=syllabus.label,
+            first_exam_year=syllabus.first_exam_year,
+            last_exam_year=syllabus.last_exam_year,
+            source_url=source_url,
+            is_current=current,
+        )
+
+        # Parents before children, so a child always has a parent to point at.
+        ids: dict[str, str] = {}
+        for order, topic in enumerate(syllabus.walk()):
+            parent_code = topic.code.rpartition(".")[0]
+            ids[topic.code] = upsert_topic(
+                conn,
+                version_id,
+                code=topic.code,
+                title=topic.title,
+                slug=topic.slug,
+                learning_objectives=topic.learning_objectives,
+                parent_topic_id=ids.get(parent_code),
+                sort_order=order,
+            )
+        conn.commit()
+
+    console.print(
+        f"loaded [bold]{len(ids)}[/bold] topics into {subject_slug} "
+        f"{syllabus.label}" + (" [dim](now the current version)[/dim]" if current else "")
     )
 
 @app.command()

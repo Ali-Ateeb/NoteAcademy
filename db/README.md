@@ -43,9 +43,9 @@ a subject *slug* before it can load a paper, so a database without these rows
 rejects every ingestion run. It is idempotent and never resets `is_published`:
 publishing a subject is a decision made once its ingestion is actually done.
 
-The topic tree is deliberately not seeded. It has to be transcribed from the
-published syllabus, and a topic tree that is nearly right is worse than none —
-it mistags the bank and sends students to revise the wrong unit.
+The topic tree is not seeded here either — it comes from the published syllabus
+PDF, through `noteacademy load-syllabus`. A tree that is nearly right is worse
+than none, so it is parsed from the source document rather than transcribed.
 
 ## Verifying
 
