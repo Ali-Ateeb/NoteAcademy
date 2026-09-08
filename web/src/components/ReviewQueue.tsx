@@ -299,14 +299,35 @@ function ReviewCard({
         <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
           Extracted question
         </p>
-        <p className="mt-1.5 text-sm leading-relaxed text-ink">{item.questionText}</p>
+        {item.questionText ? (
+          <p className="mt-1.5 text-sm leading-relaxed text-ink">{item.questionText}</p>
+        ) : (
+          /* Not a blank question: multiple-choice papers are ingested
+             geometrically, and their text has not been read yet. Saying so
+             stops a reviewer reading an empty box as a broken extraction. */
+          <p className="mt-1.5 text-sm italic leading-relaxed text-ink-3">
+            No text extracted yet — this question was segmented from the page,
+            not read. Check it against the crop.
+          </p>
+        )}
       </div>
 
       <div className="mt-4">
         <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
-          Mark scheme
+          {item.questionType === "mcq" ? "Answer key" : "Mark scheme"}
         </p>
-        {item.markScheme ? (
+        {/* A multiple-choice mark scheme is an answer grid, so the answer is
+            the mark scheme. Warning that none is attached when the key is
+            recorded is a false alarm on every MCQ in the bank, and false
+            alarms are how a reviewer learns to stop reading them. */}
+        {item.correctOption ? (
+          <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
+            <span className="font-mono font-semibold text-correct">
+              {item.correctOption}
+            </span>
+            {item.markScheme ? ` — ${item.markScheme}` : " — from the mark scheme's answer grid"}
+          </p>
+        ) : item.markScheme ? (
           <p className="mt-1.5 text-sm leading-relaxed text-ink-2">{item.markScheme}</p>
         ) : (
           <p className="mt-1.5 text-sm italic text-incorrect">
