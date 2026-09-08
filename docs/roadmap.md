@@ -8,13 +8,20 @@
   matching, topic tagging, embedding, loading, plus a cost estimator. 15 unit
   tests over the deterministic stages.
 - **Web app** — landing, subject directory, subject hub, split-screen viewer,
-  timed resumable MCQ arena, topical browser, dashboard. 23 statically generated
-  pages; 18 browser checks.
+  timed resumable MCQ arena, topical browser, untimed topic drills, dashboard,
+  and the reviewer's queue at `/admin/review`. 30 statically generated pages;
+  28 browser checks.
 
 The app runs on seed fixtures, so everything above is exercisable without a
 database, an API key, or a single real PDF.
 
 ## Next, in order
+
+**0. Ingest one real paper end to end**, before anything else here. Every figure
+in `docs/architecture.md` — the $1,400 backfill, the 200 dpi floor, the
+cross-check hit rate — is an estimate until one real Physics 5054 Paper 1 and its
+mark scheme have been through `render → extract → mcq-key`. Half a day, and it
+will change the order of everything below it.
 
 **1. Point the app at Postgres.** Every function in `web/src/lib/data/catalog.ts`
 becomes a query. No page component changes — that is what the seam is for. Add
@@ -25,14 +32,9 @@ Supabase Auth and apply `0009_supabase_auth.sql`.
 Migrate a signed-out student's local history into their account on first login
 rather than discarding it.
 
-**3. Ingest one real subject end to end.** Physics 5054, MCQ papers first. This
-is where the real work is, and where the estimates in `docs/architecture.md`
-should be replaced with measured numbers.
-
-**4. Build the review queue.** An admin surface over
-`extraction_status = 'needs_review'` and low-confidence `question_topics`. Not
-optional tooling — it is the mechanism that keeps the bank correct, and it gates
-everything downstream of it.
+**3. Ingest the rest of the first subject.** Physics 5054, MCQ papers first,
+using the measurements from step 0. Wire `/admin/review` to the database as you
+go — the queue UI already exists, it needs a real backing store.
 
 **5. Object storage and the real viewer.** R2 or S3 behind short-lived signed
 URLs, PDF.js in `SplitViewer`, question crops served from `question_assets`.

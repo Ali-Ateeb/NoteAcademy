@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Route } from "next";
 import { notFound } from "next/navigation";
 
 import { McqArena } from "@/components/McqArena";
@@ -56,7 +56,13 @@ export default async function PracticePage({ params }: Params) {
       <p className="mb-7 text-sm text-ink-2">
         {questions.length} questions · answers are saved as you go
       </p>
-      <McqArena paperSlug={slug} paperTitle={title} questions={questions} />
+      <McqArena
+        sessionKey={slug}
+        title={title}
+        questions={questions}
+        backHref={`/papers/${slug}` as Route}
+        backLabel="Leave test"
+      />
     </div>
   );
 }

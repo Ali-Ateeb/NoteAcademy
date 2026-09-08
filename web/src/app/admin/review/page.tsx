@@ -1,0 +1,29 @@
+import type { Metadata } from "next";
+
+import { ReviewQueue } from "@/components/ReviewQueue";
+import { getReviewQueue, getReviewTopicOptions } from "@/lib/data/catalog";
+
+export const metadata: Metadata = {
+  title: "Review queue",
+  description: "Approve or reject questions the ingestion pipeline was unsure about.",
+  robots: { index: false, follow: false },
+};
+
+export default async function ReviewPage() {
+  const [items, topicOptions] = await Promise.all([
+    getReviewQueue(),
+    getReviewTopicOptions(),
+  ]);
+
+  return (
+    <div className="mx-auto max-w-5xl px-5 py-12">
+      <h1 className="font-serif text-4xl tracking-tight text-ink">Review queue</h1>
+      <p className="mt-3 max-w-2xl leading-relaxed text-ink-2">
+        Questions the pipeline extracted but would not publish on its own. Nothing
+        here is visible to students until it is approved — which is what keeps a
+        wrong topic tag from quietly wasting someone&apos;s revision time.
+      </p>
+      <ReviewQueue items={items} topicOptions={topicOptions} />
+    </div>
+  );
+}

@@ -83,6 +83,25 @@ export default async function TopicPage({ params }: Params) {
         </ul>
       </div>
 
+      {questions.length > 0 && (
+        <div className="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-accent-soft p-5">
+          <div>
+            <p className="font-medium tracking-tight text-ink">
+              Drill this topic
+            </p>
+            <p className="mt-1 text-sm text-ink-2">
+              Every question on {topic.title}, untimed, marked as you go.
+            </p>
+          </div>
+          <Link
+            href={`/topics/${subject.slug}/${topic.slug}/practice`}
+            className="ml-auto rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+          >
+            Start drill →
+          </Link>
+        </div>
+      )}
+
       <h2 className="mb-4 mt-10 font-serif text-2xl tracking-tight text-ink">
         {questions.length} question{questions.length === 1 ? "" : "s"}
       </h2>

@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -80,7 +81,7 @@ export function Dashboard({ topics, questionTopics }: Props) {
           return (
             <Link
               key={topic.code}
-              href={`/topics/physics-5054/${topic.slug}`}
+              href={`/topics/physics-5054/${topic.slug}/practice` as Route}
               className="block rounded-xl border border-line bg-surface p-4 shadow-card transition-colors hover:border-line-strong"
             >
               <div className="flex items-baseline justify-between gap-4">

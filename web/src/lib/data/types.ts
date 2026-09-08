@@ -85,3 +85,73 @@ export function paperName(paper: Paper): string {
 export function sessionName(paper: Paper): string {
   return `${SEASON_LABELS[paper.season]} ${paper.year}`;
 }
+
+/* ---------------------------------------------------------------------------
+   Review queue
+   --------------------------------------------------------------------------- */
+
+/** Why the pipeline refused to publish a question on its own.
+ *
+ *  Each value corresponds to a specific check in pipeline/: the cross-check
+ *  against the PDF text layer, the bbox sanity check, the mark-scheme matcher,
+ *  and the tagging confidence floor. Showing the reviewer *which* check fired is
+ *  what makes a queue of thousands tractable — they know what to look at. */
+export type ReviewFlag =
+  | "low_tag_confidence"
+  | "text_layer_mismatch"
+  | "bbox_outside_page"
+  | "unmatched_mark_scheme"
+  | "ambiguous_mark_scheme"
+  | "no_text_layer";
+
+export const REVIEW_FLAG_LABELS: Record<ReviewFlag, string> = {
+  low_tag_confidence: "Unsure of the topic",
+  text_layer_mismatch: "Label not found in the page text",
+  bbox_outside_page: "Crop falls outside the page",
+  unmatched_mark_scheme: "No mark scheme matched",
+  ambiguous_mark_scheme: "Two mark scheme entries claimed this",
+  no_text_layer: "Scanned page — no text to cross-check",
+};
+
+/** What the reviewer needs to look at, and what to check it against. */
+export const REVIEW_FLAG_HINTS: Record<ReviewFlag, string> = {
+  low_tag_confidence:
+    "The classifier could not confidently place this. Pick the topic whose learning objective it actually tests.",
+  text_layer_mismatch:
+    "The model reported a question number that does not appear in the page's own text. Check it is not invented.",
+  bbox_outside_page:
+    "The crop region ran past the page edge and was clamped. Confirm nothing is cut off.",
+  unmatched_mark_scheme:
+    "No mark scheme entry matched this label. Attach one, or reject if the question was mis-segmented.",
+  ambiguous_mark_scheme:
+    "Two entries claimed this question, so both were withheld rather than guessed at. Choose the right one.",
+  no_text_layer:
+    "Scanned page: the extraction had no text layer to check itself against, so read it carefully.",
+};
+
+export interface ProposedTopic {
+  code: string;
+  title: string;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface ReviewItem {
+  id: string;
+  paperSlug: string;
+  paperTitle: string;
+  displayLabel: string;
+  questionType: QuestionType;
+  pageNumber: number;
+  questionText: string;
+  markScheme: string | null;
+  correctOption: McqOption | null;
+  /** Object-storage key for the rendered crop. Served as a signed URL; the
+   *  scaffold shows a placeholder until storage is wired up. */
+  cropStorageKey: string | null;
+  extractionConfidence: number;
+  flags: ReviewFlag[];
+  proposedTopics: ProposedTopic[];
+}
+
+export type ReviewDecision = "approved" | "rejected";

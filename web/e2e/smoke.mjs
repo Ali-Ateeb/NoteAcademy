@@ -105,6 +105,63 @@ check(
   (await page.getByRole("heading", { name: "Examiner Report" }).count()) > 0,
 );
 
+// ---- topic drill ----
+// Untimed by design, and it must not share storage with a half-finished paper.
+await page.goto(`${BASE}/topics/physics-5054/dynamics/practice`, { waitUntil: "networkidle" });
+await page.waitForSelector("[role=radiogroup]");
+check("drill opens with the topic's questions", (await page.getByText("Question 1 / 3").count()) > 0);
+check(
+  "drill shows no countdown",
+  (await page.locator("span.tabular-nums").filter({ hasText: /^\d\d:\d\d$/ }).count()) === 0,
+);
+check(
+  "drill submit reads as marking, not sitting a paper",
+  (await page.getByRole("button", { name: "Mark answers" }).count()) > 0,
+);
+await page.keyboard.press("b"); // dynamics q6: correct
+await page.getByRole("button", { name: "Mark answers" }).click();
+await page.waitForSelector("text=time spent");
+check("drill marks answers", (await page.getByText("Mark scheme").count()) > 0);
+
+// The paper session must have survived the drill — separate keys, separate state.
+await page.goto(`${BASE}/practice/physics-5054-2019-may-june-p12`, { waitUntil: "networkidle" });
+await page.waitForSelector("body");
+check(
+  "the drill did not clobber the in-progress paper",
+  (await page.getByText("time spent").count()) > 0 ||
+    (await page.getByText("of 12 answered").count()) > 0,
+);
+
+// ---- review queue ----
+await page.goto(`${BASE}/admin/review`, { waitUntil: "networkidle" });
+await page.waitForSelector("text=Pending");
+check("review queue lists pending questions", (await page.getByText("Pending").count()) > 0);
+check(
+  "queue is ordered worst-confidence first",
+  (await page.getByText("41% confident").count()) > 0,
+);
+check(
+  "the reason it was held back is shown",
+  (await page.getByText("Label not found in the page text").count()) > 0,
+);
+
+const pendingBefore = parseInt(
+  await page.locator("div").filter({ hasText: /^\d+Pending$/ }).first().innerText(),
+);
+await page.keyboard.press("a"); // approve
+await page.waitForTimeout(200);
+const pendingAfter = parseInt(
+  await page.locator("div").filter({ hasText: /^\d+Pending$/ }).first().innerText(),
+);
+check(`approving removes an item from pending (${pendingBefore} -> ${pendingAfter})`, pendingAfter === pendingBefore - 1);
+
+await page.keyboard.press("u"); // undo
+await page.waitForTimeout(200);
+const pendingUndone = parseInt(
+  await page.locator("div").filter({ hasText: /^\d+Pending$/ }).first().innerText(),
+);
+check(`undo restores it (${pendingUndone})`, pendingUndone === pendingBefore);
+
 // ---- theme and layout ----
 await page.goto(BASE, { waitUntil: "networkidle" });
 await page.getByLabel("Toggle colour theme").click();

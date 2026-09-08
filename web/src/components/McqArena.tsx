@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -16,15 +17,33 @@ import type { McqOption, McqQuestion } from "@/lib/data/types";
 
 const OPTIONS: McqOption[] = ["A", "B", "C", "D"];
 /** CAIE allows roughly 75 seconds per mark on Paper 1. */
-const SECONDS_PER_QUESTION = 75;
+export const SECONDS_PER_QUESTION = 75;
 
 interface Props {
-  paperSlug: string;
-  paperTitle: string;
+  /** Identifies the saved session. A paper slug when sitting a paper, a topic
+   *  key when drilling — distinct keys mean a drill never clobbers a
+   *  half-finished exam. */
+  sessionKey: string;
+  title: string;
   questions: McqQuestion[];
+  /** Where "leave" and "back" go. Typed, so typedRoutes catches a dead link
+   *  at build time rather than in front of a student. */
+  backHref: Route;
+  backLabel?: string;
+  /** Seconds per question, or null for an untimed drill. Drilling a weak topic
+   *  is about getting it right, not about beating a clock; a timer there just
+   *  adds pressure to the thing the student is already worst at. */
+  secondsPerQuestion?: number | null;
 }
 
-export function McqArena({ paperSlug, paperTitle, questions }: Props) {
+export function McqArena({
+  sessionKey,
+  title,
+  questions,
+  backHref,
+  backLabel = "Leave test",
+  secondsPerQuestion = SECONDS_PER_QUESTION,
+}: Props) {
   const [state, setState] = useState<SessionState | null>(null);
   const [resumed, setResumed] = useState(false);
   const questionEnteredAt = useRef<number>(Date.now());
@@ -33,17 +52,18 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
   const timeSpent = useRef<Map<string, number>>(new Map());
 
   const total = questions.length;
-  const duration = total * SECONDS_PER_QUESTION;
+  const timed = secondsPerQuestion !== null;
+  const duration = timed ? total * secondsPerQuestion : 0;
 
   useEffect(() => {
-    const saved = loadSession(paperSlug);
+    const saved = loadSession(sessionKey);
     if (saved && !saved.submitted && saved.questionIds.length === total) {
       setState(saved);
       setResumed(true);
       return;
     }
     setState({
-      paperSlug,
+      sessionKey,
       questionIds: questions.map((q) => q.id),
       answers: {},
       flagged: [],
@@ -52,7 +72,7 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
       remainingSeconds: duration,
       submitted: false,
     });
-  }, [paperSlug, questions, total, duration]);
+  }, [sessionKey, questions, total, duration]);
 
   useEffect(() => {
     if (state) saveSession(state);
@@ -64,7 +84,7 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
   // This depends on `running` alone, never on `state`. Depending on the whole
   // state object tears the interval down and recreates it on every keystroke,
   // so a student answering quickly would watch the clock sit still.
-  const running = state !== null && !state.submitted;
+  const running = timed && state !== null && !state.submitted;
 
   useEffect(() => {
     if (!running) return;
@@ -132,7 +152,7 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
           .filter((question) => prev.answers[question.id])
           .map((question) => ({
             questionId: question.id,
-            paperSlug,
+            paperSlug: question.paperSlug,
             selectedOption: prev.answers[question.id] as string,
             isCorrect: prev.answers[question.id] === question.correctOption,
             timeSpentMs: timeSpent.current.get(question.id) ?? 0,
@@ -141,7 +161,7 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
       );
       return { ...prev, submitted: true };
     });
-  }, [chargeTime, paperSlug, questions]);
+  }, [chargeTime, questions]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -169,22 +189,22 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
   }
 
   const answeredCount = Object.keys(state.answers).length;
-  const lowTime = state.remainingSeconds < 60 && !state.submitted;
+  const lowTime = timed && state.remainingSeconds < 60 && !state.submitted;
 
   if (state.submitted) {
     return (
       <Results
-        paperSlug={paperSlug}
-        paperTitle={paperTitle}
+        backHref={backHref}
+        title={title}
         questions={questions}
         answers={state.answers}
         score={score}
         timeSpent={timeSpent.current}
         onRetake={() => {
-          clearSession(paperSlug);
+          clearSession(sessionKey);
           timeSpent.current = new Map();
           setState({
-            paperSlug,
+            sessionKey,
             questionIds: questions.map((q) => q.id),
             answers: {},
             flagged: [],
@@ -207,14 +227,16 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
       )}
 
       <div className="mb-5 flex flex-wrap items-center gap-4">
-        <span
-          className={`rounded-lg px-3 py-1.5 font-mono text-lg tabular-nums ${
-            lowTime ? "bg-incorrect-soft text-incorrect" : "bg-surface-2 text-ink"
-          }`}
-          aria-live={lowTime ? "polite" : "off"}
-        >
-          {formatClock(state.remainingSeconds)}
-        </span>
+        {timed && (
+          <span
+            className={`rounded-lg px-3 py-1.5 font-mono text-lg tabular-nums ${
+              lowTime ? "bg-incorrect-soft text-incorrect" : "bg-surface-2 text-ink"
+            }`}
+            aria-live={lowTime ? "polite" : "off"}
+          >
+            {formatClock(state.remainingSeconds)}
+          </span>
+        )}
         <span className="text-sm text-ink-2">
           {answeredCount} of {total} answered
         </span>
@@ -223,7 +245,7 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
           onClick={submit}
           className="ml-auto rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
         >
-          Submit paper
+          {timed ? "Submit paper" : "Mark answers"}
         </button>
       </div>
 
@@ -337,10 +359,10 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
             })}
           </div>
           <Link
-            href={`/papers/${paperSlug}`}
+            href={backHref}
             className="mt-5 inline-block text-sm text-ink-3 transition-colors hover:text-ink"
           >
-            ← Leave test
+            ← {backLabel}
           </Link>
         </aside>
       </div>
@@ -349,16 +371,16 @@ export function McqArena({ paperSlug, paperTitle, questions }: Props) {
 }
 
 function Results({
-  paperSlug,
-  paperTitle,
+  backHref,
+  title,
   questions,
   answers,
   score,
   timeSpent,
   onRetake,
 }: {
-  paperSlug: string;
-  paperTitle: string;
+  backHref: Route;
+  title: string;
   questions: McqQuestion[];
   answers: Record<string, string>;
   score: number;
@@ -371,7 +393,7 @@ function Results({
   return (
     <div>
       <div className="rounded-2xl border border-line bg-surface p-7 shadow-card">
-        <p className="text-sm text-ink-3">{paperTitle}</p>
+        <p className="text-sm text-ink-3">{title}</p>
         <div className="mt-3 flex flex-wrap items-end gap-8">
           <div>
             <span className="font-serif text-5xl tabular-nums text-ink">
@@ -486,10 +508,10 @@ function Results({
       </div>
 
       <Link
-        href={`/papers/${paperSlug}`}
+        href={backHref}
         className="mt-8 inline-block text-sm text-ink-3 transition-colors hover:text-ink"
       >
-        ← Back to the paper
+        ← Back
       </Link>
     </div>
   );

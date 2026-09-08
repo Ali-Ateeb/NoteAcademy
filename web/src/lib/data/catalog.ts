@@ -10,8 +10,9 @@
  * reaching into the database directly — makes the switch a rewrite.
  */
 
+import { reviewItems, reviewTopicOptions } from "./reviewSeed";
 import * as seed from "./seed";
-import type { Level, McqQuestion, Paper, Subject, Topic } from "./types";
+import type { Level, McqQuestion, Paper, ReviewItem, Subject, Topic } from "./types";
 
 export function isBackedByDatabase(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
@@ -95,6 +96,24 @@ export async function getPlayablePapers(subjectSlug: string): Promise<Paper[]> {
   const papers = await getPapers(subjectSlug);
   const loaded = new Set(seed.mcqQuestions.map((q) => q.paperSlug));
   return papers.filter((p) => loaded.has(p.slug));
+}
+
+/** Questions the pipeline extracted but would not publish on its own.
+ *
+ *  In the database this is `extraction_status = 'needs_review'` joined to
+ *  question_topics for the classifier's proposals. Ordered worst-confidence
+ *  first: the questions most likely to be wrong are the ones a reviewer should
+ *  spend their attention on. */
+export async function getReviewQueue(): Promise<ReviewItem[]> {
+  return [...reviewItems].sort(
+    (a, b) => a.extractionConfidence - b.extractionConfidence,
+  );
+}
+
+export async function getReviewTopicOptions(): Promise<
+  { code: string; title: string }[]
+> {
+  return reviewTopicOptions;
 }
 
 export const SEED_NOTICE = seed.SEED_NOTICE;

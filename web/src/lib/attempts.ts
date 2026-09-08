@@ -25,7 +25,10 @@ export interface AttemptRecord {
 }
 
 export interface SessionState {
-  paperSlug: string;
+  /** Identifies the sitting: a paper slug for an exam, a topic key for a drill.
+   *  Distinct keys are what stop a topic drill overwriting a half-finished
+   *  paper. */
+  sessionKey: string;
   questionIds: string[];
   answers: Record<string, string>;
   flagged: string[];
@@ -82,17 +85,17 @@ export function currentAnswers(): Map<string, AttemptRecord> {
   return latest;
 }
 
-export function loadSession(paperSlug: string): SessionState | null {
-  return read<SessionState | null>(SESSION_PREFIX + paperSlug, null);
+export function loadSession(sessionKey: string): SessionState | null {
+  return read<SessionState | null>(SESSION_PREFIX + sessionKey, null);
 }
 
 export function saveSession(state: SessionState): void {
-  write(SESSION_PREFIX + state.paperSlug, state);
+  write(SESSION_PREFIX + state.sessionKey, state);
 }
 
-export function clearSession(paperSlug: string): void {
+export function clearSession(sessionKey: string): void {
   try {
-    localStorage.removeItem(SESSION_PREFIX + paperSlug);
+    localStorage.removeItem(SESSION_PREFIX + sessionKey);
   } catch {
     // Nothing to do; a stale session is harmless.
   }

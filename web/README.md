@@ -41,7 +41,9 @@ attempt log. Set `CHROMIUM_PATH` if Playwright's browser lives somewhere unusual
 | `/papers/[paper]` | Split-screen viewer: QP beside MS / ER |
 | `/practice/[paper]` | Timed, resumable MCQ arena |
 | `/topics/[subject]/[topic]` | Topical questions with mark schemes |
+| `/topics/[subject]/[topic]/practice` | Untimed drill of one topic |
 | `/dashboard` | Accuracy per topic, worst first |
+| `/admin/review` | Review queue for questions the pipeline held back |
 
 Everything except `/dashboard` is statically generated. That is not an
 optimisation — "5054 may june 2019 paper 12" is a real search query, and tens of
@@ -74,3 +76,15 @@ into their account on first login instead of being thrown away, and it is why
 
 **The clock does not run while the tab is closed.** Losing connectivity should
 never cost a student the paper.
+
+**Topic drills are untimed, and papers are timed.** Drilling a weak topic is
+about getting it right; a countdown adds pressure to precisely the thing the
+student is already worst at. `McqArena` takes `secondsPerQuestion={null}` for
+drills, and a distinct `sessionKey`, so a drill can never overwrite a
+half-finished exam. `e2e/smoke.mjs` checks that specifically.
+
+**The review queue is keyboard-only by design.** A real backfill puts thousands
+of questions through `/admin/review`, so every decision is one keystroke (A, R,
+U, J/K, 1–9) and the queue is ordered worst-confidence first — attention goes
+where the pipeline is least sure, not in page order. Each item names the specific
+check that held it back, which is what makes a queue that size tractable.
