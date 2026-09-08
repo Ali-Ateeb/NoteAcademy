@@ -24,6 +24,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import { signedUrls } from "../storage";
 import { reviewItems, reviewTopicOptions } from "./reviewSeed";
 import * as seed from "./seed";
 import type {
@@ -143,6 +144,7 @@ interface McqRow {
   mark_scheme_text: string | null;
   examiner_comment: string | null;
   topic_codes: string[];
+  crop_storage_key: string | null;
 }
 
 const toSubject = (row: SubjectRow): Subject => ({
@@ -188,7 +190,16 @@ const toMcq = (row: McqRow): McqQuestion => ({
   markScheme: row.mark_scheme_text,
   examinerNote: row.examiner_comment,
   topicCodes: row.topic_codes,
+  cropUrl: assetUrl(row.crop_storage_key),
 });
+
+/** The stable, unsigned URL a page can carry. /api/asset checks the question is
+ *  approved and redirects to a freshly signed one, so a prerendered page never
+ *  holds a link that expires. */
+function assetUrl(storageKey: string | null): string | null {
+  if (!storageKey) return null;
+  return `/api/asset/${storageKey.split("/").map(encodeURIComponent).join("/")}`;
+}
 
 const SUBJECT_COLUMNS = "slug,level_code,syllabus_code,title,description,is_published";
 const TOPIC_COLUMNS =
@@ -198,7 +209,7 @@ const PAPER_COLUMNS =
 // One string literal, not a concatenation: supabase-js infers the row type from
 // the literal text of the column list, and `"a," + "b"` widens to `string`.
 const MCQ_COLUMNS =
-  "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes";
+  "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key";
 
 /* ---------------------------------------------------------------------------
    Catalogue
@@ -455,6 +466,16 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
     return flagged || (a.extraction_confidence ?? 0) - (b.extraction_confidence ?? 0);
   });
 
+  // Signed here rather than through /api/asset: every row in this queue is
+  // unapproved, which is exactly what that route refuses. One request for the
+  // whole page — a hundred crops signed one at a time is a hundred round trips
+  // before anything renders.
+  const urls = await signedUrls(
+    flaggedFirst.map((row) => row.crop_storage_key).filter((key): key is string =>
+      Boolean(key),
+    ),
+  );
+
   return flaggedFirst.map((row) => ({
     id: row.id,
     paperSlug: row.paper_slug,
@@ -466,6 +487,7 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
     markScheme: row.mark_scheme_text,
     correctOption: row.correct_option,
     cropStorageKey: row.crop_storage_key,
+    cropUrl: (row.crop_storage_key && urls.get(row.crop_storage_key)) || null,
     extractionConfidence: row.extraction_confidence ?? 0,
     flags: row.review_flags,
     proposedTopics: row.proposed_topics.map((topic) => ({
@@ -485,6 +507,31 @@ export async function getReviewTopicOptions(): Promise<
 
   const topics = await getTopics("physics-5054");
   return topics.map(({ code, title }) => ({ code, title }));
+}
+
+/** Is this crop attached to a question a student is allowed to see?
+ *
+ *  Asked through the anonymous client on purpose: its view of `questions` is
+ *  whatever row level security allows, which is approved rows only. The answer
+ *  therefore comes from the same policy that protects the question itself,
+ *  rather than from a second rule that has to be kept in step with it. */
+export async function assetIsPublic(storageKey: string): Promise<boolean> {
+  const client = db();
+  // With no database configured there is no private bank to protect and no
+  // storage to serve from; the fixtures carry no crops at all.
+  if (!client) return false;
+
+  const { data, error } = await client
+    .from("question_assets")
+    .select("storage_key,questions!inner(id)")
+    .eq("storage_key", storageKey)
+    .limit(1);
+
+  if (error) {
+    console.warn(`checking ${storageKey} failed: ${error.message}`);
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
 }
 
 export const SEED_NOTICE = seed.SEED_NOTICE;

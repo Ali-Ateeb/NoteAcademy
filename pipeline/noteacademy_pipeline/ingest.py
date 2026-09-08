@@ -65,6 +65,10 @@ class IngestReport:
     with_answer: int = 0
     flagged: int = 0
     crops_written: int = 0
+    crops_uploaded: int = 0
+    # (storage_key, local file) for every crop written this run, so uploading is
+    # a separate decision from segmenting and can be retried on its own.
+    crops: list[tuple[str, Path]] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -238,7 +242,7 @@ def ingest_mcq_paper(
         report.questions += 1
 
         if crops_dir is not None:
-            crop(
+            written = crop(
                 qp_pdf,
                 region.page_number,
                 region.bbox,
@@ -246,6 +250,7 @@ def ingest_mcq_paper(
                 dpi=crop_dpi,
             )
             report.crops_written += 1
+            report.crops.append((crop_key(prefix, region.number), written))
 
     with conn.cursor() as cur:
         cur.execute("select slug from papers where id = %s", (paper_id,))

@@ -69,6 +69,11 @@ export interface McqQuestion {
   markScheme: string | null;
   examinerNote: string | null;
   topicCodes: string[];
+  /** The question as printed. For a multiple-choice question ingested
+   *  geometrically this is the *only* faithful rendering: the text is not
+   *  extracted, and the options are frequently diagrams. Null until the crop
+   *  has been uploaded. */
+  cropUrl: string | null;
 }
 
 export const SEASON_LABELS: Record<Season, string> = {
@@ -157,6 +162,9 @@ export interface ReviewItem {
   /** Object-storage key for the rendered crop. Served as a signed URL; the
    *  scaffold shows a placeholder until storage is wired up. */
   cropStorageKey: string | null;
+  /** Signed at render time. The queue shows unapproved questions, which
+   *  /api/asset deliberately refuses, so these are signed directly instead. */
+  cropUrl: string | null;
   extractionConfidence: number;
   flags: ReviewFlag[];
   proposedTopics: ProposedTopic[];

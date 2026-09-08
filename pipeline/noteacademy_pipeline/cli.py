@@ -200,6 +200,7 @@ def load_mcq(
     subject: str = typer.Option(None, help="Subject slug. Inferred from the syllabus code."),
     crops: Path = typer.Option(None, help="Also write the crops here, as PNG."),
     dpi: int = typer.Option(150, help="Crop resolution."),
+    upload: bool = typer.Option(True, help="Upload the crops, if storage is set up."),
     dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
 ) -> None:
     """Load a multiple-choice sitting into the database. No model, no API key.
@@ -215,6 +216,7 @@ def load_mcq(
     from .ingest import disagreements, ingest_mcq_paper, resolve_subject_slug
     from .load import connect
     from .naming import parse_paper_filename
+    from .storage import StorageError, SupabaseStorage, upload_crops
 
     if not settings.database_url:
         console.print("[red]DATABASE_URL is not set.[/red]")
@@ -255,6 +257,22 @@ def load_mcq(
         else:
             conn.commit()
 
+    if upload and not dry_run and report.crops:
+        storage = SupabaseStorage.from_settings(settings)
+        if storage is None:
+            # Not an error: the questions are loaded and the crops are on disk.
+            # Say what is missing rather than failing a run that mostly worked.
+            console.print(
+                "[yellow]storage is not configured, so the crops stay local — "
+                "until they are uploaded these questions have nothing to "
+                "display[/yellow]"
+            )
+        else:
+            try:
+                report.crops_uploaded = upload_crops(storage, report.crops)
+            except StorageError as error:
+                console.print(f"[red]upload failed: {error}[/red]")
+
     for problem in report.problems:
         console.print(f"[red]{problem}[/red]")
 
@@ -271,6 +289,8 @@ def load_mcq(
     table.add_row("flagged for review", str(report.flagged))
     if crops is not None:
         table.add_row("crops written", f"{report.crops_written} -> {crops}")
+    if report.crops_uploaded:
+        table.add_row("crops uploaded", str(report.crops_uploaded))
     console.print(table)
     console.print(
         "[dim]Loaded unapproved. Nothing here is visible to a student until it "

@@ -3,6 +3,11 @@ import type { Metadata } from "next";
 import { ReviewQueue } from "@/components/ReviewQueue";
 import { getReviewQueue, getReviewTopicOptions } from "@/lib/data/catalog";
 
+/** Rendered per request, not at build time. The queue changes as papers are
+ *  ingested, and its crops are signed URLs that expire — a prerendered page
+ *  would show a stale queue full of dead image links. */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Review queue",
   description: "Approve or reject questions the ingestion pipeline was unsure about.",

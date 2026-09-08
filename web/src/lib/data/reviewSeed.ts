@@ -29,6 +29,7 @@ export const reviewItems: ReviewItem[] = [
     markScheme: "C — v = fλ = 50 Hz × 4.0 m = 200 m/s.",
     correctOption: "C",
     cropStorageKey: "papers/5054/2019-mj/p12/crops/13.png",
+    cropUrl: null,
     extractionConfidence: 0.62,
     flags: ["low_tag_confidence"],
     proposedTopics: [
@@ -58,6 +59,7 @@ export const reviewItems: ReviewItem[] = [
     markScheme: null,
     correctOption: null,
     cropStorageKey: "papers/5054/2019-mj/p12/crops/27.png",
+    cropUrl: null,
     extractionConfidence: 0.88,
     flags: ["unmatched_mark_scheme"],
     proposedTopics: [
@@ -81,6 +83,7 @@ export const reviewItems: ReviewItem[] = [
     markScheme: "B — E = mcΔθ = 0.50 × 4200 × 40 = 84 000 J.",
     correctOption: "B",
     cropStorageKey: "papers/5054/2019-mj/p12/crops/31.png",
+    cropUrl: null,
     extractionConfidence: 0.41,
     flags: ["text_layer_mismatch", "low_tag_confidence"],
     proposedTopics: [
@@ -110,6 +113,7 @@ export const reviewItems: ReviewItem[] = [
     markScheme: "A — the angle between the refracted ray and the normal in the second medium.",
     correctOption: "A",
     cropStorageKey: "papers/5054/2019-mj/p12/crops/34.png",
+    cropUrl: null,
     extractionConfidence: 0.71,
     flags: ["bbox_outside_page"],
     proposedTopics: [
@@ -133,6 +137,7 @@ export const reviewItems: ReviewItem[] = [
     markScheme: null,
     correctOption: null,
     cropStorageKey: "papers/5054/2019-mj/p12/crops/38.png",
+    cropUrl: null,
     extractionConfidence: 0.79,
     flags: ["ambiguous_mark_scheme", "no_text_layer"],
     proposedTopics: [

@@ -282,18 +282,37 @@ function ReviewCard({
         ))}
       </div>
 
-      <div className="mt-5 flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-line bg-surface-2 p-5 text-center">
-        <p className="text-xs leading-relaxed text-ink-3">
-          Rendered crop
-          <br />
-          <span className="font-mono">{item.cropStorageKey ?? "not generated"}</span>
-          <br />
-          <span className="mt-1 inline-block">
-            The reviewer checks the extracted text against this image, which is
-            why the crop is stored rather than only the text.
-          </span>
-        </p>
-      </div>
+      {item.cropUrl ? (
+        /* The question as printed. This is what the reviewer is actually
+           judging — the extracted text is checked against it, and for a
+           multiple-choice question whose options are diagrams it is the only
+           faithful rendering there is. White background regardless of theme:
+           it is a photograph of a page, not part of the interface. */
+        <div className="mt-5 overflow-hidden rounded-xl border border-line bg-white">
+          {/* eslint-disable-next-line @next/next/no-img-element -- a signed URL
+              on a bucket host, resolved per request; next/image would need the
+              host allow-listed and would proxy every crop for no benefit. */}
+          <img
+            src={item.cropUrl}
+            alt={`Question ${item.displayLabel} of ${item.paperTitle}, as printed`}
+            className="w-full"
+            loading="lazy"
+          />
+        </div>
+      ) : (
+        <div className="mt-5 flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-line bg-surface-2 p-5 text-center">
+          <p className="text-xs leading-relaxed text-ink-3">
+            No crop to show
+            <br />
+            <span className="font-mono">{item.cropStorageKey ?? "not generated"}</span>
+            <br />
+            <span className="mt-1 inline-block">
+              The reviewer checks the question against this image, so approving
+              without one is signing off on something nobody has seen.
+            </span>
+          </p>
+        </div>
+      )}
 
       <div className="mt-5">
         <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">

@@ -268,7 +268,26 @@ export function McqArena({
             </button>
           </div>
 
-          <p className="text-[15px] leading-relaxed text-ink">{current.questionText}</p>
+          {current.questionText && (
+            <p className="text-[15px] leading-relaxed text-ink">{current.questionText}</p>
+          )}
+
+          {current.cropUrl && (
+            /* The question as printed. For a paper ingested geometrically this
+               is the whole question — text extraction scrambles the reading
+               order and loses every diagram, and a 2015 circuit question uses
+               four circuit diagrams as its options. White regardless of theme:
+               it is a page, not part of the interface. */
+            <div className="overflow-hidden rounded-xl border border-line bg-white">
+              {/* eslint-disable-next-line @next/next/no-img-element -- signed
+                  URL on a bucket host, resolved per request. */}
+              <img
+                src={current.cropUrl}
+                alt={`Question ${current.displayLabel}, as printed`}
+                className="w-full"
+              />
+            </div>
+          )}
 
           <div className="mt-6 space-y-2" role="radiogroup" aria-label="Answer options">
             {OPTIONS.map((option) => {
@@ -293,9 +312,14 @@ export function McqArena({
                   >
                     {option}
                   </span>
-                  <span className="text-sm leading-relaxed text-ink">
-                    {current.options[option]}
-                  </span>
+                  {/* Nothing beside the letter when the options are printed
+                      in the crop above. An empty string here would render as a
+                      blank line that looks like a failed load. */}
+                  {current.options[option] && (
+                    <span className="text-sm leading-relaxed text-ink">
+                      {current.options[option]}
+                    </span>
+                  )}
                 </button>
               );
             })}

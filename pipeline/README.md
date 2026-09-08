@@ -45,12 +45,14 @@ mark scheme PDF ──▶ render ──▶ extract entries ───────
 | load | `load.py` | Idempotent writes, as `extracted` / `needs_review` |
 | ingest (MCQ) | `ingest.py` | The three deterministic stages, straight into Postgres |
 | syllabus | `syllabus.py` | Read the published syllabus PDF into the topic tree |
+| upload | `storage.py` | Put the crops where the app can serve them from |
 
 ```bash
 noteacademy render      paper.pdf --out work/5054-2026-mj-11
 noteacademy segment-mcq qp.pdf --out work/crops     # geometric, free
 noteacademy mcq-key     ms.pdf                      # text layer, free
 noteacademy load-mcq    5054_s19_qp_11.pdf 5054_s19_ms_11.pdf --crops work/crops
+                        # crops upload automatically when storage is configured
 noteacademy load-syllabus 5054-2026-2028-syllabus.pdf --source-url https://...
 noteacademy extract     work/5054-2026-mj-11 --pdf qp.pdf
 noteacademy estimate    --papers 3400 --pages 14
@@ -86,6 +88,13 @@ two files are checked against each other before anything is written. A mark
 scheme from the right session and the wrong variant is the ingestion mistake that
 matters most: every answer it supplies is a plausible letter and most of them are
 wrong, and nothing downstream could tell.
+
+Crops upload as part of the same run when `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are set — Supabase Storage needs no second account
+and no S3 keys, and the bucket stays private with the app handing out
+short-lived signed URLs. `--no-upload` keeps them local. The storage *key* is
+what the database records, never a URL, so swapping the bucket for R2 or S3
+later changes this module and nothing else.
 
 What it deliberately does *not* write is question and option text. Reading order
 in these papers is scrambled (see below), so text taken from them would look

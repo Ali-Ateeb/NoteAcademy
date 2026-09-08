@@ -46,6 +46,13 @@ class Settings:
     anthropic_api_key: str = ""
     voyage_api_key: str = ""
 
+    # Supabase Storage. The service role key is the only credential needed, and
+    # it is the same one the web app uses server-side — never shipped to a
+    # browser, and never prefixed NEXT_PUBLIC_.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    storage_bucket: str = ""
+
     # Keep the most capable model here. A segmentation or tagging error is
     # written to the database once and then silently degrades every feature
     # built on top of it, so this is the wrong place to economise — the saving
@@ -69,6 +76,9 @@ class Settings:
             database_url=os.environ.get("DATABASE_URL", ""),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
             voyage_api_key=os.environ.get("VOYAGE_API_KEY", ""),
+            supabase_url=os.environ.get("SUPABASE_URL", ""),
+            supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
+            storage_bucket=os.environ.get("STORAGE_BUCKET", ""),
             extraction_model=os.environ.get(
                 "NOTEACADEMY_EXTRACTION_MODEL", cls.extraction_model
             ),
