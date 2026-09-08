@@ -116,3 +116,92 @@ def match_mcq_answers(
             unmatched.append(label)
 
     return matched, unmatched
+
+
+# ---------------------------------------------------------------------------
+# MCQ answer grids
+#
+# Validated against real CAIE papers (5054/11 May/June 2026): the multiple-choice
+# mark scheme is a "Question / Answer / Marks" table that survives intact in the
+# PDF's text layer. It needs no vision model at all — this is a strict parser
+# over the text, which means zero inference cost and, more importantly, zero
+# possibility of a hallucinated answer key.
+#
+# An answer key is the one artefact where a plausible-looking error is worst: a
+# student trusts it completely and learns the wrong thing. So the parser refuses
+# anything it does not recognise rather than guessing, and the caller falls back
+# to vision only when this returns nothing.
+# ---------------------------------------------------------------------------
+
+GRID_HEADER = re.compile(r"question\s+answer\s+marks", re.IGNORECASE)
+VALID_OPTIONS = frozenset("ABCDE")
+
+
+def parse_mcq_answer_grid(page_texts: list[str]) -> dict[str, str]:
+    """Read the answer key out of an MCQ mark scheme's text layer.
+
+    Accepts the text of every page and returns {question number: option}.
+    Returns an empty dict when the pages do not look like an answer grid — a
+    scanned mark scheme, or a structured paper — so the caller can fall back to
+    the vision path.
+
+    Rows are matched as a strict [number][single letter][mark count] triple.
+    Requiring the marks column is what keeps page furniture out: "Page 2 of 3"
+    and "5054/11 Mark Scheme June 2026" both contain bare numbers, but neither
+    forms a triple.
+    """
+    answers: dict[str, str] = {}
+    conflicts: set[str] = set()
+
+    for text in page_texts:
+        if not GRID_HEADER.search(re.sub(r"\s+", " ", text)):
+            continue
+
+        tokens = [line.strip() for line in text.splitlines() if line.strip()]
+        i = 0
+        while i + 2 < len(tokens):
+            number, option, marks = tokens[i], tokens[i + 1], tokens[i + 2]
+            if (
+                number.isdigit()
+                and len(option) == 1
+                and option.upper() in VALID_OPTIONS
+                and marks.isdigit()
+            ):
+                key = str(int(number))
+                value = option.upper()
+                if key in answers and answers[key] != value:
+                    # The same question answered twice, differently. Never pick
+                    # one; drop it and let a human look.
+                    conflicts.add(key)
+                answers[key] = value
+                i += 3
+            else:
+                i += 1
+
+    for key in conflicts:
+        answers.pop(key, None)
+
+    return answers
+
+
+def validate_answer_grid(answers: dict[str, str], expected_count: int) -> list[str]:
+    """Check a parsed grid is complete and contiguous before it is trusted.
+
+    A grid that is missing question 27, or that stops at 38 of 40, is a parser
+    failure — not a paper with fewer questions. Reporting that is the difference
+    between noticing and shipping a bank with holes in it.
+    """
+    problems: list[str] = []
+
+    if len(answers) != expected_count:
+        problems.append(f"parsed {len(answers)} answers, expected {expected_count}")
+
+    numbers = sorted(int(k) for k in answers)
+    if numbers:
+        missing = sorted(set(range(1, expected_count + 1)) - set(numbers))
+        if missing:
+            problems.append(f"missing question(s): {missing}")
+        if numbers[0] != 1:
+            problems.append(f"grid starts at {numbers[0]}, not 1")
+
+    return problems

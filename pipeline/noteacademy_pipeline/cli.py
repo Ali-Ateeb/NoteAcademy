@@ -105,26 +105,90 @@ def extract(
 def mcq_key(
     ms_pdf: Path = typer.Argument(..., exists=True, help="MCQ mark scheme PDF."),
     out: Path = typer.Option(None, help="Where to write answers.json."),
+    expect: int = typer.Option(40, help="Questions the paper should contain."),
+    force_vision: bool = typer.Option(False, help="Skip the text parser."),
 ) -> None:
     """Read the answer grid out of an MCQ mark scheme.
 
-    The cheapest useful thing this pipeline does, and the reason the practice
-    arena can ship before structured-paper segmentation is trustworthy.
+    Tries the text layer first. CAIE multiple-choice mark schemes are a
+    Question/Answer/Marks table that survives extraction intact, so the usual
+    case costs nothing and cannot hallucinate an answer key — which matters more
+    here than anywhere else in the pipeline, because a student trusts the key
+    completely. Vision is the fallback for scanned or non-conforming papers.
     """
-    from .extract import extract_mcq_answers
+    import pymupdf
+
+    from .markscheme import parse_mcq_answer_grid, validate_answer_grid
 
     work = settings.work_dir / ms_pdf.stem
-    pages = render_pdf(ms_pdf, work)
-    answers = extract_mcq_answers(pages)
+    answers: dict[str, str] = {}
+    source = "text layer"
+
+    if not force_vision:
+        with pymupdf.open(ms_pdf) as doc:
+            answers = parse_mcq_answer_grid([page.get_text("text") for page in doc])
+        problems = validate_answer_grid(answers, expect) if answers else ["no grid found"]
+        if problems:
+            console.print(f"[yellow]text layer: {'; '.join(problems)}[/yellow]")
+            answers = {}
+
+    if not answers:
+        from .extract import extract_mcq_answers
+
+        source = "vision"
+        console.print("[yellow]falling back to the vision path[/yellow]")
+        pages = render_pdf(ms_pdf, work)
+        answers = extract_mcq_answers(pages)
 
     out = out or work / "answers.json"
     out.write_text(json.dumps(answers, indent=2))
 
-    table = Table("Q", "Ans", title=f"{len(answers)} answers")
+    table = Table("Q", "Ans", title=f"{len(answers)} answers via {source}")
     for number in sorted(answers, key=lambda n: int(n) if n.isdigit() else 0):
         table.add_row(number, answers[number])
     console.print(table)
     console.print(f"-> {out}")
+
+
+@app.command(name="segment-mcq")
+def segment_mcq(
+    qp_pdf: Path = typer.Argument(..., exists=True, help="Multiple-choice question paper."),
+    out: Path = typer.Option(None, help="Directory for crops."),
+    dpi: int = typer.Option(150, help="Crop resolution."),
+) -> None:
+    """Locate and crop every question in a multiple-choice paper.
+
+    Geometric, not inferred: CAIE puts the question number alone in a left
+    gutter, so boundaries are a fact about the page rather than something a
+    model has to guess. No API call, and no possibility of an invented question.
+    """
+    from .segment import segment_mcq_paper
+
+    regions, problems = segment_mcq_paper(qp_pdf)
+
+    if problems:
+        for problem in problems:
+            console.print(f"[red]{problem}[/red]")
+        console.print(
+            "[yellow]Geometry does not match the multiple-choice template — "
+            "send this paper down the vision path instead of trusting these "
+            "boxes.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    out = out or settings.work_dir / qp_pdf.stem / "crops"
+    for region in regions:
+        crop(
+            qp_pdf,
+            region.page_number,
+            region.bbox,
+            out / f"q{region.number:02d}.png",
+            dpi=dpi,
+        )
+
+    console.print(
+        f"segmented and cropped [bold]{len(regions)}[/bold] questions -> {out}"
+    )
 
 
 @app.command()
@@ -164,7 +228,13 @@ def estimate(
     table.add_row("[bold]extraction cost", f"[bold]${cost:,.0f}")
     console.print(table)
     console.print(
-        "\n[dim]Inference is not the constraint here — human review is. Budget for "
+        "\n[dim]Multiple-choice papers cost nothing: their answer keys parse from "
+        "the mark scheme's text layer and their questions segment geometrically "
+        "(`mcq-key`, `segment-mcq`). This estimate covers the structured papers, "
+        "which do need vision.[/dim]"
+    )
+    console.print(
+        "[dim]Inference is not the constraint here — human review is. Budget for "
         "the review queue, not for tokens.[/dim]"
     )
 

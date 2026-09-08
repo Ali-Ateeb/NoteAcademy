@@ -27,6 +27,7 @@ mark scheme PDF ──▶ render ──▶ extract entries ───────
 | Stage | Module | What it does |
 |---|---|---|
 | render | `render.py` | Rasterise pages at 200 dpi, pull the embedded text layer |
+| segment (MCQ) | `segment.py` | Locate questions geometrically — no model, no API |
 | extract | `extract.py` | Vision model returns questions in a fixed schema |
 | cross-check | `extract.py` | Compare against the text layer; flag disagreements |
 | crop | `render.py` | Cut each question's image region out of the source page |
@@ -36,11 +37,46 @@ mark scheme PDF ──▶ render ──▶ extract entries ───────
 | load | `load.py` | Idempotent writes, as `extracted` / `needs_review` |
 
 ```bash
-noteacademy render  paper.pdf --out work/5054-2019-mj-12
-noteacademy extract work/5054-2019-mj-12 --pdf paper.pdf
-noteacademy mcq-key ms.pdf
-noteacademy estimate --papers 3400 --pages 14
+noteacademy render      paper.pdf --out work/5054-2026-mj-11
+noteacademy segment-mcq qp.pdf --out work/crops     # geometric, free
+noteacademy mcq-key     ms.pdf                      # text layer, free
+noteacademy extract     work/5054-2026-mj-11 --pdf qp.pdf
+noteacademy estimate    --papers 3400 --pages 14
 ```
+
+## Measured against a real paper
+
+Everything below was verified against **5054/11 May/June 2026** (question paper
+and mark scheme), not assumed:
+
+| Assumption | Result |
+|---|---|
+| CAIE PDFs carry a real text layer | **Confirmed.** 16/16 QP pages and 3/3 MS pages. |
+| MCQ mark schemes are a parsable grid | **Confirmed.** 40/40 answers from the text layer, no model. |
+| MCQ questions can be located without a model | **Confirmed.** 40/40 via gutter geometry, no false positives. |
+| Text extraction alone is insufficient | **Confirmed, emphatically.** See below. |
+
+**Multiple-choice papers need no inference at all.** The mark scheme is a
+Question/Answer/Marks table that survives extraction intact, and CAIE lays
+questions out on a strict grid with the number alone in a left gutter — so both
+the answer key and the question boundaries are facts about the page rather than
+things a model has to infer. That removes the cost *and* the hallucination risk
+from the highest-value part of the corpus. Vision remains the fallback for
+scanned or non-conforming papers, and the route for structured papers.
+
+**Text extraction alone would produce a broken product.** In the real paper:
+
+- Reading order is scrambled. Question numbers come *after* their stem, and
+  option letters *after* their option text ("The cyclist is at rest." then "A").
+- Options frequently extract in reverse — D, C, B, A.
+- All 40 diagrams are **vector artwork, not images**: 12 of 16 pages carry
+  substantial vector drawings and the file contains zero embedded rasters. A
+  speed–time graph extracts as a scatter of axis labels — "10 5 0 0 2 4 6 8 10
+  12 time / s" — which is unanswerable.
+
+This is why crops are the display artifact and text is only the search index.
+The rendered crop shows the question exactly as printed, options in the right
+order, graph intact.
 
 ## Six decisions that matter more than the code
 
@@ -83,10 +119,14 @@ here by a wide margin.
 
 ## Cost
 
-`noteacademy estimate` prices a backfill before you commit to one. Roughly ten
-subjects across sixteen years — ~3,400 documents, ~48k pages — comes to about
-$1,400 of extraction at `claude-opus-5` list pricing, assuming the cached system
-prefix. Measure on one real subject and re-run with the numbers you observed.
+Multiple-choice papers now cost **nothing** — `mcq-key` and `segment-mcq` are
+deterministic. That covers Paper 1 across every subject, which is the wedge.
+
+`noteacademy estimate` prices the remaining structured papers. Roughly ten
+subjects across sixteen years — ~3,400 documents, ~48k pages — came to about
+$1,400 at `claude-opus-5` list pricing before the MCQ path was made free;
+excluding Paper 1 and its mark schemes takes a meaningful bite out of that.
+Re-measure once a structured paper has actually been through the vision path.
 
 Inference is not the constraint. **Human review is.** Budget for the review
 queue, not for tokens, and do not economise on the extraction model: a

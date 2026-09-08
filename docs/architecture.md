@@ -55,6 +55,14 @@ PDF ─▶ render ─▶ vision extract ─▶ cross-check ─▶ crop ─┐
 mark scheme ─▶ render ─▶ extract entries ───────────────┘
 ```
 
+**Multiple-choice papers skip it entirely.** Validated against 5054/11 May/June
+2026: the MCQ mark scheme is a Question/Answer/Marks table that parses from the
+text layer (40/40), and CAIE puts each question number alone in a left gutter, so
+question boundaries are geometric (40/40, no false positives). Both are facts
+about the page, so the wedge feature costs nothing and cannot hallucinate. The
+vision path below is for structured papers and for scanned or non-conforming
+multiple-choice papers.
+
 A vision model rather than a layout-analysis stack: CAIE layouts vary across 25
 years and 40 subjects, and a classical pipeline needs retuning per variation.
 Structured output means the model cannot return a shape the loader fails to
