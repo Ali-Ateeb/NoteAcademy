@@ -43,14 +43,34 @@ mark scheme PDF ──▶ render ──▶ extract entries ───────
 | tag | `tagging.py` | Assign syllabus topics from a closed list, with confidence |
 | embed | `embed.py` | Vectors for topical search and question identification |
 | load | `load.py` | Idempotent writes, as `extracted` / `needs_review` |
+| ingest (MCQ) | `ingest.py` | The three deterministic stages, straight into Postgres |
 
 ```bash
 noteacademy render      paper.pdf --out work/5054-2026-mj-11
 noteacademy segment-mcq qp.pdf --out work/crops     # geometric, free
 noteacademy mcq-key     ms.pdf                      # text layer, free
+noteacademy load-mcq    5054_s19_qp_11.pdf 5054_s19_ms_11.pdf --crops work/crops
 noteacademy extract     work/5054-2026-mj-11 --pdf qp.pdf
 noteacademy estimate    --papers 3400 --pages 14
 ```
+
+`load-mcq` is the whole multiple-choice path in one command: segment, read the
+answer key, crop, and write the paper, its documents and its questions to the
+database. No model, no API key, and idempotent — re-running a paper updates it
+rather than duplicating it.
+
+Both filenames are Cambridge's own (`5054_s19_qp_11.pdf`), so the session,
+component and variant are read from them rather than retyped as flags, and the
+two files are checked against each other before anything is written. A mark
+scheme from the right session and the wrong variant is the ingestion mistake that
+matters most: every answer it supplies is a plausible letter and most of them are
+wrong, and nothing downstream could tell.
+
+What it deliberately does *not* write is question and option text. Reading order
+in these papers is scrambled (see below), so text taken from them would look
+correct in the database and be wrong on the screen. A question arrives as its
+number, its answer and its crop; text comes later, from the vision pass, checked
+against the page. Everything lands unapproved.
 
 ## Measured against a real paper
 
@@ -164,6 +184,7 @@ feature built on top of it.
 .venv/bin/ruff check noteacademy_pipeline tests
 ```
 
-Covers the deterministic half — label normalisation, mark-scheme matching, and
-the cross-check that keeps hallucinated questions out of the database. The model
+Covers the deterministic half — label normalisation, mark-scheme matching,
+filename parsing, the question-paper/mark-scheme agreement check, and the
+cross-check that keeps hallucinated questions out of the database. The model
 calls themselves are not mocked; they are exercised against real papers.

@@ -2,39 +2,52 @@
 
 ## In the repo
 
-- **Schema** — nine migrations, all applied and verified against Postgres 16 +
-  pgvector. `db/smoke_test.sql` exercises ten invariants and rolls back.
+- **Schema** — fourteen migrations, applied to the live Supabase project and
+  verified there. `db/smoke_test.sql` exercises ten invariants and rolls back;
+  all ten pass against the hosted database.
 - **Pipeline** — render, vision extraction, cross-check, crop, mark-scheme
-  matching, topic tagging, embedding, loading, plus a cost estimator. 15 unit
-  tests over the deterministic stages.
+  matching, topic tagging, embedding, loading, deterministic multiple-choice
+  ingestion, plus a cost estimator. 68 unit tests over the deterministic stages.
 - **Web app** — landing, subject directory, subject hub, split-screen viewer,
   timed resumable MCQ arena, topical browser, untimed topic drills, dashboard,
-  and the reviewer's queue at `/admin/review`. 30 statically generated pages;
-  28 browser checks.
+  and the reviewer's queue at `/admin/review`. 28 browser checks.
 
-The app runs on seed fixtures, so everything above is exercisable without a
-database, an API key, or a single real PDF.
+The app runs on seed fixtures with no database, no API key and no PDFs, and
+reads Postgres when it is configured. It never mixes the two.
 
 ## Next, in order
 
-**0. Ingest one real paper end to end**, before anything else here. Every figure
-in `docs/architecture.md` — the $1,400 backfill, the 200 dpi floor, the
-cross-check hit rate — is an estimate until one real Physics 5054 Paper 1 and its
-mark scheme have been through `render → extract → mcq-key`. Half a day, and it
-will change the order of everything below it.
+**0. Make the ingested questions displayable.** Three real Physics 5054 Paper 1
+sittings (2015, 2019, 2026) are in the database — 120 questions, 120/120 with an
+answer, each with its crop box. What they do not have is anything to *show*: no
+option text, because reading order in these papers is scrambled, and no crop
+URL, because object storage is not wired up. Either one unblocks the arena, and
+storage (step 5) is the cheaper and more honest of the two — the crop is the
+question as printed. Until then the bank is real and invisible.
 
-**1. Point the app at Postgres.** Every function in `web/src/lib/data/catalog.ts`
-becomes a query. No page component changes — that is what the seam is for. Add
-Supabase Auth and apply `0009_supabase_auth.sql`.
+**0b. Review and publish.** 120 questions are sitting unapproved. Reviewing them
+needs `SUPABASE_SERVICE_ROLE_KEY` in `web/.env.local` — it is the only
+credential that can read an unapproved question — and publishing the subject is
+a one-line update once its bank has been looked at:
+
+```sql
+update subjects set is_published = true where slug = 'physics-5054';
+```
+
+**1. ~~Point the app at Postgres.~~** Done. `web/src/lib/data/catalog.ts` reads
+the views in `0012_read_views.sql` through supabase-js; no page component
+changed. Supabase Auth itself is still to come — `0009_supabase_auth.sql` is
+applied, but nothing signs in yet.
 
 **2. Move attempts server-side.** `web/src/lib/attempts.ts` already mirrors the
 `attempts` and `practice_sessions` tables, so this is a change of transport.
 Migrate a signed-out student's local history into their account on first login
 rather than discarding it.
 
-**3. Ingest the rest of the first subject.** Physics 5054, MCQ papers first,
-using the measurements from step 0. Wire `/admin/review` to the database as you
-go — the queue UI already exists, it needs a real backing store.
+**3. Ingest the rest of the first subject.** Physics 5054, every MCQ sitting,
+through `noteacademy load-mcq`. Deterministic and free, and now a single command
+per paper. `/admin/review` already reads the database when the service role key
+is present.
 
 **5. Object storage and the real viewer.** R2 or S3 behind short-lived signed
 URLs, PDF.js in `SplitViewer`, question crops served from `question_assets`.
@@ -49,7 +62,14 @@ enforced through `consume_quota()`.
 - The viewer renders placeholder panes; object storage is not wired up.
 - Structured (non-MCQ) questions have no arena — by design, since their
   segmentation is the part that needs the review queue first.
-- No auth. The app is single-user-per-browser until step 1.
+- No auth. The app is single-user-per-browser.
+- Ingested questions carry no text and no option text, so they cannot be
+  rendered yet. See step 0.
+- The topic tree is not loaded: it has to be transcribed from the published
+  syllabus, and a nearly-right tree is worse than an empty one. Tagging (which
+  needs `ANTHROPIC_API_KEY`) is blocked on it.
+- The reviewer's decisions are still local to the browser. Reading the queue is
+  wired to Postgres; writing approvals back is not.
 - `topic_mastery` is a materialised view with no refresh schedule yet.
 - The pipeline's model calls are not covered by tests; only the deterministic
   stages are. They should be exercised against a handful of real papers held as

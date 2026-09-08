@@ -8,6 +8,7 @@ Postgres, it exits.
     noteacademy render   paper.pdf --out work/5054-2019-mj-12
     noteacademy extract  work/5054-2019-mj-12 --pdf paper.pdf
     noteacademy mcq-key  ms.pdf
+    noteacademy load-mcq 5054_s19_qp_11.pdf 5054_s19_ms_11.pdf
     noteacademy estimate --papers 3400 --pages 14
 """
 
@@ -190,6 +191,90 @@ def segment_mcq(
         f"segmented and cropped [bold]{len(regions)}[/bold] questions -> {out}"
     )
 
+
+@app.command(name="load-mcq")
+def load_mcq(
+    qp_pdf: Path = typer.Argument(..., exists=True, help="Multiple-choice question paper."),
+    ms_pdf: Path = typer.Argument(..., exists=True, help="Its mark scheme."),
+    subject: str = typer.Option(None, help="Subject slug. Inferred from the syllabus code."),
+    crops: Path = typer.Option(None, help="Also write the crops here, as PNG."),
+    dpi: int = typer.Option(150, help="Crop resolution."),
+    dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
+) -> None:
+    """Load a multiple-choice sitting into the database. No model, no API key.
+
+    Both files are named by Cambridge (5054_s19_qp_11.pdf), so the session,
+    component and variant are read from the filenames rather than retyped as
+    flags — across a backfill of thousands, a mistyped session files a paper
+    under a year nobody will look in.
+
+    Questions land unapproved, as everything from the pipeline does. They reach
+    students when a human has signed them off in the review queue.
+    """
+    from .ingest import disagreements, ingest_mcq_paper, resolve_subject_slug
+    from .load import connect
+    from .naming import parse_paper_filename
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    try:
+        qp = parse_paper_filename(qp_pdf.stem)
+        ms = parse_paper_filename(ms_pdf.stem)
+    except ValueError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=2) from error
+
+    mismatch = disagreements(qp, ms)
+    if mismatch:
+        console.print(
+            f"[red]{qp_pdf.name} and {ms_pdf.name} disagree on: "
+            f"{', '.join(mismatch)}[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        subject_slug = subject or resolve_subject_slug(conn, qp.syllabus_code)
+        report = ingest_mcq_paper(
+            conn,
+            qp_pdf=qp_pdf,
+            ms_pdf=ms_pdf,
+            paper=qp,
+            subject_slug=subject_slug,
+            crops_dir=crops,
+            crop_dpi=dpi,
+        )
+
+        if report.questions == 0:
+            conn.rollback()
+        elif dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    for problem in report.problems:
+        console.print(f"[red]{problem}[/red]")
+
+    if report.questions == 0:
+        console.print(
+            "[yellow]Nothing loaded. Geometry does not match the multiple-choice "
+            "template — send this paper down the vision path instead.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    table = Table("", "", title=report.paper_slug or subject_slug)
+    table.add_row("questions", str(report.questions))
+    table.add_row("with an answer", f"{report.with_answer}/{report.questions}")
+    table.add_row("flagged for review", str(report.flagged))
+    if crops is not None:
+        table.add_row("crops written", f"{report.crops_written} -> {crops}")
+    console.print(table)
+    console.print(
+        "[dim]Loaded unapproved. Nothing here is visible to a student until it "
+        "is approved in the review queue.[/dim]"
+    )
 
 @app.command()
 def estimate(

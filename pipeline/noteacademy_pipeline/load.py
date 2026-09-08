@@ -11,6 +11,7 @@ deliberate act performed in the review queue.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import psycopg
@@ -29,6 +30,10 @@ class PaperRef:
     season: str
     component: int
     variant: int | None
+    # What the sitting contains. Known from the syllabus before a single
+    # question is loaded, and the arena needs it in order to decide whether a
+    # paper can be sat at all — see db/migrations/0011.
+    question_type: str | None = None
 
 
 def connect(database_url: str) -> psycopg.Connection:
@@ -61,13 +66,57 @@ def resolve_paper_id(conn: psycopg.Connection, ref: PaperRef) -> str:
 
         cur.execute(
             """
-            insert into papers (subject_id, exam_session_id, component, variant, slug)
-            values (%s, %s, %s, %s, %s)
+            insert into papers
+              (subject_id, exam_session_id, component, variant, slug, question_type)
+            values (%s, %s, %s, %s, %s, %s)
             on conflict (subject_id, exam_session_id, component, variant)
-              do update set slug = excluded.slug
+              do update set
+                slug = excluded.slug,
+                question_type = coalesce(excluded.question_type, papers.question_type)
             returning id
             """,
-            (subject["id"], session_id, ref.component, ref.variant, paper_slug),
+            (
+                subject["id"], session_id, ref.component, ref.variant, paper_slug,
+                ref.question_type,
+            ),
+        )
+        return cur.fetchone()["id"]
+
+
+def record_document(
+    conn: psycopg.Connection,
+    paper_id: str,
+    *,
+    doc_type: str,
+    storage_key: str,
+    page_count: int | None = None,
+    byte_size: int | None = None,
+    checksum: str | None = None,
+    source_url: str | None = None,
+) -> str:
+    """Register one of a paper's documents.
+
+    The checksum is the point of this row. CAIE occasionally republishes a
+    document after we have already extracted questions from it, and without a
+    recorded hash that goes unnoticed: the bank keeps serving questions that no
+    longer match the paper a student downloads.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into paper_documents
+              (paper_id, doc_type, storage_key, page_count, byte_size, checksum, source_url)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            on conflict (paper_id, doc_type) do update set
+              storage_key = excluded.storage_key,
+              page_count  = excluded.page_count,
+              byte_size   = excluded.byte_size,
+              checksum    = excluded.checksum,
+              source_url  = coalesce(excluded.source_url, paper_documents.source_url),
+              ingested_at = now()
+            returning id
+            """,
+            (paper_id, doc_type, storage_key, page_count, byte_size, checksum, source_url),
         )
         return cur.fetchone()["id"]
 
@@ -84,8 +133,11 @@ def upsert_question(
     examiner_comment: str | None = None,
     confidence: float | None = None,
     flagged: bool = False,
+    review_flags: Sequence[str] = (),
 ) -> str:
     """Insert or update one question. Keyed on (paper_id, display_label)."""
+    # A flag is a reason, so a reason implies the flag: the two cannot disagree.
+    flagged = flagged or bool(review_flags)
     status = "needs_review" if flagged else "extracted"
 
     with conn.cursor() as cur:
@@ -95,9 +147,9 @@ def upsert_question(
               paper_id, parent_question_id, label, display_label, ordinal,
               question_type, max_marks, question_text, mark_scheme_text,
               examiner_comment, correct_option, extraction_status,
-              extraction_confidence
+              extraction_confidence, review_flags
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             on conflict (paper_id, display_label) do update set
               parent_question_id    = excluded.parent_question_id,
               ordinal               = excluded.ordinal,
@@ -111,6 +163,7 @@ def upsert_question(
               correct_option        = coalesce(excluded.correct_option,
                                                questions.correct_option),
               extraction_confidence = excluded.extraction_confidence,
+              review_flags          = excluded.review_flags,
               -- A paper already signed off by a human stays signed off; a
               -- re-run must not silently revoke an approval.
               extraction_status     = case
@@ -133,9 +186,46 @@ def upsert_question(
                 correct_option if question.question_type == "mcq" else None,
                 status,
                 confidence,
+                list(review_flags),
             ),
         )
         return cur.fetchone()["id"]
+
+
+def replace_options(
+    conn: psycopg.Connection, question_id: str, options: dict[str, str]
+) -> None:
+    """Set a multiple-choice question's option text, replacing what is there.
+
+    Replaced rather than merged: a re-extraction that reads three options where
+    there were four has found something different on the page, and leaving the
+    fourth behind would silently blend two readings of the same question.
+    """
+    with conn.cursor() as cur:
+        cur.execute("delete from question_options where question_id = %s", (question_id,))
+        for letter, content in sorted(options.items()):
+            cur.execute(
+                """
+                insert into question_options (question_id, option, content)
+                values (%s, %s, %s)
+                """,
+                (question_id, letter.upper(), content),
+            )
+
+
+def clear_assets(conn: psycopg.Connection, question_id: str, kind: str) -> None:
+    """Drop a question's assets of one kind, so re-running replaces them.
+
+    `attach_asset` has no natural key to conflict on — a crop is identified by
+    its box, and a re-run that moves the box by a point is the same crop, not a
+    new one. Clearing first is what keeps a second ingestion run from leaving
+    the same question with two overlapping crops.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "delete from question_assets where question_id = %s and kind = %s",
+            (question_id, kind),
+        )
 
 
 def attach_asset(
