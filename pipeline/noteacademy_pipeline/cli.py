@@ -391,6 +391,109 @@ def load_syllabus(
         f"{syllabus.label}" + (" [dim](now the current version)[/dim]" if current else "")
     )
 
+@app.command(name="tag-export")
+def tag_export(
+    subject: str = typer.Option("physics-5054", help="Subject slug to tag."),
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    out: Path = typer.Option(None, help="Where to write the worksheet JSON."),
+    paper: str = typer.Option(None, help="Restrict to one paper slug."),
+    limit: int = typer.Option(None, help="Stop after this many questions."),
+    retag: bool = typer.Option(False, help="Include questions that already have a topic."),
+) -> None:
+    """Export the questions that still need a topic, with their text.
+
+    The worksheet carries the closed syllabus list and one entry per question,
+    so whatever does the classifying — the API, a person, a Claude Code session
+    with no API key — is working from the same fixed set of codes. Feed the
+    decisions back with `tag-apply`.
+    """
+    import json
+
+    from .load import connect
+    from .worksheet import build_worksheet
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        sheet = build_worksheet(
+            conn, subject, papers, paper_slug=paper, limit=limit, include_tagged=retag
+        )
+
+    out = out or settings.work_dir / f"{subject}-tags.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(sheet.as_dict(), indent=2, ensure_ascii=False), "utf-8")
+
+    sparse = sum(1 for question in sheet.questions if question.is_sparse)
+    table = Table("", "", title=f"{subject} {sheet.syllabus_label}")
+    table.add_row("topics to choose from", str(len(sheet.topics)))
+    table.add_row("questions needing a topic", str(len(sheet.questions)))
+    table.add_row("too little text to classify", str(sparse))
+    console.print(table)
+
+    for missing in sheet.missing_papers:
+        console.print(f"[yellow]no source PDF for {missing} — its questions were skipped[/yellow]")
+    if sparse:
+        console.print(
+            "[dim]Questions marked `sparse` are mostly artwork — circuit diagrams "
+            "as options, graphs with no caption. Their crop says what their text "
+            "cannot; send those to a person.[/dim]"
+        )
+    console.print(f"-> {out}")
+
+
+@app.command(name="tag-apply")
+def tag_apply(
+    decisions: Path = typer.Argument(..., exists=True, help="JSON list of decisions."),
+    subject: str = typer.Option("physics-5054", help="Subject the decisions belong to."),
+    floor: float = typer.Option(settings.tag_confidence_floor,
+                                help="Below this confidence, hold the question back."),
+    dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
+) -> None:
+    """Write topic decisions back to the database.
+
+    Each entry is {"id": ..., "topic_code": ..., "confidence": 0.0-1.0}. A code
+    outside the syllabus is dropped rather than written — the closed list is the
+    guarantee, and a classifier returning something not on it has said it was
+    guessing.
+    """
+    import json
+
+    from .load import connect
+    from .worksheet import apply_worksheet
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    payload = json.loads(decisions.read_text(encoding="utf-8"))
+    entries = payload["decisions"] if isinstance(payload, dict) else payload
+
+    with connect(settings.database_url) as conn:
+        report = apply_worksheet(conn, subject, entries, confidence_floor=floor)
+        if dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    table = Table("", "", title="Topics written")
+    table.add_row("tagged", str(report.tagged))
+    table.add_row(f"held for review (< {floor})", str(report.flagged))
+    console.print(table)
+
+    if report.unknown_codes:
+        console.print(
+            f"[red]{len(report.unknown_codes)} decision(s) named a code outside the "
+            f"syllabus and were dropped: {sorted(set(report.unknown_codes))[:5]}[/red]"
+        )
+    if report.unknown_questions:
+        console.print(
+            f"[red]{len(report.unknown_questions)} decision(s) named a question that "
+            "does not exist[/red]"
+        )
+
 @app.command()
 def estimate(
     papers: int = typer.Option(3400, help="Documents in the target corpus."),

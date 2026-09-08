@@ -88,6 +88,32 @@ def parse_paper_filename(stem: str) -> PaperFile:
     )
 
 
+SEASON_LETTERS = {season: letter for letter, season in SEASON_BY_LETTER.items()}
+
+
+def caie_filename(
+    syllabus_code: str,
+    year: int,
+    season: str,
+    doc_type: str,
+    component: int | None = None,
+    variant: int | None = None,
+) -> str:
+    """Rebuild the name Cambridge gave a document.
+
+    The inverse of `parse_paper_filename`, for going the other way: from a paper
+    row in the database back to the file it came from, without recording a path
+    that stops being true the moment the corpus moves.
+    """
+    paper = ""
+    if component is not None:
+        paper = f"_{component}{'' if variant is None else variant}"
+    return (
+        f"{syllabus_code}_{SEASON_LETTERS[season]}{year % 100:02d}"
+        f"_{doc_type}{paper}.pdf"
+    )
+
+
 def storage_prefix(
     syllabus_code: str, year: int, season: str, component: int, variant: int | None
 ) -> str:
