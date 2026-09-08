@@ -133,50 +133,113 @@ def match_mcq_answers(
 # to vision only when this returns nothing.
 # ---------------------------------------------------------------------------
 
-GRID_HEADER = re.compile(r"question\s+answer\s+marks", re.IGNORECASE)
+# CAIE has used two multiple-choice mark scheme layouts. Both were validated
+# against real papers (5054/11 May/June 2015, 2019 and 2026):
+#
+#   modern (2019-)   a single "Question | Answer | Marks" table, one row per line
+#   legacy (-2015)   "Question Number | Key" in TWO side-by-side columns, no
+#                    marks column, so reading order interleaves them:
+#                    1 B 21 D / 2 A 22 C / ...
+#
+# They are parsed by separate functions selected on the header, rather than by
+# one permissive parser that tries to cope with both. A loose parser that
+# accepts any number-then-letter pair would also happily read a syllabus code
+# or a page number, and this is the one artefact where a wrong value is worst:
+# a student trusts an answer key completely.
+MODERN_HEADER = re.compile(r"question\s+answer\s+marks", re.IGNORECASE)
+LEGACY_HEADER = re.compile(r"question\s+number\s+key", re.IGNORECASE)
 VALID_OPTIONS = frozenset("ABCDE")
+
+
+def _tokens(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _is_option(token: str) -> bool:
+    return len(token) == 1 and token.upper() in VALID_OPTIONS
+
+
+def _parse_modern_grid(text: str) -> list[tuple[str, str]]:
+    """Rows of [number][option][marks].
+
+    Requiring the marks column is what keeps page furniture out: "Page 2 of 3"
+    and "5054/11 Mark Scheme June 2026" both contain bare numbers, but neither
+    forms a triple.
+    """
+    pairs: list[tuple[str, str]] = []
+    tokens = _tokens(text)
+    i = 0
+    while i + 2 < len(tokens):
+        number, option, marks = tokens[i], tokens[i + 1], tokens[i + 2]
+        if number.isdigit() and _is_option(option) and marks.isdigit():
+            pairs.append((str(int(number)), option.upper()))
+            i += 3
+        else:
+            i += 1
+    return pairs
+
+
+def _parse_legacy_grid(text: str) -> list[tuple[str, str]]:
+    """Rows of [number][option], from a two-column table with no marks column.
+
+    Reading order interleaves the columns (1 B 21 D / 2 A 22 C), which is
+    harmless here: every pair is recorded and the caller checks the set is
+    complete and contiguous.
+
+    Only text *after* the header is considered, so the cover page's syllabus
+    code and "maximum raw mark 40" cannot contribute a pair.
+    """
+    match = LEGACY_HEADER.search(re.sub(r"[ \t]+", " ", text))
+    if not match:
+        return []
+
+    pairs: list[tuple[str, str]] = []
+    tokens = _tokens(text)
+
+    # Skip past the header tokens themselves.
+    start = 0
+    for index, token in enumerate(tokens):
+        if token.lower() == "key":
+            start = index + 1
+            break
+
+    i = start
+    while i + 1 < len(tokens):
+        number, option = tokens[i], tokens[i + 1]
+        if number.isdigit() and _is_option(option):
+            pairs.append((str(int(number)), option.upper()))
+            i += 2
+        else:
+            i += 1
+    return pairs
 
 
 def parse_mcq_answer_grid(page_texts: list[str]) -> dict[str, str]:
     """Read the answer key out of an MCQ mark scheme's text layer.
 
     Accepts the text of every page and returns {question number: option}.
-    Returns an empty dict when the pages do not look like an answer grid — a
-    scanned mark scheme, or a structured paper — so the caller can fall back to
-    the vision path.
-
-    Rows are matched as a strict [number][single letter][mark count] triple.
-    Requiring the marks column is what keeps page furniture out: "Page 2 of 3"
-    and "5054/11 Mark Scheme June 2026" both contain bare numbers, but neither
-    forms a triple.
+    Returns an empty dict when no page looks like an answer grid — a scanned
+    mark scheme, or a structured paper — so the caller falls back to vision.
     """
     answers: dict[str, str] = {}
     conflicts: set[str] = set()
 
     for text in page_texts:
-        if not GRID_HEADER.search(re.sub(r"\s+", " ", text)):
+        flattened = re.sub(r"\s+", " ", text)
+
+        if MODERN_HEADER.search(flattened):
+            pairs = _parse_modern_grid(text)
+        elif LEGACY_HEADER.search(flattened):
+            pairs = _parse_legacy_grid(text)
+        else:
             continue
 
-        tokens = [line.strip() for line in text.splitlines() if line.strip()]
-        i = 0
-        while i + 2 < len(tokens):
-            number, option, marks = tokens[i], tokens[i + 1], tokens[i + 2]
-            if (
-                number.isdigit()
-                and len(option) == 1
-                and option.upper() in VALID_OPTIONS
-                and marks.isdigit()
-            ):
-                key = str(int(number))
-                value = option.upper()
-                if key in answers and answers[key] != value:
-                    # The same question answered twice, differently. Never pick
-                    # one; drop it and let a human look.
-                    conflicts.add(key)
-                answers[key] = value
-                i += 3
-            else:
-                i += 1
+        for key, value in pairs:
+            if key in answers and answers[key] != value:
+                # The same question answered twice, differently. Never pick
+                # one; drop it and let a human look.
+                conflicts.add(key)
+            answers[key] = value
 
     for key in conflicts:
         answers.pop(key, None)

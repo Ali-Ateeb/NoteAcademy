@@ -98,3 +98,52 @@ class TestValidateAnswerGrid:
     def test_reports_a_grid_that_does_not_start_at_one(self):
         answers = {str(n): "A" for n in range(2, 41)}
         assert validate_answer_grid(answers, 39)
+
+
+def legacy_grid_page(rows: list[tuple[int, str]]) -> str:
+    """A pre-2019 mark scheme page: "Question Number / Key" in two side-by-side
+    columns with no marks column, so reading order interleaves them
+    (1 B 21 D / 2 A 22 C). Reproduces the layout, not any real paper."""
+    half = len(rows) // 2
+    left, right = rows[:half], rows[half:]
+    body_lines = []
+    for i in range(half):
+        body_lines += [str(left[i][0]), left[i][1], "", str(right[i][0]), right[i][1]]
+    return (
+        "Page 2\nMark Scheme\nSyllabus\nPaper\n"
+        "Cambridge O LEVEL – May/June 2015\n1234\n11\n"
+        "© Cambridge International Examinations 2015\n"
+        "Question\nNumber\nKey\n\nQuestion\nNumber\nKey\n" + "\n".join(body_lines)
+    )
+
+
+LEGACY_COVER = (
+    "CAMBRIDGE INTERNATIONAL EXAMINATIONS\nCambridge Ordinary Level\n"
+    "MARK SCHEME for the May/June 2015 series\n1234 PHYSICS\n1234/11\n"
+    "Paper 1 (Multiple Choice), maximum raw mark 40\n"
+)
+
+
+class TestLegacyTwoColumnGrid:
+    def test_reads_both_columns(self):
+        rows = [(n, "ABCD"[n % 4]) for n in range(1, 41)]
+        answers = parse_mcq_answer_grid([LEGACY_COVER, legacy_grid_page(rows)])
+        assert len(answers) == 40
+        assert validate_answer_grid(answers, 40) == []
+        assert answers["1"] == "B" and answers["21"] == "B" and answers["40"] == "A"
+
+    def test_ignores_the_legacy_cover_page(self):
+        # "1234/11" and "maximum raw mark 40" are numbers next to text; a
+        # permissive number-then-letter parser would read them as answers.
+        assert parse_mcq_answer_grid([LEGACY_COVER]) == {}
+
+    def test_syllabus_and_paper_codes_above_the_header_are_not_answers(self):
+        # "1234" and "11" appear in the page furniture before "Key".
+        answers = parse_mcq_answer_grid([legacy_grid_page([(1, "B"), (21, "D")])])
+        assert set(answers) == {"1", "21"}
+
+    def test_both_layouts_can_appear_in_one_run(self):
+        modern = grid_page([(1, "A"), (2, "B")])
+        legacy = legacy_grid_page([(5, "C"), (25, "D")])
+        answers = parse_mcq_answer_grid([modern, legacy])
+        assert answers == {"1": "A", "2": "B", "5": "C", "25": "D"}

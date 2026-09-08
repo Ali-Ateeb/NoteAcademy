@@ -46,15 +46,31 @@ noteacademy estimate    --papers 3400 --pages 14
 
 ## Measured against a real paper
 
-Everything below was verified against **5054/11 May/June 2026** (question paper
-and mark scheme), not assumed:
+Verified against three real papers spanning eleven years — **5054/11 May/June
+2015, 2019 and 2026** — question papers and mark schemes, not assumed:
 
-| Assumption | Result |
-|---|---|
-| CAIE PDFs carry a real text layer | **Confirmed.** 16/16 QP pages and 3/3 MS pages. |
-| MCQ mark schemes are a parsable grid | **Confirmed.** 40/40 answers from the text layer, no model. |
-| MCQ questions can be located without a model | **Confirmed.** 40/40 via gutter geometry, no false positives. |
-| Text extraction alone is insufficient | **Confirmed, emphatically.** See below. |
+| | 2015 | 2019 | 2026 |
+|---|---|---|---|
+| Text layer present | yes | yes | yes |
+| Questions segmented | **40/40** | **40/40** | **40/40** |
+| Answer key parsed | **40/40** | **40/40** | **40/40** |
+| Mark scheme layout | legacy | modern | modern |
+
+**The question-paper template is stable across all eleven years.** The
+question-number gutter sits at x = 49.6pt in every paper examined, and every page
+is A4. Segmentation needed no adjustment for the older papers.
+
+**The mark scheme layout is not.** Papers up to ~2015 use a "Question Number /
+Key" table in *two side-by-side columns* with no marks column, so reading order
+interleaves them (1 B 21 D / 2 A 22 C). From ~2019 it is a single
+"Question / Answer / Marks" table. Both are parsed, selected on the header —
+deliberately as two strict parsers rather than one permissive one, because a
+loose number-then-letter rule would also read a syllabus code or page number as
+an answer.
+
+This is exactly why the corpus is validated across years before a backfill: the
+2015 mark scheme returned **zero** answers against the original parser, silently,
+and would have left an eleven-year hole in the bank.
 
 **Multiple-choice papers need no inference at all.** The mark scheme is a
 Question/Answer/Marks table that survives extraction intact, and CAIE lays
