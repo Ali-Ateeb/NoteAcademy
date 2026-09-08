@@ -481,17 +481,22 @@ function Results({
                     ) : null}
                   </p>
 
+                  {(question.markScheme || question.examinerNote) && (
                   <div className="mt-3 rounded-xl bg-surface-2 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
-                      Mark scheme
-                    </p>
-                    <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
-                      {question.markScheme}
-                    </p>
+                    {question.markScheme && (
+                      <>
+                        <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
+                          Mark scheme
+                        </p>
+                        <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
+                          {question.markScheme}
+                        </p>
+                      </>
+                    )}
 
                     {question.examinerNote && (
                       <>
-                        <p className="mt-4 text-xs font-semibold uppercase tracking-widest text-marks">
+                        <p className={`${question.markScheme ? "mt-4 " : ""}text-xs font-semibold uppercase tracking-widest text-marks`}>
                           Examiner report
                         </p>
                         <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
@@ -500,6 +505,7 @@ function Results({
                       </>
                     )}
                   </div>
+                  )}
                 </div>
               </div>
             </div>

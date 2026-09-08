@@ -21,6 +21,19 @@ That is the whole setup. The app runs against seed fixtures with no database and
 no API keys, so a fresh clone is a working site. See `web/README.md` for checks,
 `db/README.md` for the schema, and `pipeline/README.md` for ingestion.
 
+With a database configured it reads that instead, and the fixtures are never
+mixed in: a configured database that errors raises rather than quietly serving
+invented questions under the banner of real past papers.
+
+```bash
+python db/apply.py --supabase              # schema
+psql "$DATABASE_URL" -f db/seed_catalog.sql  # levels, subjects, syllabus version
+cd pipeline && .venv/bin/noteacademy load-mcq 5054_s19_qp_11.pdf 5054_s19_ms_11.pdf
+```
+
+Nothing from that last step is visible to anyone yet — it lands unapproved, and
+`is_published` still gates the subject. That is the design, not a missing step.
+
 ## Where the keys go
 
 **Two files, in two places.** They are not interchangeable: Next.js reads

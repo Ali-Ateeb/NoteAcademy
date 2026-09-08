@@ -57,8 +57,13 @@ export interface McqQuestion {
   options: Record<McqOption, string>;
   correctOption: McqOption;
   /** Grounded in the mark scheme; the examiner note is what the report says
-   *  students actually got wrong. Both are shown only after answering. */
-  markScheme: string;
+   *  students actually got wrong. Both are shown only after answering.
+   *
+   *  Null for a multiple-choice question whose mark scheme is nothing but the
+   *  answer grid — which is most of them. Repeating the letter under the
+   *  heading "Mark scheme" would teach a student to expect an explanation and
+   *  then hand them the thing they already knew. */
+  markScheme: string | null;
   examinerNote: string | null;
   topicCodes: string[];
 }

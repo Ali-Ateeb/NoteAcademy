@@ -131,6 +131,10 @@ end $$;
 
 -- ---------- 7. RLS isolates one student's attempts from another's ----------
 create role na_student nologin;
+-- A superuser may `set role` to anything; a managed Postgres role (Supabase's
+-- `postgres`, RDS's master) may only become a role it is a member of. Without
+-- this grant the test cannot run against the database it is meant to protect.
+grant na_student to current_user;
 grant usage on schema public to na_student;
 grant select, insert on attempts to na_student;
 grant select on current_answers to na_student;
