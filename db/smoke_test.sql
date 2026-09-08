@@ -1,17 +1,28 @@
 -- smoke_test.sql — exercises the invariants the schema is supposed to guarantee.
--- Run against a database with 0001-0008 applied:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/smoke_test.sql
 -- Rolls itself back; leaves no data behind.
+--
+-- Safe against a populated database, which takes some care: every fixture below
+-- has to avoid colliding with real content. A level is reused if one exists —
+-- the code is an enum and unique, so a new one cannot be invented — and
+-- everything else hangs off a syllabus code and an exam year that no real paper
+-- can have. Assertions are scoped to the fixture's own rows for the same
+-- reason: a check that counts every question in the table starts failing the
+-- day the bank has questions in it.
 
 begin;
 
 -- ---------- fixtures ----------
-insert into levels (id, code, name, slug, sort_order) values
-  ('11111111-1111-1111-1111-111111111111', 'o_level', 'O Level', 'o-level', 1);
+-- Reused, not inserted: level codes are a four-value enum and unique, so a
+-- seeded database already holds every one of them.
+insert into levels (code, name, slug, sort_order)
+values ('o_level', 'O Level', 'o-level', 1)
+on conflict (code) do nothing;
 
-insert into subjects (id, level_id, syllabus_code, title, slug, is_published) values
-  ('22222222-2222-2222-2222-222222222222',
-   '11111111-1111-1111-1111-111111111111', '5054', 'Physics', 'physics-5054', true);
+insert into subjects (id, level_id, syllabus_code, title, slug, is_published)
+select '22222222-2222-2222-2222-222222222222', id, '0000', 'Smoke Test',
+       'smoke-test-subject', true
+  from levels where code = 'o_level';
 
 insert into syllabus_versions (id, subject_id, label, first_exam_year, is_current) values
   ('33333333-3333-3333-3333-333333333333',
@@ -22,21 +33,45 @@ insert into topics (id, syllabus_version_id, code, title, slug, learning_objecti
    '33333333-3333-3333-3333-333333333333', '1.2', 'Kinematics', 'kinematics',
    array['define speed and velocity', 'plot and interpret speed-time graphs']);
 
+-- 2099: inside the schema's allowed range and beyond any real sitting.
 insert into exam_sessions (id, year, season, slug) values
-  ('55555555-5555-5555-5555-555555555555', 2019, 'may_june', '2019-may-june');
+  ('55555555-5555-5555-5555-555555555555', 2099, 'may_june', '2099-may-june');
 
 insert into papers (id, subject_id, exam_session_id, component, variant, slug) values
   ('66666666-6666-6666-6666-666666666666',
    '22222222-2222-2222-2222-222222222222',
-   '55555555-5555-5555-5555-555555555555', 1, 2, 'physics-5054-2019-may-june-p12');
+   '55555555-5555-5555-5555-555555555555', 1, 2, 'smoke-test-subject-2099-may-june-p12');
 
 insert into questions (id, paper_id, label, display_label, ordinal, question_type,
                        max_marks, correct_option, extraction_status) values
   ('77777777-7777-7777-7777-777777777777',
    '66666666-6666-6666-6666-666666666666', '1', '1', 1, 'mcq', 1, 'C', 'approved');
 
-insert into profiles (id, display_name) values
-  ('88888888-8888-8888-8888-888888888888', 'Test Student');
+-- The student. On Supabase, profiles.id is a foreign key to auth.users (0009),
+-- so the fixture has to sign a user up rather than write a profile directly —
+-- which also exercises the thing 0009 exists to guarantee: that signing up
+-- creates a profile, so no code path meets a logged-in user who has none.
+do $$
+begin
+  if to_regclass('auth.users') is null then
+    insert into profiles (id, display_name)
+    values ('88888888-8888-8888-8888-888888888888', 'Test Student');
+    raise notice 'SKIP: no auth.users (not Supabase); profile written directly';
+  else
+    insert into auth.users (id, email, instance_id, aud, role)
+    values ('88888888-8888-8888-8888-888888888888', 'smoke-test@example.invalid',
+            '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated');
+
+    if not exists (select 1 from profiles
+                    where id = '88888888-8888-8888-8888-888888888888') then
+      raise exception 'FAIL: signing up did not create a profile';
+    end if;
+    raise notice 'PASS: signing up creates a profile and a free subscription';
+
+    update profiles set display_name = 'Test Student'
+     where id = '88888888-8888-8888-8888-888888888888';
+  end if;
+end $$;
 
 -- ---------- 1. only one current syllabus version per subject ----------
 do $$
@@ -167,11 +202,47 @@ grant select on questions to na_student;
 set local role na_student;
 do $$
 begin
-  if (select count(*) from questions) <> 0 then
+  if (select count(*) from questions
+       where paper_id = '66666666-6666-6666-6666-666666666666') <> 0 then
     raise exception 'FAIL: an unapproved question was publicly visible';
   end if;
   raise notice 'PASS: unapproved questions are hidden from clients';
 end $$;
 reset role;
+
+-- ---------- 9. public content tables are actually readable ----------
+-- RLS with no policy denies every row *without erroring*, so a content table
+-- that was never given a policy reads as empty rather than as broken. That is
+-- how grade_thresholds and topic_links sat unreadable until 0016.
+insert into grade_thresholds (subject_id, exam_session_id, grade, min_mark, max_mark)
+values ('22222222-2222-2222-2222-222222222222',
+        '55555555-5555-5555-5555-555555555555', 'A', 34, 40);
+
+grant select on grade_thresholds, topic_links to na_student;
+set local role na_student;
+do $$
+begin
+  if (select count(*) from grade_thresholds
+       where subject_id = '22222222-2222-2222-2222-222222222222') <> 1 then
+    raise exception 'FAIL: a public content table denied every row';
+  end if;
+  raise notice 'PASS: public content tables are readable by a client';
+end $$;
+reset role;
+
+-- ---------- 10. per-user aggregates are not on the public API ----------
+-- topic_mastery is a materialised view keyed by user_id, and a materialised
+-- view cannot be protected by row level security. The only thing standing
+-- between it and every student's accuracy is the absence of a grant.
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    raise notice 'SKIP: no anon role (not Supabase)';
+  elsif has_table_privilege('anon', 'topic_mastery', 'select') then
+    raise exception 'FAIL: anon can read every student''s topic mastery';
+  else
+    raise notice 'PASS: topic_mastery is off the public API';
+  end if;
+end $$;
 
 rollback;

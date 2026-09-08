@@ -53,12 +53,19 @@ than none, so it is parsed from the source document rather than transcribed.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/smoke_test.sql
 ```
 
-Checks the invariants the application relies on and then rolls back, so it is
-safe against a populated database. Every check prints `PASS` or aborts.
+Thirteen checks, then a rollback, so it is safe to run against the live
+database at any time. Every check prints `PASS` or aborts.
 
-Run it **before** `0009`. It inserts a profile row directly, and 0009 ties
-`profiles.id` to `auth.users`, so on Supabase with 0009 already applied the
-fixtures fail the foreign key.
+Safe against a *populated* database took some care and is worth preserving. Its
+fixtures reuse a level rather than inserting one — level codes are a four-value
+enum and unique, so a seeded database already holds all of them — and everything
+else hangs off a syllabus code and an exam year no real paper can have. Every
+assertion is scoped to the fixture's own rows: a check that counts every
+question in the table starts failing the day the bank has questions in it.
+
+On Supabase it signs a user up through `auth.users` rather than writing a
+profile directly, because 0009 ties the two together. That also exercises what
+0009 is for — no code path should ever meet a logged-in user with no profile.
 
 ## The parts worth knowing before you change anything
 
