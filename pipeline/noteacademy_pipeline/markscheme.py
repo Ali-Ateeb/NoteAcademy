@@ -137,6 +137,8 @@ def match_mcq_answers(
 # against real papers (5054/11 May/June 2015, 2019 and 2026):
 #
 #   modern (2019-)   a single "Question | Answer | Marks" table, one row per line
+#                    (or "Mark" — CAIE spells it both ways, sometimes within
+#                    one session)
 #   legacy (-2015)   "Question Number | Key" in TWO side-by-side columns, no
 #                    marks column, so reading order interleaves them:
 #                    1 B 21 D / 2 A 22 C / ...
@@ -146,7 +148,14 @@ def match_mcq_answers(
 # accepts any number-then-letter pair would also happily read a syllabus code
 # or a page number, and this is the one artefact where a wrong value is worst:
 # a student trusts an answer key completely.
-MODERN_HEADER = re.compile(r"question\s+answer\s+marks", re.IGNORECASE)
+# `marks?` because CAIE's own typesetting is not consistent: Chemistry 5070/11
+# and 5070/12 from the same October/November 2019 session head the column
+# "Marks" and "Mark" respectively. One character, and the strict parser refused
+# the second paper entirely — 40 questions loaded with no answers, flagged for a
+# reviewer who could only have re-typed the key by hand. Widening to the
+# singular costs nothing: the header is still matched in full, so a page number
+# or syllabus code still cannot be mistaken for a table.
+MODERN_HEADER = re.compile(r"question\s+answer\s+marks?", re.IGNORECASE)
 LEGACY_HEADER = re.compile(r"question\s+number\s+key", re.IGNORECASE)
 VALID_OPTIONS = frozenset("ABCDE")
 

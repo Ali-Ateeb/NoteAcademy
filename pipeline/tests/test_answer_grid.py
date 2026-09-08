@@ -12,13 +12,15 @@ what it refuses to do.
 from noteacademy_pipeline.markscheme import parse_mcq_answer_grid, validate_answer_grid
 
 
-def grid_page(rows: list[tuple[int, str]], page: int = 2, of: int = 3) -> str:
+def grid_page(
+    rows: list[tuple[int, str]], page: int = 2, of: int = 3, marks: str = "Marks"
+) -> str:
     """A mark scheme page with the same furniture as the real thing."""
     body = "\n".join(f"{number}\n{answer}\n1" for number, answer in rows)
     return (
         "1234/11\nCambridge O Level – Mark Scheme\nPUBLISHED\nMay/June 2026\n"
         f"© Cambridge University Press & Assessment 2026\nPage {page} of {of}\n"
-        f"Question\nAnswer\nMarks\n{body}\n"
+        f"Question\nAnswer\n{marks}\n{body}\n"
         "1234/11 Mark Scheme June 2026"
     )
 
@@ -37,6 +39,20 @@ class TestParseAnswerGrid:
             grid_page([(4, "C"), (5, "D")], page=3),
         ])
         assert answers == {"1": "D", "2": "A", "3": "B", "4": "C", "5": "D"}
+
+    def test_reads_a_grid_whose_column_says_mark_not_marks(self):
+        """CAIE spells that header both ways, sometimes within one session.
+
+        Chemistry 5070/11 and 5070/12 from October/November 2019 head the
+        column "Marks" and "Mark" respectively. Against a plural-only pattern
+        the second paper parsed to nothing: forty questions loaded with no
+        answers, and no way for a reviewer to recover them but retyping the key.
+        """
+        answers = parse_mcq_answer_grid([
+            COVER,
+            grid_page([(1, "C"), (2, "A")], marks="Mark"),
+        ])
+        assert answers == {"1": "C", "2": "A"}
 
     def test_ignores_the_cover_page(self):
         # The cover carries "1234/11" and "Maximum Mark: 40" — bare numbers that

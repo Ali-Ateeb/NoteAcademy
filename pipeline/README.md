@@ -102,10 +102,25 @@ correct in the database and be wrong on the screen. A question arrives as its
 number, its answer and its crop; text comes later, from the vision pass, checked
 against the page. Everything lands unapproved.
 
-## Measured against a real paper
+## Measured against real papers
 
-Verified against three real papers spanning eleven years — **5054/11 May/June
-2015, 2019 and 2026** — question papers and mark schemes, not assumed:
+Twenty-eight question papers and their mark schemes, across **three subjects**
+(Physics 5054, Chemistry 5070, Biology 5090) and **eleven years** (2010-2026):
+**40/40 questions segmented and 40/40 answers parsed on every one.** The
+question-number gutter sits at x = 49.6pt in all of them, so the geometry holds
+across subjects as well as across years.
+
+One of the twenty-eight did not, at first — and it is the more useful result.
+Chemistry 5070/12 from October/November 2019 heads its answer column "Mark"
+where 5070/11 from the same session heads it "Marks". One character, and the
+strict parser refused the whole paper: forty questions, no answers, and nothing
+a reviewer could do but retype the key. The pattern now accepts either spelling.
+The lesson is the one this pipeline keeps relearning — the parser refusing was
+correct, and the only way to find out it was refusing was to run it over a wide
+enough spread of real papers.
+
+Detail on the three papers used to develop the segmenter — **5054/11 May/June
+2015, 2019 and 2026**:
 
 | | 2015 | 2019 | 2026 |
 |---|---|---|---|
