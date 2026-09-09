@@ -187,6 +187,86 @@ async function assignTopic(
   return null;
 }
 
+interface RetagBody {
+  paperSlug?: unknown;
+  displayLabel?: unknown;
+  topicCode?: unknown;
+}
+
+/** Correct a topic after the question has already been decided.
+ *
+ *  POST's own topic override only ever runs in the same request as an
+ *  approval, and its UPDATE is deliberately scoped to `UNDECIDED` — a
+ *  question already approved will not match it, and the reviewer sees "not
+ *  awaiting a decision" with no way back in. That guard is right for the
+ *  approve/reject decision itself: re-deciding whether to publish something
+ *  should not happen by accident. But the topic is a separate judgement call
+ *  that can turn out wrong once a reviewer has seen more of the bank, and
+ *  fixing it should not require unpublishing the question first. PATCH is
+ *  that second, narrower door: it only ever touches `question_topics`, never
+ *  `extraction_status`, and works regardless of what the question's current
+ *  decision is.
+ *
+ *  Addressed by paper slug and display label rather than a question id: those
+ *  are what a reviewer actually has looking at a published question, and
+ *  resolving them here means the review UI does not need to keep the id of
+ *  something it already approved and stopped tracking. */
+export async function PATCH(request: Request) {
+  const refusal = guard(request);
+  if (refusal) return refusal;
+
+  const client = serviceClient();
+  if (!client) {
+    return NextResponse.json({ error: "No database configured." }, { status: 503 });
+  }
+
+  let body: RetagBody;
+  try {
+    body = (await request.json()) as RetagBody;
+  } catch {
+    return NextResponse.json({ error: "Expected JSON." }, { status: 400 });
+  }
+
+  const paperSlug = typeof body.paperSlug === "string" ? body.paperSlug.trim() : "";
+  const displayLabel =
+    typeof body.displayLabel === "string" ? body.displayLabel.trim() : "";
+  const topicCode = typeof body.topicCode === "string" ? body.topicCode.trim() : "";
+
+  if (!paperSlug || !displayLabel || !topicCode) {
+    return NextResponse.json(
+      { error: "paperSlug, displayLabel and topicCode are required." },
+      { status: 400 },
+    );
+  }
+
+  const { data: paper } = await client
+    .from("papers")
+    .select("id")
+    .eq("slug", paperSlug)
+    .maybeSingle();
+  if (!paper) {
+    return NextResponse.json({ error: `No paper "${paperSlug}".` }, { status: 404 });
+  }
+
+  const { data: question } = await client
+    .from("questions")
+    .select("id")
+    .eq("paper_id", (paper as { id: string }).id)
+    .eq("display_label", displayLabel)
+    .maybeSingle();
+  if (!question) {
+    return NextResponse.json(
+      { error: `No question ${displayLabel} on ${paperSlug}.` },
+      { status: 404 },
+    );
+  }
+
+  const questionId = (question as { id: string }).id;
+  const assigned = await assignTopic(client, questionId, topicCode);
+  if (assigned) return assigned;
+  return NextResponse.json({ ok: true, questionId, topicCode });
+}
+
 /** Undo: put a question back in the queue.
  *
  *  Restores 'needs_review' when the pipeline had flagged it and 'extracted'

@@ -195,3 +195,21 @@ export function syncUndo(questionId: string): Promise<SyncResult> {
     method: "DELETE",
   });
 }
+
+/** Fix a question's topic after it has already been decided — approved or
+ *  rejected, not just pending. `syncDecision`'s topic override only ever
+ *  fires alongside a fresh approval; this is the door for a mistake noticed
+ *  later, addressed the way a reviewer actually has the question in front of
+ *  them (paper and question number) rather than by an id nothing in the UI
+ *  keeps once a card leaves the queue. */
+export function syncRetag(
+  paperSlug: string,
+  displayLabel: string,
+  topicCode: string,
+): Promise<SyncResult> {
+  return send("/api/review", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paperSlug, displayLabel, topicCode }),
+  });
+}

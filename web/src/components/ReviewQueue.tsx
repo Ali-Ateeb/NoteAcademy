@@ -8,6 +8,7 @@ import {
   reviewToken,
   setReviewToken,
   syncDecision,
+  syncRetag,
   syncUndo,
   undoLastDecision,
   verifyToken,
@@ -193,6 +194,10 @@ export function ReviewQueue({
         <p className="mt-4 rounded-xl border border-incorrect/40 bg-incorrect/5 px-4 py-3 text-sm text-incorrect">
           {saveError} The decision was rolled back — nothing was saved.
         </p>
+      )}
+
+      {savesToDatabase && unlocked && (
+        <RetagPanel topicOptions={topicOptions} />
       )}
 
       <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -533,6 +538,106 @@ function ReviewCard({
  *  HTML is readable by everyone who can load the page — which is exactly who it
  *  is meant to keep out. This is a stopgap for a single operator; /admin needs
  *  real accounts before it is served publicly. */
+/** Fix a question's topic after it has already left the queue — approved and
+ *  published, most often, once a reviewer notices the tag was wrong. The
+ *  queue itself only ever shows undecided items, so this is addressed by
+ *  paper and question number rather than picked from a list: that is what a
+ *  reviewer has in hand, looking at a published question, not an id. */
+function RetagPanel({
+  topicOptions,
+}: {
+  topicOptions: { code: string; title: string }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [paperSlug, setPaperSlug] = useState("");
+  const [displayLabel, setDisplayLabel] = useState("");
+  const [topicCode, setTopicCode] = useState(topicOptions[0]?.code ?? "");
+  const [status, setStatus] = useState<
+    { kind: "saving" } | { kind: "done" } | { kind: "error"; message: string } | null
+  >(null);
+
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="mt-6 rounded-xl border border-line bg-surface-2 px-4 py-3"
+    >
+      <summary className="cursor-pointer text-sm font-medium text-ink">
+        Fix a question&apos;s topic after the fact
+      </summary>
+      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-ink-3">
+        For a question already approved or rejected — the queue above only shows
+        what is still pending. This changes the topic tag only; it does not
+        touch whether the question is published.
+      </p>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setStatus({ kind: "saving" });
+          void syncRetag(paperSlug.trim(), displayLabel.trim(), topicCode).then(
+            (result) => {
+              setStatus(
+                result.ok
+                  ? { kind: "done" }
+                  : { kind: "error", message: result.message ?? "Save failed." },
+              );
+            },
+          );
+        }}
+        className="mt-3 flex flex-wrap items-end gap-3"
+      >
+        <label className="flex flex-col gap-1 text-xs text-ink-3">
+          Paper slug
+          <input
+            value={paperSlug}
+            onChange={(event) => setPaperSlug(event.target.value)}
+            placeholder="physics-5054-2019-may-june-p11"
+            required
+            className="w-64 rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-sm text-ink"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-ink-3">
+          Question
+          <input
+            value={displayLabel}
+            onChange={(event) => setDisplayLabel(event.target.value)}
+            placeholder="11"
+            required
+            className="w-20 rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-sm text-ink"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-ink-3">
+          Correct topic
+          <select
+            value={topicCode}
+            onChange={(event) => setTopicCode(event.target.value)}
+            className="max-w-xs rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink"
+          >
+            {topicOptions.map((option) => (
+              <option key={option.code} value={option.code}>
+                {option.code} · {option.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="submit"
+          disabled={status?.kind === "saving"}
+          className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {status?.kind === "saving" ? "Saving…" : "Save topic"}
+        </button>
+      </form>
+      {status?.kind === "done" && (
+        <p className="mt-2 text-xs text-correct">Topic updated.</p>
+      )}
+      {status?.kind === "error" && (
+        <p className="mt-2 text-xs text-incorrect">{status.message}</p>
+      )}
+    </details>
+  );
+}
+
 function UnlockBar({
   configured,
   onUnlock,
