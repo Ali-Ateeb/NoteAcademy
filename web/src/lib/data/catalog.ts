@@ -28,6 +28,7 @@ import { signedUrls } from "../storage";
 import { reviewItems, reviewTopicOptions } from "./reviewSeed";
 import * as seed from "./seed";
 import type {
+  DuplicateRef,
   Level,
   McqOption,
   McqQuestion,
@@ -145,6 +146,7 @@ interface McqRow {
   examiner_comment: string | null;
   topic_codes: string[];
   crop_storage_key: string | null;
+  also_in: DuplicateRef[];
 }
 
 const toSubject = (row: SubjectRow): Subject => ({
@@ -192,6 +194,7 @@ const toMcq = (row: McqRow): McqQuestion => ({
   examinerNote: row.examiner_comment,
   topicCodes: row.topic_codes,
   cropUrl: assetUrl(row.crop_storage_key),
+  alsoIn: row.also_in ?? [],
 });
 
 /** The stable, unsigned URL a page can carry. /api/asset checks the question is
@@ -210,7 +213,7 @@ const PAPER_COLUMNS =
 // One string literal, not a concatenation: supabase-js infers the row type from
 // the literal text of the column list, and `"a," + "b"` widens to `string`.
 const MCQ_COLUMNS =
-  "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key";
+  "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key,also_in";
 
 /* ---------------------------------------------------------------------------
    Catalogue
@@ -390,6 +393,12 @@ export async function getQuestionsByTopic(
       .select(MCQ_COLUMNS)
       .eq("subject_slug", subjectSlug)
       .contains("topic_codes", [topicCode])
+      // Cross-paper browsing is exactly where a duplicate would otherwise
+      // cost a student's attention twice: `getMcqQuestions` (one paper, the
+      // timed arena) deliberately does not apply this filter, because a
+      // paper's own question count has to match what was printed regardless
+      // of what another paper's variant shares with it.
+      .is("canonical_question_id", null)
       .order("paper_slug")
       .order("ordinal"),
   );

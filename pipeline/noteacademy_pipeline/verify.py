@@ -72,14 +72,18 @@ class TaggedQuestion:
     primary_confidence: float | None
 
 
-def load_tagged_questions(
-    conn: psycopg.Connection, subject_slug: str
+def _load_mcq_questions(
+    conn: psycopg.Connection, subject_slug: str, *, tagged_only: bool
 ) -> list[TaggedQuestion]:
-    """Every multiple-choice question in a subject that already carries a
-    primary topic — the population a second pass has something to check."""
+    # `tagged_only` swaps an inner join for a left join on the same two
+    # tables — the only difference between "questions a tagging pass has
+    # something to check" and "every question, whether tagged yet or not".
+    # `join_kind` is a fixed literal chosen here, never request-derived, so
+    # interpolating it is not a SQL-injection surface.
+    join_kind = "join" if tagged_only else "left join"
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             select q.id, q.display_label, q.ordinal,
                    p.slug as paper_slug, p.component, p.variant,
                    es.year, es.season, sub.syllabus_code,
@@ -89,8 +93,8 @@ def load_tagged_questions(
               join papers p on p.id = q.paper_id
               join subjects sub on sub.id = p.subject_id
               join exam_sessions es on es.id = p.exam_session_id
-              join question_topics qt on qt.question_id = q.id and qt.is_primary
-              join topics t on t.id = qt.topic_id
+              {join_kind} question_topics qt on qt.question_id = q.id and qt.is_primary
+              {join_kind} topics t on t.id = qt.topic_id
               left join question_assets qa
                 on qa.question_id = q.id and qa.kind = 'question_crop'
              where sub.slug = %s and q.question_type = 'mcq'
@@ -122,6 +126,23 @@ def load_tagged_questions(
         )
         for row in rows
     ]
+
+
+def load_tagged_questions(
+    conn: psycopg.Connection, subject_slug: str
+) -> list[TaggedQuestion]:
+    """Every multiple-choice question in a subject that already carries a
+    primary topic — the population a second pass has something to check."""
+    return _load_mcq_questions(conn, subject_slug, tagged_only=True)
+
+
+def load_mcq_questions(conn: psycopg.Connection, subject_slug: str) -> list[TaggedQuestion]:
+    """Every multiple-choice question in a subject, tagged or not.
+
+    Duplicate detection runs on wording, not on topic — a repeated question is
+    repeated whether or not anyone has classified it yet, so this is the
+    population `apply_dedupe` groups, wider than `load_tagged_questions`."""
+    return _load_mcq_questions(conn, subject_slug, tagged_only=False)
 
 
 def _normalise(text: str) -> str:
@@ -506,3 +527,126 @@ def _apply_one(
 
         if approved:
             report.skipped_approved += 1
+
+
+@dataclass
+class DedupeReport:
+    subject: str
+    groups_with_duplicates: int = 0
+    duplicates_marked: int = 0
+
+
+def apply_dedupe(
+    conn: psycopg.Connection,
+    subject_slug: str,
+    papers_dir: Path,
+    *,
+    dry_run: bool = False,
+) -> DedupeReport:
+    """Mark verbatim-duplicate MCQs across a subject's paper variants.
+
+    Reuses `group_duplicates` — the same normalised-stem matching the second
+    tagging pass already relies on to avoid showing a reviewer the same
+    question twice — but persists the result instead of holding it in memory
+    for one export. Idempotent and re-derived from scratch on every run: every
+    question that was ever in a group with more than one member has its
+    `canonical_question_id` cleared and reset together, so a later paper that
+    breaks up an old match (or turns a duplicate into the newest sitting,
+    which `group_duplicates` prefers as canonical) does not leave a stale
+    pointer behind.
+    """
+    questions = load_mcq_questions(conn, subject_slug)
+    canonical, groups = group_duplicates(questions, papers_dir)
+    report = DedupeReport(subject=subject_slug)
+
+    involved: list[str] = []
+    updates: list[tuple[str, str]] = []
+    for head in canonical:
+        members = groups[head.id]
+        if len(members) < 2:
+            continue
+        report.groups_with_duplicates += 1
+        involved.extend(members)
+        for member_id in members:
+            if member_id != head.id:
+                updates.append((head.id, member_id))
+
+    report.duplicates_marked = len(updates)
+
+    if not dry_run and involved:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update questions set canonical_question_id = null where id = any(%s)",
+                (involved,),
+            )
+            cur.executemany(
+                "update questions set canonical_question_id = %s where id = %s",
+                [(canonical_id, member_id) for canonical_id, member_id in updates],
+            )
+
+    return report
+
+
+@dataclass
+class BulkApproveReport:
+    subject: str
+    floor: float
+    candidates: int = 0
+    approved: int = 0
+
+
+def bulk_approve(
+    conn: psycopg.Connection,
+    subject_slug: str,
+    *,
+    confidence_floor: float,
+    dry_run: bool = False,
+) -> BulkApproveReport:
+    """Approve every MCQ whose primary topic two independent passes trust,
+    without a human looking at each one individually.
+
+    The population this touches is exactly the one `verify.py` already
+    reasoned about: an MCQ's answer key is parsed from a machine-readable
+    table and its crop is geometrically segmented, so the tag is the only
+    judgement call left in the pipeline, and a confident, unflagged tag is
+    already checked evidence rather than a single guess. `review_flags` empty
+    is part of the filter, not just the confidence floor, because a question
+    can carry a flag unrelated to its topic (a segmentation oddity, a missing
+    crop) that still deserves a human's eyes even at high tag confidence.
+
+    Deliberately excludes anything already 'approved' or 'rejected' — this
+    only ever moves a question forward from undecided, the same guard the
+    review queue's own write endpoint enforces.
+    """
+    report = BulkApproveReport(subject=subject_slug, floor=confidence_floor)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select q.id
+              from questions q
+              join question_topics qt on qt.question_id = q.id and qt.is_primary
+              join papers p on p.id = q.paper_id
+              join subjects s on s.id = p.subject_id
+             where s.slug = %s
+               and q.question_type = 'mcq'
+               and q.extraction_status in ('extracted', 'needs_review')
+               and cardinality(q.review_flags) = 0
+               and qt.confidence >= %s
+             order by q.id
+            """,
+            (subject_slug, confidence_floor),
+        )
+        ids = [row["id"] for row in cur.fetchall()]
+
+    report.candidates = len(ids)
+
+    if not dry_run and ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update questions set extraction_status = 'approved', reviewed_at = now()"
+                " where id = any(%s)",
+                (ids,),
+            )
+
+    report.approved = 0 if dry_run else len(ids)
+    return report

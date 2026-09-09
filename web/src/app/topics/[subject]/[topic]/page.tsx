@@ -9,6 +9,7 @@ import {
   getTopic,
   revisableTopics,
 } from "@/lib/data/catalog";
+import { duplicateRefLabel } from "@/lib/data/types";
 
 type Params = { params: Promise<{ subject: string; topic: string }> };
 
@@ -113,9 +114,30 @@ export default async function TopicPage({ params }: Params) {
             className="group rounded-2xl border border-line bg-surface p-5 shadow-card"
           >
             <summary className="cursor-pointer list-none">
-              <span className="text-sm leading-relaxed text-ink">
-                {question.questionText}
-              </span>
+              {question.alsoIn.length > 0 && (
+                <span className="mb-1.5 block text-xs font-medium text-accent">
+                  Also set in {question.alsoIn.map(duplicateRefLabel).join(", ")}
+                </span>
+              )}
+              {question.questionText && (
+                <span className="text-sm leading-relaxed text-ink">
+                  {question.questionText}
+                </span>
+              )}
+              {question.cropUrl && (
+                /* A geometrically-segmented MCQ has no extracted text at all —
+                   the crop is the question, diagrams and all. White regardless
+                   of theme: it is a page, not part of the interface. */
+                <div className="mt-2 overflow-hidden rounded-xl border border-line bg-white">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- signed
+                      URL on a bucket host, resolved per request. */}
+                  <img
+                    src={question.cropUrl}
+                    alt={`Question ${question.displayLabel}, as printed`}
+                    className="w-full"
+                  />
+                </div>
+              )}
               <span className="mt-2 block text-xs text-ink-3 group-open:hidden">
                 Show mark scheme →
               </span>

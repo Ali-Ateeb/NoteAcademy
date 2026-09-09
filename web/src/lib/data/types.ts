@@ -81,6 +81,20 @@ export interface McqQuestion {
    *  extracted, and the options are frequently diagrams. Null until the crop
    *  has been uploaded. */
   cropUrl: string | null;
+  /** Every other sitting that shares this question verbatim — CAIE reuses
+   *  most MCQs between one session's variants (component 11 and 12, most
+   *  often). Empty for a question nothing else repeats. Populated by the
+   *  pipeline's `dedupe` command, not derived here. */
+  alsoIn: DuplicateRef[];
+}
+
+export interface DuplicateRef {
+  paperSlug: string;
+  displayLabel: string;
+  year: number;
+  season: Season;
+  component: number;
+  variant: number | null;
 }
 
 export const SEASON_LABELS: Record<Season, string> = {
@@ -104,6 +118,11 @@ export function paperName(paper: Paper): string {
 
 export function sessionName(paper: Paper): string {
   return `${SEASON_LABELS[paper.season]} ${paper.year}`;
+}
+
+export function duplicateRefLabel(ref: DuplicateRef): string {
+  const variant = ref.variant === null ? "" : String(ref.variant);
+  return `${SEASON_LABELS[ref.season]} ${ref.year} Paper ${ref.component}${variant}`;
 }
 
 /* ---------------------------------------------------------------------------

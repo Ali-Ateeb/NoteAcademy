@@ -593,6 +593,87 @@ def tag_verify_apply(
 
 
 @app.command()
+def dedupe(
+    subject: str = typer.Option("physics-5054", help="Subject slug to deduplicate."),
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
+) -> None:
+    """Mark verbatim-duplicate MCQs shared across a subject's paper variants.
+
+    CAIE reuses most multiple-choice items between one session's variants —
+    component 11 and 12 of the same sitting, most often. Marking the repeats
+    here, once, means the topical browser and drills can fold them without
+    re-deriving the match, and a student can be told a question is one CAIE
+    actually reuses rather than seeing it twice with no explanation.
+    """
+    from .load import connect
+    from .verify import apply_dedupe
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        report = apply_dedupe(conn, subject, papers, dry_run=dry_run)
+        if dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    table = Table("", "", title="Duplicates marked")
+    table.add_row("groups with a duplicate", str(report.groups_with_duplicates))
+    table.add_row("questions marked as a duplicate", str(report.duplicates_marked))
+    console.print(table)
+
+
+@app.command(name="bulk-approve")
+def bulk_approve_cmd(
+    subject: str = typer.Option("physics-5054", help="Subject slug to approve within."),
+    floor: float = typer.Option(
+        settings.tag_confidence_floor,
+        help="Only approve a question whose primary topic is at least this confident.",
+    ),
+    dry_run: bool = typer.Option(
+        True, help="List how many would be approved, without approving them."
+    ),
+) -> None:
+    """Approve every MCQ whose primary topic is confidently, unflaggedly tagged.
+
+    This is the lever for a review queue that is mostly agreement: an answer
+    key parsed from a machine-readable table and a geometrically segmented
+    crop need no human, so once a topic tag is trusted — confident, and not
+    sitting under any other review flag — approving it by hand adds nothing a
+    script could not already tell. Defaults to a dry run: approving publishes
+    a question to students, and this can move hundreds of rows in one call.
+    """
+    from .load import connect
+    from .verify import bulk_approve
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        report = bulk_approve(conn, subject, confidence_floor=floor, dry_run=dry_run)
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+
+    table = Table("", "", title="Bulk approve" + (" (dry run)" if dry_run else ""))
+    table.add_row("subject", report.subject)
+    table.add_row("confidence floor", f"{report.floor:.2f}")
+    table.add_row("candidates", str(report.candidates))
+    table.add_row("approved", str(report.approved))
+    console.print(table)
+    if dry_run:
+        console.print(
+            "[yellow]dry run: nothing was written. Re-run with --no-dry-run to approve.[/yellow]"
+        )
+
+
+@app.command()
 def estimate(
     papers: int = typer.Option(3400, help="Documents in the target corpus."),
     pages: int = typer.Option(14, help="Average pages per document."),

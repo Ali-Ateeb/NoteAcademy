@@ -197,6 +197,7 @@ export const mcqQuestions: McqQuestion[] = [
       "The most common wrong answer was C, from dividing by 20 rather than 200. Candidates who wrote the division out rather than doing it mentally were far more likely to be correct.",
     topicCodes: ["1.1"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q2",
@@ -217,6 +218,7 @@ export const mcqQuestions: McqQuestion[] = [
       "A frequently missed question. Many candidates treated 'distance and speed' as a scalar/vector pair; both are scalars.",
     topicCodes: ["1.1"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q3",
@@ -232,6 +234,7 @@ export const mcqQuestions: McqQuestion[] = [
       "C was the most common error: candidates found the speed during the moving phase (15 m/s) and ignored the stationary period. Average speed always uses total time.",
     topicCodes: ["1.2"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q4",
@@ -252,6 +255,7 @@ export const mcqQuestions: McqQuestion[] = [
       "Candidates who confused this with a distance–time graph chose A. Reading the axis labels before interpreting the shape avoids the whole error.",
     topicCodes: ["1.2"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q5",
@@ -272,6 +276,7 @@ export const mcqQuestions: McqQuestion[] = [
       "A was chosen by candidates who confused increasing *speed* with increasing acceleration. The speed increases; the acceleration does not.",
     topicCodes: ["1.2"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q6",
@@ -286,6 +291,7 @@ export const mcqQuestions: McqQuestion[] = [
       "Well answered. A came from inverting the relationship; candidates who wrote down F = ma before substituting rarely made that error.",
     topicCodes: ["1.3"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q7",
@@ -306,6 +312,7 @@ export const mcqQuestions: McqQuestion[] = [
       "A was by far the most popular wrong answer. Those two forces act on the *same* body and balance because the book is in equilibrium — that is the first law, not the third.",
     topicCodes: ["1.3"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q8",
@@ -326,6 +333,7 @@ export const mcqQuestions: McqQuestion[] = [
       "A recurring misconception: candidates assume that because the crate is moving, the push must exceed the friction. Motion needs no resultant force; only a *change* in motion does.",
     topicCodes: ["1.3"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q9",
@@ -339,6 +347,7 @@ export const mcqQuestions: McqQuestion[] = [
     examinerNote: "Well answered across the cohort.",
     topicCodes: ["1.5"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q10",
@@ -353,6 +362,7 @@ export const mcqQuestions: McqQuestion[] = [
       "D came from multiplying rather than dividing. A quick check of the magnitude — a small motor producing 60 kW is implausible — catches this.",
     topicCodes: ["1.5"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q11",
@@ -368,6 +378,7 @@ export const mcqQuestions: McqQuestion[] = [
       "Candidates who lost this mark generally could not distinguish evaporation from boiling. The distinguishing points are *where* it happens and *at what temperature*.",
     topicCodes: ["2.1"],
     cropUrl: null,
+    alsoIn: [],
   },
   {
     id: "q12",
@@ -383,5 +394,6 @@ export const mcqQuestions: McqQuestion[] = [
       "D was chosen by candidates applying the series rule. Combined parallel resistance is always *less* than the smallest individual resistance — a useful sanity check.",
     topicCodes: ["4.2"],
     cropUrl: null,
+    alsoIn: [],
   },
 ];
