@@ -97,3 +97,16 @@ of questions through `/admin/review`, so every decision is one keystroke (A, R,
 U, J/K, 1–9) and the queue is ordered worst-confidence first — attention goes
 where the pipeline is least sure, not in page order. Each item names the specific
 check that held it back, which is what makes a queue that size tractable.
+
+## Checking a change while the dev server is running
+
+`next build` and `next dev` share the build directory, so building to verify a
+change will take down a `npm run dev` someone else has open — and the error it
+dies with (`Cannot find module './611.js'`) looks like a broken app rather than
+two commands writing to one folder. Build somewhere else instead:
+
+```bash
+NEXT_DIST_DIR=.next-verify npm run build
+NEXT_DIST_DIR=.next-verify npx next start -p 3211
+BASE_URL=http://localhost:3211 npm run e2e
+```
