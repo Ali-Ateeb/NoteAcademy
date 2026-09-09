@@ -51,6 +51,18 @@ GUTTER_MAX_X = 75.0
 BODY_TOP = 40.0
 BODY_BOTTOM = 800.0
 
+# A real line's height is close to its font size (12.15pt on 10pt body text,
+# measured across this template) — but at least one glyph, the reversible-
+# reaction arrow (⇌, U+21CC), reports a broken ascent/descent in the fonts
+# both the chemistry and biology syllabuses embed, and pymupdf's line bbox is
+# the union of every glyph in it: one arrow inflates the whole line's height
+# to five times normal and swallows several real lines beneath it into a
+# single bogus row — "6.3 Reversible reactions and equilibrium" absorbed the
+# next two numbered objectives this way. Clamped back to a plausible single
+# line's height rather than trusted; nothing about a normal line comes near
+# this ratio, so the clamp is inert everywhere else.
+MAX_LINE_HEIGHT_RATIO = 2.0
+
 # Lines sharing a baseline within this many points are one row: a number and the
 # text beside it, or a section number and its title.
 ROW_TOLERANCE = 2.0
@@ -63,6 +75,19 @@ ROW_OVERLAP = 0.25
 BAR_MAX_HEIGHT = 2.5
 BAR_MIN_WIDTH = 5.0
 BAR_MAX_WIDTH = 250.0
+
+# A typeset equation is inline: a page states one, or a small few, and each
+# sits alone. A page with more candidates than this is not printing equations
+# — it is a table (a bottom rule split into one segment per column, as many
+# times as the table has rows) or a structural diagram (a bond drawn as a
+# line, one such "bar" per bond). Both happen to fall inside CAIE's own width
+# and height bands for a fraction bar, and pairing them guesses at a
+# numerator/denominator relationship that specific chemistry and biology
+# syllabuses have shown does not exist — silently, since a wrong pairing does
+# not raise `unresolved_bars` the way a missing line does. A page over this
+# count is treated as having no fraction bars at all: its body text still
+# reads correctly, just without folding anything into "x / y".
+MAX_BARS_PER_PAGE = 3
 
 SECTION_SIZE = 12.0          # section headings are 13pt; topics and body are 10
 CHAPTER_SIZE = 16.0          # '3 Subject content' and its siblings are 18pt
@@ -192,6 +217,24 @@ def page_lines(page: pymupdf.Page) -> list[Line]:
             if not (BODY_TOP < y0 < BODY_BOTTOM):
                 continue
             span = line["spans"][0]
+
+            # line["bbox"] is the union of every span's own bbox, so one
+            # broken glyph — ⇌ has reported one five times a normal line's
+            # height in both directions from where it actually sits, in both
+            # syllabuses tried — drags the whole line's position toward it,
+            # not just its height. Recomputed from whichever spans look like
+            # ordinary text when at least one does not, rather than trusted.
+            plausible = [
+                s for s in line["spans"]
+                if s["bbox"][3] - s["bbox"][1] < s["size"] * MAX_LINE_HEIGHT_RATIO
+            ]
+            if plausible and len(plausible) < len(line["spans"]):
+                y0 = min(s["bbox"][1] for s in plausible)
+                y1 = max(s["bbox"][3] for s in plausible)
+            # Backstop for a line where every span is implausible, which
+            # `plausible` cannot correct: still better than a fifth of a page.
+            if y1 - y0 > span["size"] * MAX_LINE_HEIGHT_RATIO:
+                y1 = y0 + span["size"] * 1.3
             lines.append(
                 Line(
                     text=text,
@@ -316,6 +359,8 @@ def page_rows(page: pymupdf.Page) -> tuple[list[Row], int, int]:
     """Body rows of one page, plus how many fraction bars were found and missed."""
     lines = page_lines(page)
     bars = fraction_bars(page)
+    if len(bars) > MAX_BARS_PER_PAGE:
+        bars = []
     unresolved = resolve_fractions(lines, bars)
     return group_rows(lines), len(bars), unresolved
 

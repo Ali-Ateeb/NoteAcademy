@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 
 import typer
@@ -25,6 +26,15 @@ from rich.table import Table
 
 from .config import settings
 from .render import crop, render_pdf
+
+# Windows' legacy console defaults stdout to the system codepage (cp1252),
+# which cannot encode most of what a real syllabus contains — the reversible-
+# reaction arrow (⇌), degree signs, em dashes. `reconfigure` is a no-op on a
+# stream that is already UTF-8 (Linux, macOS, a modern Windows Terminal), so
+# this only ever helps; `sys.stdout` can lack the method entirely when it has
+# been replaced by a non-standard stream, hence the guard.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 app = typer.Typer(add_completion=False, help="NoteAcademy past-paper ingestion.")
 console = Console()

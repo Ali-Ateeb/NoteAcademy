@@ -97,6 +97,48 @@ def test_a_stacked_fraction_reads_as_a_fraction(syllabus_pdf):
     assert syllabus.problems == []
 
 
+def test_a_page_of_short_rules_is_a_table_not_a_fraction(tmp_path):
+    """The bug this rule exists for: a real chemistry syllabus's qualitative-
+    analysis table (one borderless row per cation, several column rules per
+    row) has each rule fall inside the same width and height band as a
+    fraction bar. Paired as fractions, unrelated table cells were silently
+    glued into nonsense — 'nylon, a polyamide / PET, a polyester' was one
+    real example, and it never raised `unresolved_bars`, because the pairing
+    "succeeded". A page with more rules than one or two equations ever share
+    is table rows, not equations, and is excluded rather than paired."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+
+    write(page, 56.7, 90, "3  Subject content", size=CHAPTER, bold=True)
+    write(page, GUTTER_X, 140, "1", size=SECTION, bold=True)
+    write(page, BODY_X, 140, "Qualitative analysis", size=SECTION, bold=True)
+    write(page, GUTTER_X, 170, "1.1  Tests for ions", size=TOPIC_SIZE, bold=True)
+    write(page, GUTTER_X, 200, "1")
+    write(page, BODY_X, 200, "Describe the tests for the ions in the table below")
+
+    # A borderless table: five rows, each a short rule under it — none of
+    # them a fraction, all of them geometrically identical to one.
+    for i in range(5):
+        y = 230 + i * 20
+        write(page, BODY_X, y - 6, f"cation {i}")
+        write(page, BODY_X + 120, y - 6, f"result {i}")
+        page.draw_line((BODY_X, y), (BODY_X + 60, y), width=0.6)
+
+    path = tmp_path / "5070_table.pdf"
+    doc.save(path)
+    doc.close()
+
+    syllabus = parse_syllabus(path)
+    assert syllabus.fraction_bars == 0
+    assert syllabus.unresolved_bars == 0
+    assert syllabus.problems == []
+    # The rules were never fractions, so nothing gets glued into "x / y" —
+    # whatever the table's own text ends up looking like, none of it is a
+    # bogus pairing across unrelated cells.
+    objective = next(t for t in syllabus.walk() if t.code == "1.1").learning_objectives[0]
+    assert " / " not in objective
+
+
 def test_ignores_everything_outside_the_subject_content_chapter(tmp_path):
     doc = pymupdf.open()
     page = doc.new_page()
