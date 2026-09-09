@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ReviewQueue } from "@/components/ReviewQueue";
 import {
+  getDecidedQuestions,
   getReviewQueue,
   getReviewTopicOptions,
   isBackedByDatabase,
@@ -19,9 +20,10 @@ export const metadata: Metadata = {
 };
 
 export default async function ReviewPage() {
-  const [items, topicOptions] = await Promise.all([
+  const [items, topicOptions, decided] = await Promise.all([
     getReviewQueue(),
     getReviewTopicOptions(),
+    getDecidedQuestions(),
   ]);
 
   return (
@@ -39,6 +41,7 @@ export default async function ReviewPage() {
       <ReviewQueue
         items={items}
         topicOptions={topicOptions}
+        decided={decided}
         persist={isBackedByDatabase()}
         // Whether the *server* is configured to accept writes at all. Without
         // this the page cannot tell "you have not unlocked this browser yet"

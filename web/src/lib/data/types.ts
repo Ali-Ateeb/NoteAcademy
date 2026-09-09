@@ -197,3 +197,17 @@ export interface ReviewItem {
 }
 
 export type ReviewDecision = "approved" | "rejected";
+
+/** A question that has already left the queue — approved or rejected — for
+ *  the admin lookup that finds it again afterward. `v_review_queue` only ever
+ *  shows what is still pending, so once a question is decided this is the
+ *  only place it is still listed. */
+export interface DecidedItem {
+  id: string;
+  paperSlug: string;
+  paperTitle: string;
+  displayLabel: string;
+  decision: ReviewDecision;
+  reviewedAt: string | null;
+  primaryTopic: { code: string; title: string; confidence: number } | null;
+}

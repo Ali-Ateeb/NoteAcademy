@@ -16,6 +16,7 @@ import {
 import {
   REVIEW_FLAG_HINTS,
   REVIEW_FLAG_LABELS,
+  type DecidedItem,
   type ReviewDecision,
   type ReviewItem,
 } from "@/lib/data/types";
@@ -32,6 +33,9 @@ function tagConfidence(item: ReviewItem): number {
 interface Props {
   items: ReviewItem[];
   topicOptions: { code: string; title: string }[];
+  /** Questions already approved or rejected, newest first — how a reviewer
+   *  finds one again once it has left the queue above. */
+  decided: DecidedItem[];
   /** Is there a database behind this queue? With one, a decision has to reach
    *  it to count. Without one, the queue is a scaffold on fixtures and the
    *  browser is the only place a decision was ever going to live. */
@@ -57,6 +61,7 @@ interface Props {
 export function ReviewQueue({
   items,
   topicOptions,
+  decided,
   persist,
   savingConfigured,
 }: Props) {
@@ -197,7 +202,7 @@ export function ReviewQueue({
       )}
 
       {savesToDatabase && unlocked && (
-        <RetagPanel topicOptions={topicOptions} />
+        <RetagPanel topicOptions={topicOptions} decided={decided} />
       )}
 
       <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -540,21 +545,43 @@ function ReviewCard({
  *  real accounts before it is served publicly. */
 /** Fix a question's topic after it has already left the queue — approved and
  *  published, most often, once a reviewer notices the tag was wrong. The
- *  queue itself only ever shows undecided items, so this is addressed by
- *  paper and question number rather than picked from a list: that is what a
- *  reviewer has in hand, looking at a published question, not an id. */
+ *  queue itself only ever shows undecided items — approving one removes it
+ *  from `items` for good, so it does not "come back" on a reload no matter
+ *  how the queue is filtered — so this looks it up separately, either typed
+ *  in directly or picked from the list of what was recently decided. */
 function RetagPanel({
   topicOptions,
+  decided,
 }: {
   topicOptions: { code: string; title: string }[];
+  decided: DecidedItem[];
 }) {
   const [open, setOpen] = useState(false);
   const [paperSlug, setPaperSlug] = useState("");
   const [displayLabel, setDisplayLabel] = useState("");
   const [topicCode, setTopicCode] = useState(topicOptions[0]?.code ?? "");
+  const [filter, setFilter] = useState("");
   const [status, setStatus] = useState<
     { kind: "saving" } | { kind: "done" } | { kind: "error"; message: string } | null
   >(null);
+
+  const needle = filter.trim().toLowerCase();
+  const filtered = needle
+    ? decided.filter(
+        (item) =>
+          item.paperSlug.toLowerCase().includes(needle) ||
+          item.displayLabel.toLowerCase().includes(needle) ||
+          item.primaryTopic?.code.toLowerCase().includes(needle) ||
+          item.primaryTopic?.title.toLowerCase().includes(needle),
+      )
+    : decided;
+
+  function pick(item: DecidedItem) {
+    setPaperSlug(item.paperSlug);
+    setDisplayLabel(item.displayLabel);
+    setTopicCode(item.primaryTopic?.code ?? topicOptions[0]?.code ?? "");
+    setStatus(null);
+  }
 
   return (
     <details
@@ -567,73 +594,119 @@ function RetagPanel({
       </summary>
       <p className="mt-2 max-w-2xl text-xs leading-relaxed text-ink-3">
         For a question already approved or rejected — the queue above only shows
-        what is still pending. This changes the topic tag only; it does not
-        touch whether the question is published.
+        what is still pending, and stops listing a question the moment it is
+        decided. This changes the topic tag only; it does not touch whether the
+        question is published.
       </p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          setStatus({ kind: "saving" });
-          void syncRetag(paperSlug.trim(), displayLabel.trim(), topicCode).then(
-            (result) => {
-              setStatus(
-                result.ok
-                  ? { kind: "done" }
-                  : { kind: "error", message: result.message ?? "Save failed." },
-              );
-            },
-          );
-        }}
-        className="mt-3 flex flex-wrap items-end gap-3"
-      >
-        <label className="flex flex-col gap-1 text-xs text-ink-3">
-          Paper slug
-          <input
-            value={paperSlug}
-            onChange={(event) => setPaperSlug(event.target.value)}
-            placeholder="physics-5054-2019-may-june-p11"
-            required
-            className="w-64 rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-sm text-ink"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-ink-3">
-          Question
-          <input
-            value={displayLabel}
-            onChange={(event) => setDisplayLabel(event.target.value)}
-            placeholder="11"
-            required
-            className="w-20 rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-sm text-ink"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-ink-3">
-          Correct topic
-          <select
-            value={topicCode}
-            onChange={(event) => setTopicCode(event.target.value)}
-            className="max-w-xs rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink"
-          >
-            {topicOptions.map((option) => (
-              <option key={option.code} value={option.code}>
-                {option.code} · {option.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="submit"
-          disabled={status?.kind === "saving"}
-          className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
+
+      <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_280px]">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setStatus({ kind: "saving" });
+            void syncRetag(paperSlug.trim(), displayLabel.trim(), topicCode).then(
+              (result) => {
+                setStatus(
+                  result.ok
+                    ? { kind: "done" }
+                    : { kind: "error", message: result.message ?? "Save failed." },
+                );
+              },
+            );
+          }}
+          className="flex flex-wrap items-end gap-3"
         >
-          {status?.kind === "saving" ? "Saving…" : "Save topic"}
-        </button>
-      </form>
-      {status?.kind === "done" && (
-        <p className="mt-2 text-xs text-correct">Topic updated.</p>
-      )}
-      {status?.kind === "error" && (
-        <p className="mt-2 text-xs text-incorrect">{status.message}</p>
-      )}
+          <label className="flex flex-col gap-1 text-xs text-ink-3">
+            Paper slug
+            <input
+              value={paperSlug}
+              onChange={(event) => setPaperSlug(event.target.value)}
+              placeholder="physics-5054-2019-may-june-p11"
+              required
+              className="w-64 rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-sm text-ink"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-ink-3">
+            Question
+            <input
+              value={displayLabel}
+              onChange={(event) => setDisplayLabel(event.target.value)}
+              placeholder="11"
+              required
+              className="w-20 rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-sm text-ink"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-ink-3">
+            Correct topic
+            <select
+              value={topicCode}
+              onChange={(event) => setTopicCode(event.target.value)}
+              className="max-w-xs rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink"
+            >
+              {topicOptions.map((option) => (
+                <option key={option.code} value={option.code}>
+                  {option.code} · {option.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            disabled={status?.kind === "saving"}
+            className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {status?.kind === "saving" ? "Saving…" : "Save topic"}
+          </button>
+          {status?.kind === "done" && (
+            <p className="text-xs text-correct">Topic updated.</p>
+          )}
+          {status?.kind === "error" && (
+            <p className="text-xs text-incorrect">{status.message}</p>
+          )}
+        </form>
+
+        <div className="min-w-0">
+          <input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Search paper, question or topic…"
+            className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-ink"
+          />
+          <div className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
+            {filtered.length === 0 && (
+              <p className="px-1 py-2 text-xs text-ink-3">
+                {decided.length === 0
+                  ? "Nothing decided yet."
+                  : "No match."}
+              </p>
+            )}
+            {filtered.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => pick(item)}
+                className="block w-full rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-surface"
+              >
+                <span
+                  className={
+                    item.decision === "approved" ? "text-correct" : "text-incorrect"
+                  }
+                >
+                  {item.decision === "approved" ? "✓" : "✕"}
+                </span>{" "}
+                <span className="font-mono text-ink-3">
+                  {item.paperSlug} Q{item.displayLabel}
+                </span>
+                <span className="ml-1.5 text-ink-2">
+                  {item.primaryTopic
+                    ? `${item.primaryTopic.code} ${item.primaryTopic.title}`
+                    : "untagged"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </details>
   );
 }

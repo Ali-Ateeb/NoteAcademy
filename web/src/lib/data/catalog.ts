@@ -28,6 +28,7 @@ import { signedUrls } from "../storage";
 import { reviewItems, reviewTopicOptions } from "./reviewSeed";
 import * as seed from "./seed";
 import type {
+  DecidedItem,
   DuplicateRef,
   Level,
   McqOption,
@@ -552,6 +553,53 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
       // code, the title and how sure the model was.
       reasoning: "",
     })),
+  }));
+}
+
+/** How many decided questions the admin lookup shows. A reviewer looking for
+ *  one they just decided needs the most recent handful, not a full audit log
+ *  — and after a bulk approval this table can hold thousands of rows with the
+ *  same `reviewed_at` batch, where a bigger number would not help. */
+const DECIDED_LIMIT = 300;
+
+interface DecidedRow {
+  id: string;
+  paper_slug: string;
+  paper_title: string;
+  display_label: string;
+  extraction_status: "approved" | "rejected";
+  reviewed_at: string | null;
+  primary_topic: { code: string; title: string; confidence: number } | null;
+}
+
+/** Questions that have already left the queue, newest decision first — the
+ *  lookup for "I approved this and the topic was wrong", since the queue
+ *  itself stops listing a question the moment it is decided.
+ *
+ *  Same service-role surface as `getReviewQueue`, and for the same reason: a
+ *  rejected question is unapproved by definition, so anyone without the
+ *  service role sees none of this either way. */
+export async function getDecidedQuestions(): Promise<DecidedItem[]> {
+  const client = serviceDb();
+  if (!client) return [];
+
+  const result = await rows<DecidedRow>(
+    "decided questions",
+    client
+      .from("v_review_decided")
+      .select("*")
+      .order("reviewed_at", { ascending: false, nullsFirst: false })
+      .limit(DECIDED_LIMIT),
+  );
+
+  return result.map((row) => ({
+    id: row.id,
+    paperSlug: row.paper_slug,
+    paperTitle: row.paper_title,
+    displayLabel: row.display_label,
+    decision: row.extraction_status,
+    reviewedAt: row.reviewed_at,
+    primaryTopic: row.primary_topic,
   }));
 }
 
