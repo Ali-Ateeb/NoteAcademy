@@ -46,6 +46,7 @@ mark scheme PDF ──▶ render ──▶ extract entries ───────
 | ingest (MCQ) | `ingest.py` | The three deterministic stages, straight into Postgres |
 | syllabus | `syllabus.py` | Read the published syllabus PDF into the topic tree |
 | upload | `storage.py` | Put the crops where the app can serve them from |
+| verify | `verify.py` | A second, independent topic tag, checked against the first |
 
 ```bash
 noteacademy render      paper.pdf --out work/5054-2026-mj-11
@@ -166,6 +167,59 @@ scanned or non-conforming papers, and the route for structured papers.
 This is why crops are the display artifact and text is only the search index.
 The rendered crop shows the question exactly as printed, options in the right
 order, graph intact.
+
+## Verifying a tagging pass without a review queue of 600
+
+The first tagging pass ran against 600 Physics 5054 questions and produced a
+number nobody had checked: every tag came from one model reading the question's
+extracted *text*, and text extraction is the part of this pipeline already known
+to scramble reading order and lose diagrams entirely. Reviewing all 600 by hand
+does not scale, and most of the rest of the queue does not need it either — the
+answer keys are parsed from a machine-readable table and validate 40/40 on every
+paper, and the crops are geometrically segmented with nothing shaped like an
+outlier. The one thing worth checking is the tag.
+
+So a second, independent pass tagged the same 600 questions from their *crops*
+— the question as printed, the same thing a reviewer would look at — with the
+first pass's answer withheld, and the two were compared:
+
+| | |
+|---|---|
+| Agreed | **564 / 600 (94%)** |
+| Disagreed, sent to review | 36 (6%) |
+| Already approved, left untouched | 2 |
+
+Agreement raised the tag's confidence (`max(pass1, 0.9)`); disagreement recorded
+the second opinion as a secondary topic and dropped the primary below the review
+floor — the same mechanism the first pass already uses for "unsure", because two
+independent methods landing on different topics *is* unsure. Nothing new was
+invented to represent it.
+
+The 36 disagreements are not noise. Almost every one was already a low-confidence
+tag from the first pass (0.60–0.74) — the pattern the first pass's own confidence
+score was supposed to predict, borne out by a second, independent reading. And
+they cluster where the syllabus itself is genuinely ambiguous: motion questions
+that are really about forces (`1.2` vs `1.5.1`/`1.5.2`), practical-electricity
+questions that are really about power (`4.4.1` vs `4.2.2`/`4.2.3`), circuit
+diagrams versus circuit *behaviour* (`4.3.1` vs `4.3.2`/`4.3.3`). These are
+exactly the questions a human should be looking at, and now they sort to the top
+of the queue instead of being buried in 600.
+
+```bash
+noteacademy tag-verify-export --subject physics-5054   # sheets + manifest
+# look at the sheets, decide a topic per position, write decisions.json
+noteacademy tag-verify-apply decisions.json
+```
+
+`tag-verify-export` builds JPEG contact sheets of every already-tagged
+question's crop — duplicate questions across paper variants folded to one copy,
+since CAIE's component 11/12 pairs share most of their multiple-choice items
+verbatim — and a manifest mapping each sheet position back to the question(s) it
+stands for. The manifest never carries the first pass's tag; that withholding is
+the entire point of a second pass, not an implementation detail. `decisions.json`
+is `{"S3.7": "4.2.4", ...}`, one topic code per position, from whoever looks at
+the sheets — a person, or a Claude Code session with no API key, the same as the
+first pass.
 
 ## Six decisions that matter more than the code
 

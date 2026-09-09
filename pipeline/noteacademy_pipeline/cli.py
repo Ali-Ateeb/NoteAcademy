@@ -494,6 +494,104 @@ def tag_apply(
             "does not exist[/red]"
         )
 
+
+@app.command(name="tag-verify-export")
+def tag_verify_export(
+    subject: str = typer.Option("physics-5054", help="Subject to build sheets for."),
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    out: Path = typer.Option(Path("pipeline/work/verify"), help="Output directory."),
+    target_width: int = typer.Option(700, help="Crop width in the contact sheets."),
+    max_sheet_height: int = typer.Option(5000, help="Roughly how tall one sheet gets."),
+) -> None:
+    """Build contact sheets for a second, independent tagging pass.
+
+    Every already-tagged question's crop is laid out with its current topic
+    withheld, duplicate questions across paper variants folded to one copy, and
+    a manifest written mapping each sheet position back to the question(s) it
+    stands for. Look at the sheets, decide a topic per position, and feed the
+    result to `tag-verify-apply`.
+    """
+    from .load import connect
+    from .verify import build_verification_sheets
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        report = build_verification_sheets(
+            conn, subject, papers, out,
+            target_width=target_width, max_sheet_height=max_sheet_height,
+        )
+
+    table = Table("", "", title=f"{subject} — second-pass worksheet")
+    table.add_row("questions shown", str(report.items_shown))
+    table.add_row("duplicates folded away", str(report.duplicates_folded))
+    table.add_row("sheets written", str(len(report.sheets)))
+    console.print(table)
+
+    if report.missing_crop:
+        console.print(
+            f"[yellow]{len(report.missing_crop)} question(s) have no local crop "
+            "and were skipped — re-run load-mcq with --crops for that paper.[/yellow]"
+        )
+    console.print(f"-> {out / 'manifest.json'}  +  {out / 'sheets'}")
+
+
+@app.command(name="tag-verify-apply")
+def tag_verify_apply(
+    decisions: Path = typer.Argument(..., exists=True, help="JSON {tag: topic_code}."),
+    manifest: Path = typer.Option(
+        Path("pipeline/work/verify/manifest.json"), exists=True,
+        help="The manifest tag-verify-export wrote.",
+    ),
+    floor: float = typer.Option(settings.tag_confidence_floor,
+                                help="Below this confidence, hold the question back."),
+    dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
+) -> None:
+    """Apply a second pass's decisions against the first.
+
+    Agreement raises the tag's confidence. Disagreement records the second
+    opinion as a secondary topic and drops the question below the review
+    floor — the same mechanism the first pass uses for "unsure", because two
+    independent methods landing on different topics *is* unsure.
+    """
+    import json
+
+    from .load import connect
+    from .verify import apply_verification
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+    decisions_data = json.loads(decisions.read_text(encoding="utf-8"))
+
+    with connect(settings.database_url) as conn:
+        report = apply_verification(
+            conn, manifest_data, decisions_data, confidence_floor=floor
+        )
+        if dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    table = Table("", "", title="Second pass applied")
+    table.add_row("agreed (confidence raised)", str(report.agreed))
+    table.add_row("disagreed (sent to review)", str(report.disagreed))
+    table.add_row("already approved, left alone", str(report.skipped_approved))
+    table.add_row("no decision given", str(report.skipped_no_decision))
+    console.print(table)
+
+    if report.unknown_codes:
+        console.print(
+            f"[red]{len(report.unknown_codes)} decision(s) named a code outside "
+            f"the syllabus and were dropped: {sorted(set(report.unknown_codes))[:5]}[/red]"
+        )
+
+
 @app.command()
 def estimate(
     papers: int = typer.Option(3400, help="Documents in the target corpus."),

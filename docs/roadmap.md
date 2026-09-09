@@ -50,15 +50,19 @@ through `noteacademy load-mcq`. Deterministic and free, and now a single command
 per paper. `/admin/review` already reads the database when the service role key
 is present.
 
-**4. Topic tagging.** The closed list the classifier picks from is loaded:
-Physics 5054 (2026-2028), parsed from the published syllabus by
-`noteacademy load-syllabus` — 6 sections, 83 topics, 270 learning outcomes. This
-is the first step that genuinely needs `ANTHROPIC_API_KEY`, and the one where
-the review queue earns its keep: tagging accuracy *is* the product, and a
-topical bank that is 80% right is worse than none.
+**4. ~~Topic tagging~~ for Physics 5054.** Done, and verified rather than taken on
+faith: all 600 questions tagged against the 63 revisable nodes, then checked by
+a second, independent pass that read the crops instead of the extracted text and
+had the first pass's answer withheld (`tag-verify-export` / `tag-verify-apply`,
+`pipeline/verify.py`). 564 of 600 (94%) agreed; the 36 that did not are now the
+top of the review queue rather than lost inside it, each carrying both proposed
+topics. Neither pass needed `ANTHROPIC_API_KEY` — both were done in a Claude Code
+session, which is the point of `worksheet.py` and `verify.py` existing as JSON
+in/JSON out rather than API calls: the classifier is whoever is available.
 
-Tag against the 63 nodes that carry outcomes, never the 20 containers —
-`revisableTopics()` is that list.
+Chemistry 5070 and Biology 5090 are ingested but their syllabuses are not loaded,
+so they have no closed list to tag against yet — `noteacademy load-syllabus`
+against their published PDFs is the remaining step, then the same two passes.
 
 **5. ~~Object storage~~ and the real viewer.** Storage is done: crops upload to
 a private Supabase bucket as part of `load-mcq`, and the app serves them through
@@ -85,9 +89,9 @@ enforced through `consume_quota()`.
 - No auth. The app is single-user-per-browser.
 - Ingested questions carry no text and no option text, so they cannot be
   rendered yet. See step 0.
-- The topic tree is loaded but rendered flat; the hierarchy is in the data and
-  not yet in the UI.
-- Nothing is tagged to a topic yet, so every topic reads as 0 questions.
+- Chemistry 5070 and Biology 5090 have no syllabus loaded and therefore no
+  topic tags; every topic for those two subjects reads as 0 questions until
+  `load-syllabus` is run against their published PDFs.
 - Reviewer decisions are written to Postgres, but `reviewed_by` is null: there
   is no identity to record yet.
 - `topic_mastery` is a materialised view with no refresh schedule yet.
