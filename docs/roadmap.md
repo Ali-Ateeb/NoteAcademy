@@ -64,6 +64,20 @@ Chemistry 5070 and Biology 5090 are ingested but their syllabuses are not loaded
 so they have no closed list to tag against yet — `noteacademy load-syllabus`
 against their published PDFs is the remaining step, then the same two passes.
 
+**4b. Clearing the review queue at scale.** Reviewing 1240 questions one at a
+time does not scale once most of the queue does not need it: `noteacademy
+bulk-approve` (`pipeline/verify.py`) approves every MCQ whose primary topic is
+confident and carries no other review flag — the same population the second
+pass already vetted — in one call, dry-run by default because approving
+publishes to students. `noteacademy dedupe` marks the handful of MCQs CAIE
+reuses verbatim across a sitting's variants (`questions.canonical_question_id`,
+migration 0018); the topical browser and drills fold these to one card and
+name the other papers a question also appears in, while the timed arena still
+shows every paper's own questions untouched.
+
+Neither command has been run for real yet — `bulk-approve` needs a deliberate
+go-ahead since it is the thing that decides what a student sees.
+
 **5. ~~Object storage~~ and the real viewer.** Storage is done: crops upload to
 a private Supabase bucket as part of `load-mcq`, and the app serves them through
 `/api/asset`, which signs a URL only for a crop whose question the anonymous
