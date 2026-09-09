@@ -42,7 +42,11 @@ function serviceClient(): SupabaseClient | null {
 /** Constant-time-ish comparison. The token is short and the endpoint is not a
  *  realistic timing-attack target, but there is no reason to make it one. */
 function tokenMatches(supplied: string | null): boolean {
-  const expected = process.env.REVIEW_TOKEN ?? "";
+  // Trimmed on both sides. A .env written on Windows keeps CRLF, and a token
+  // that silently carries a trailing carriage return would reject every
+  // correct paste forever, with no way to tell that from a wrong token.
+  const expected = (process.env.REVIEW_TOKEN ?? "").trim();
+  supplied = supplied?.trim() ?? null;
   if (!expected || !supplied || supplied.length !== expected.length) return false;
   let difference = 0;
   for (let i = 0; i < expected.length; i += 1) {
@@ -62,6 +66,15 @@ function guard(request: Request): NextResponse | null {
     return NextResponse.json({ error: "Not authorised." }, { status: 401 });
   }
   return null;
+}
+
+/** Is this token the right one? Used by the unlock box, so entering a wrong
+ *  token fails there — where it can be corrected — instead of silently, later,
+ *  on every decision the reviewer makes. */
+export async function GET(request: Request) {
+  const refusal = guard(request);
+  if (refusal) return refusal;
+  return NextResponse.json({ ok: true });
 }
 
 interface DecisionBody {

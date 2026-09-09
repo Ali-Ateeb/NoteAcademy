@@ -10,6 +10,7 @@ import {
   syncDecision,
   syncUndo,
   undoLastDecision,
+  verifyToken,
 } from "@/lib/review";
 import {
   REVIEW_FLAG_HINTS,
@@ -93,6 +94,12 @@ export function ReviewQueue({
       void syncDecision(questionId, decision, topicCode).then((result) => {
         if (result.ok) return;
         setSaveError(result.message ?? "Save failed.");
+        if (result.unauthorised) {
+          // Otherwise the bar stays hidden and every later decision fails the
+          // same way, with nothing on screen to re-enter the token through.
+          setReviewToken("");
+          setUnlocked(false);
+        }
         undoLastDecision();
         setDecisions((prev) => {
           const next = new Map(prev);
@@ -115,7 +122,12 @@ export function ReviewQueue({
     setSaveError(null);
     if (!savesToDatabase) return;
     void syncUndo(last.questionId).then((result) => {
-      if (!result.ok) setSaveError(result.message ?? "Undo failed.");
+      if (result.ok) return;
+      setSaveError(result.message ?? "Undo failed.");
+      if (result.unauthorised) {
+        setReviewToken("");
+        setUnlocked(false);
+      }
     });
   }, [savesToDatabase]);
 
@@ -168,7 +180,8 @@ export function ReviewQueue({
           configured={savingConfigured}
           onUnlock={(token) => {
             setReviewToken(token);
-            setUnlocked(Boolean(token));
+            setUnlocked(true);
+            setSaveError(null);
           }}
         />
       )}
@@ -499,6 +512,8 @@ function UnlockBar({
   onUnlock: (token: string) => void;
 }) {
   const [value, setValue] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [rejected, setRejected] = useState<string | null>(null);
 
   // Two different problems that used to share one message. "Enter the review
   // token (REVIEW_TOKEN in web/.env.local)" reads, to someone who has already
@@ -518,7 +533,17 @@ function UnlockBar({
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        onUnlock(value.trim());
+        const token = value.trim();
+        setRejected(null);
+        setChecking(true);
+        // Checked against the server before the box goes away. "Unlocked" used
+        // to mean only "something was typed", so a wrong token hid this form
+        // and then failed every save with no way back to it.
+        void verifyToken(token).then((result) => {
+          setChecking(false);
+          if (result.ok) onUnlock(token);
+          else setRejected(result.message ?? "That token was not accepted.");
+        });
       }}
       className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
     >
@@ -532,6 +557,9 @@ function UnlockBar({
           <span className="font-mono">web/.env.local</span>. Until then, approvals
           are remembered here and nowhere else.
         </p>
+        {rejected && (
+          <p className="mt-1.5 text-xs text-incorrect">{rejected}</p>
+        )}
       </div>
       <input
         type="password"
@@ -543,9 +571,10 @@ function UnlockBar({
       />
       <button
         type="submit"
-        className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+        disabled={checking}
+        className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
       >
-        Unlock
+        {checking ? "Checking…" : "Unlock"}
       </button>
     </form>
   );

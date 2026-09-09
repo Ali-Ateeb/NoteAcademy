@@ -120,11 +120,37 @@ export function setReviewToken(token: string): void {
   }
 }
 
+/** Ask the server whether a token is accepted, before trusting it.
+ *
+ *  Without this, "unlocked" meant no more than "a non-empty string was typed":
+ *  a wrong token hid the unlock box and then failed every save, with nothing in
+ *  the UI to re-enter it through. */
+export async function verifyToken(token: string): Promise<SyncResult> {
+  if (!token) return { ok: false, message: "Enter the token first." };
+  try {
+    const response = await fetch("/api/review", {
+      method: "GET",
+      headers: { "x-review-token": token },
+    });
+    if (response.ok) return { ok: true };
+    if (response.status === 401) {
+      return { ok: false, message: "That token was not accepted." };
+    }
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, message: body.error ?? `Check failed (${response.status}).` };
+  } catch (error) {
+    return { ok: false, message: `Check failed: ${(error as Error).message}` };
+  }
+}
+
 export interface SyncResult {
   ok: boolean;
   /** Shown to the reviewer verbatim. A decision that did not reach the database
    *  has not happened, and saying so beats a queue that looks saved. */
   message?: string;
+  /** The server rejected the token itself, not this particular decision. The
+   *  caller should drop it and ask for it again rather than retrying. */
+  unauthorised?: boolean;
 }
 
 async function send(input: RequestInfo, init: RequestInit): Promise<SyncResult> {
@@ -139,6 +165,13 @@ async function send(input: RequestInfo, init: RequestInit): Promise<SyncResult> 
     if (response.ok) return { ok: true };
 
     const body = (await response.json().catch(() => ({}))) as { error?: string };
+    if (response.status === 401) {
+      return {
+        ok: false,
+        unauthorised: true,
+        message: "That review token was not accepted.",
+      };
+    }
     return { ok: false, message: body.error ?? `Save failed (${response.status}).` };
   } catch (error) {
     return { ok: false, message: `Save failed: ${(error as Error).message}` };
