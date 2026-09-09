@@ -425,6 +425,16 @@ export async function getPlayablePapers(subjectSlug: string): Promise<Paper[]> {
    Review queue
    --------------------------------------------------------------------------- */
 
+/** PostgREST's own per-response cap. Asking for more in one call silently
+ *  returns 1000 rows and no indication that it truncated. */
+const REVIEW_PAGE = 1000;
+
+/** A ceiling on how much of the queue one page will hold in memory. The whole
+ *  queue is rendered at once today, which is fine for a few thousand and will
+ *  not be for a backfill — at that point this needs paging in the UI, not a
+ *  bigger number here. */
+const REVIEW_QUEUE_MAX = 5000;
+
 interface ReviewRow {
   id: string;
   paper_slug: string;
@@ -460,15 +470,26 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
     );
   }
 
-  const result = await rows<ReviewRow>(
-    "the review queue",
-    client
-      .from("v_review_queue")
-      .select("*")
-      // needs_review sorts before extracted alphabetically by luck rather than
-      // by design, so the order is spelled out here instead.
-      .order("extraction_confidence", { nullsFirst: true }),
-  );
+  // Paged, because PostgREST caps a response at 1000 rows and says nothing
+  // about it. Unpaged, a queue of 1240 reported "1000 pending" and the last 240
+  // questions were unreachable — invisible, un-reviewable, and therefore never
+  // publishable, with nothing on screen to suggest they existed.
+  const result: ReviewRow[] = [];
+  for (let from = 0; from < REVIEW_QUEUE_MAX; from += REVIEW_PAGE) {
+    const page = await rows<ReviewRow>(
+      "the review queue",
+      client
+        .from("v_review_queue")
+        .select("*")
+        // needs_review sorts before extracted alphabetically by luck rather
+        // than by design, so the order is spelled out below instead.
+        .order("extraction_confidence", { nullsFirst: true })
+        .order("id")
+        .range(from, from + REVIEW_PAGE - 1),
+    );
+    result.push(...page);
+    if (page.length < REVIEW_PAGE) break;
+  }
 
   const flaggedFirst = [...result].sort((a, b) => {
     const flagged = Number(b.extraction_status === "needs_review") -

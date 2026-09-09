@@ -63,10 +63,16 @@ export async function signedUrl(
   return data?.signedUrl ?? null;
 }
 
-/** Sign many objects in one request.
+/** Supabase refuses a batch of more than 1000 paths, and refuses the *whole*
+ *  request — so an over-long batch does not sign 1000 of them, it signs none.
+ *  Chunked well under the cap: the failure it prevents is total, and the cost
+ *  of an extra round trip per 500 crops is nothing. */
+const SIGN_BATCH = 500;
+
+/** Sign many objects.
  *
- *  The review queue shows a hundred crops at a time; signing them one at a time
- *  is a hundred round trips before the page can render. */
+ *  The review queue shows a whole paper of crops at a time; signing them one at
+ *  a time is forty round trips before the page can render. */
 export async function signedUrls(
   storageKeys: string[],
   expiresIn: number = SIGNED_URL_TTL_SECONDS,
@@ -76,19 +82,23 @@ export async function signedUrls(
   const keys = [...new Set(storageKeys)];
   if (!client || keys.length === 0) return signed;
 
-  const { data, error } = await client.storage
-    .from(BUCKET)
-    .createSignedUrls(keys, expiresIn);
+  for (let from = 0; from < keys.length; from += SIGN_BATCH) {
+    const batch = keys.slice(from, from + SIGN_BATCH);
+    const { data, error } = await client.storage
+      .from(BUCKET)
+      .createSignedUrls(batch, expiresIn);
 
-  if (error) {
-    console.warn(`signing ${keys.length} objects failed: ${error.message}`);
-    return signed;
-  }
+    if (error) {
+      // One bad batch costs its own crops, not every crop on the page.
+      console.warn(`signing ${batch.length} objects failed: ${error.message}`);
+      continue;
+    }
 
-  for (const entry of data ?? []) {
-    // The API returns a row per key, carrying its own error for the ones that
-    // are missing. A crop that was never uploaded is expected, not exceptional.
-    if (entry.signedUrl && entry.path) signed.set(entry.path, entry.signedUrl);
+    for (const entry of data ?? []) {
+      // The API returns a row per key, carrying its own error for the ones that
+      // are missing. A crop that was never uploaded is expected, not exceptional.
+      if (entry.signedUrl && entry.path) signed.set(entry.path, entry.signedUrl);
+    }
   }
   return signed;
 }
