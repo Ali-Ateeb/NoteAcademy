@@ -60,6 +60,16 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
+    // Both elements are written to before React hydrates, for different
+    // reasons: <html> by the theme script below, <body> by whatever extensions
+    // the reader happens to run — Grammarly adds data-gr-ext-installed and
+    // data-new-gr-c-s-check-loaded, password managers add their own.
+    //
+    // suppressHydrationWarning reaches exactly one level: the element's own
+    // attributes and text, never its children. So this silences the noise
+    // without hiding a real mismatch inside the app — which is the point.
+    // Unsuppressed, every page load logs a mismatch nobody can act on, and the
+    // one that matters arrives looking identical to the ones that don't.
     <html lang="en" suppressHydrationWarning>
       <head>
         {/* Applied before first paint so the page never flashes the wrong
@@ -70,7 +80,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body>
+      <body suppressHydrationWarning>
         <Header />
         <main>{children}</main>
         <Footer />
