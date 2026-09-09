@@ -19,6 +19,15 @@ import {
   type ReviewItem,
 } from "@/lib/data/types";
 
+/** How sure the classifier was about this question's topic.
+ *
+ *  Not `extractionConfidence`, which is 1.0 on every multiple-choice question
+ *  the geometric segmenter accepted — a constant, and so useless both as a
+ *  badge and as a sort key. */
+function tagConfidence(item: ReviewItem): number {
+  return item.proposedTopics[0]?.confidence ?? 0;
+}
+
 interface Props {
   items: ReviewItem[];
   topicOptions: { code: string; title: string }[];
@@ -36,8 +45,10 @@ interface Props {
  *
  * Built around throughput. A real backfill puts thousands of questions through
  * here, so the reviewer never touches the mouse: J/K to move, A to approve, R to
- * reject, 1–9 to reassign the topic, U to undo. Every decision is one keystroke,
- * and the item advances automatically.
+ * reject, U to undo. Every decision is one keystroke, and the item advances
+ * automatically. Reassigning the topic is the one action that is not: with a
+ * real syllabus of sixty-three revisable nodes there is no useful mapping from
+ * a digit to a topic, so it is a select.
  *
  * The queue is ordered worst-confidence first, so attention goes where the
  * pipeline is least sure rather than in page order.
@@ -150,14 +161,6 @@ export function ReviewQueue({
         setIndex((i) => Math.max(i - 1, 0));
       }
 
-      const digit = Number(event.key);
-      if (current && digit >= 1 && digit <= topicOptions.length) {
-        event.preventDefault();
-        const option = topicOptions[digit - 1];
-        if (option) {
-          setOverrides((prev) => ({ ...prev, [current.id]: option.code }));
-        }
-      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -259,10 +262,10 @@ export function ReviewQueue({
                     </span>
                     <span
                       className={`ml-auto font-mono text-xs ${
-                        item.extractionConfidence < 0.6 ? "text-incorrect" : "text-ink-3"
+                        tagConfidence(item) < 0.75 ? "text-marks" : "text-ink-3"
                       }`}
                     >
-                      {Math.round(item.extractionConfidence * 100)}%
+                      {Math.round(tagConfidence(item) * 100)}%
                     </span>
                     {itemDecision && (
                       <span
@@ -326,14 +329,23 @@ function ReviewCard({
         <span className="text-xs text-ink-3">
           {item.paperTitle} · page {item.pageNumber}
         </span>
+        {/* The *topic* confidence, not the extraction confidence.
+            extraction_confidence is 1.0 on every geometrically segmented
+            question — the segmenter either matched the template or the paper
+            was refused — so a badge showing it read "100% confident" on all
+            1238, including the ones flagged as unsure of the topic. The number
+            that varies, and the only one a reviewer can act on, is how sure
+            the classifier was about the topic. */}
         <span
           className={`ml-auto rounded-md px-2 py-0.5 font-mono text-xs ${
-            item.extractionConfidence < 0.6
-              ? "bg-incorrect-soft text-incorrect"
+            tagConfidence(item) < 0.75
+              ? "bg-marks/15 text-marks"
               : "bg-surface-2 text-ink-2"
           }`}
         >
-          {Math.round(item.extractionConfidence * 100)}% confident
+          {item.proposedTopics.length
+            ? `topic ${Math.round(tagConfidence(item) * 100)}%`
+            : "untagged"}
         </span>
         {decision && (
           <span
@@ -442,37 +454,54 @@ function ReviewCard({
         <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
           Topic
         </p>
-        {primary && (
-          <p className="mt-1.5 text-xs italic leading-relaxed text-ink-3">
-            Classifier: {primary.reasoning}
+        {/* What was actually assigned, stated plainly. This is the claim the
+            reviewer is being asked to accept or correct, and it used to appear
+            only as one highlighted entry among sixty-three buttons, below the
+            fold. The classifier's reasoning is not stored, so there is no line
+            for it — an empty "Classifier:" label said less than nothing. */}
+        {primary ? (
+          <p className="mt-1.5 text-sm text-ink">
+            <span className="mr-2 font-mono text-xs text-ink-3">{primary.code}</span>
+            {topicOptions.find((t) => t.code === primary.code)?.title ?? primary.code}
+            <span
+              className={`ml-2 font-mono text-xs ${
+                primary.confidence < 0.75 ? "text-marks" : "text-ink-3"
+              }`}
+            >
+              {Math.round(primary.confidence * 100)}% confident
+            </span>
+          </p>
+        ) : (
+          <p className="mt-1.5 text-sm italic text-ink-3">
+            No topic assigned. Pick the one it tests.
           </p>
         )}
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {topicOptions.map((option, i) => {
-            const proposed = item.proposedTopics.find((t) => t.code === option.code);
-            const selected = chosen === option.code;
-            return (
-              <button
-                key={option.code}
-                type="button"
-                onClick={() => onOverride(option.code)}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                  selected
-                    ? "border-accent bg-accent-soft text-ink"
-                    : "border-line text-ink-2 hover:border-line-strong"
-                }`}
-              >
-                <span className="mr-1.5 font-mono text-ink-3">{i + 1}</span>
-                {option.title}
-                {proposed && (
-                  <span className="ml-1.5 font-mono text-ink-3">
-                    {Math.round(proposed.confidence * 100)}%
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+
+        {/* A select rather than a button per topic: a real CAIE tree is
+            sixty-three revisable nodes, and sixty-three buttons is a wall the
+            proposed one hides in. It also made the 1-9 shortcuts arbitrary —
+            they reached the first nine topics in syllabus order, which has
+            nothing to do with the question on screen. */}
+        <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-3">
+          <span>Change to</span>
+          <select
+            value={chosen ?? ""}
+            onChange={(event) => onOverride(event.target.value)}
+            className="max-w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-ink"
+          >
+            <option value="" disabled>
+              Choose a topic…
+            </option>
+            {topicOptions.map((option) => (
+              <option key={option.code} value={option.code}>
+                {option.code} — {option.title}
+              </option>
+            ))}
+          </select>
+          {chosen && primary && chosen !== primary.code && (
+            <span className="text-marks">changed from {primary.code}</span>
+          )}
+        </label>
       </div>
 
       <div className="mt-6 flex gap-2 border-t border-line pt-4">

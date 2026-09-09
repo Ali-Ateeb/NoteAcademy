@@ -137,8 +137,12 @@ await page.goto(`${BASE}/admin/review`, { waitUntil: "networkidle" });
 await page.waitForSelector("text=Pending");
 check("review queue lists pending questions", (await page.getByText("Pending").count()) > 0);
 check(
-  "queue is ordered worst-confidence first",
-  (await page.getByText("41% confident").count()) > 0,
+  // The *topic* confidence. It used to assert "41% confident", the extraction
+  // confidence — which varies in these fixtures and is 1.0 on every real
+  // geometrically segmented question, so the check passed here while the live
+  // queue showed "100% confident" on all 1238 rows and sorted by a constant.
+  "queue is ordered worst-topic-confidence first",
+  (await page.getByText("topic 55%").count()) > 0,
 );
 check(
   "the reason it was held back is shown",

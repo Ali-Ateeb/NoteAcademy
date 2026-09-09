@@ -465,8 +465,12 @@ interface ReviewRow {
 export async function getReviewQueue(): Promise<ReviewItem[]> {
   const client = serviceDb();
   if (!client) {
+    // Same order as the database path, or the fixtures demonstrate a queue
+    // that behaves differently from the real one.
     return [...reviewItems].sort(
-      (a, b) => a.extractionConfidence - b.extractionConfidence,
+      (a, b) =>
+        (a.proposedTopics[0]?.confidence ?? 0) -
+        (b.proposedTopics[0]?.confidence ?? 0),
     );
   }
 
@@ -491,10 +495,22 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
     if (page.length < REVIEW_PAGE) break;
   }
 
+  // Flagged first, then least-confident topic first.
+  //
+  // The tie-break used to be extraction_confidence, which is 1.0 on every
+  // multiple-choice question the geometric segmenter accepted — the segmenter
+  // either matches the template or the paper is refused, so there is no middle.
+  // Sorting a queue by a constant is not sorting it, and the badge built on the
+  // same number read "100% confident" on all 1238 questions, including the ones
+  // flagged as unsure. The number that varies is how sure the classifier was
+  // about the topic, and that is also the only one a reviewer can act on.
+  const topicConfidence = (row: ReviewRow) =>
+    row.proposed_topics[0]?.confidence ?? 0;
+
   const flaggedFirst = [...result].sort((a, b) => {
     const flagged = Number(b.extraction_status === "needs_review") -
       Number(a.extraction_status === "needs_review");
-    return flagged || (a.extraction_confidence ?? 0) - (b.extraction_confidence ?? 0);
+    return flagged || topicConfidence(a) - topicConfidence(b);
   });
 
   // Signed here rather than through /api/asset: every row in this queue is
@@ -530,14 +546,33 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
   }));
 }
 
-export async function getReviewTopicOptions(): Promise<
-  { code: string; title: string }[]
-> {
-  const client = db();
+/** The topics a reviewer may assign.
+ *
+ *  Read with the service role, not the anonymous client. `v_topics` joins
+ *  `subjects`, whose policy admits only published ones — and a subject is
+ *  published *after* its bank has been reviewed, never before. Going through
+ *  the public path meant the reviewer's topic list was empty for precisely the
+ *  subject they were reviewing, with no error: sixty-three topics silently
+ *  became none, and the only way to change a wrong tag disappeared with them.
+ *
+ *  The queue is a service-role surface throughout. This is part of it. */
+export async function getReviewTopicOptions(
+  subjectSlug = "physics-5054",
+): Promise<{ code: string; title: string }[]> {
+  const client = serviceDb();
   if (!client) return reviewTopicOptions;
 
-  const topics = await revisableTopics("physics-5054");
-  return topics.map(({ code, title }) => ({ code, title }));
+  const result = await rows<{ code: string; title: string }>(
+    "topic options",
+    client
+      .from("v_topics")
+      .select("code,title,sort_order,is_revisable")
+      .eq("subject_slug", subjectSlug)
+      .eq("is_revisable", true)
+      .order("sort_order")
+      .order("code"),
+  );
+  return result.map(({ code, title }) => ({ code, title }));
 }
 
 /** Is this crop attached to a question a student is allowed to see?
