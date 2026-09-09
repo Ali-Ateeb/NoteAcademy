@@ -40,6 +40,10 @@ export default async function ReviewPage() {
         items={items}
         topicOptions={topicOptions}
         persist={isBackedByDatabase()}
+        // Whether the *server* is configured to accept writes at all. Without
+        // this the page cannot tell "you have not unlocked this browser yet"
+        // from "saving is switched off", and says the wrong one half the time.
+        savingConfigured={Boolean(process.env.REVIEW_TOKEN)}
       />
     </div>
   );

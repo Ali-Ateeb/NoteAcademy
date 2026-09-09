@@ -25,6 +25,9 @@ interface Props {
    *  it to count. Without one, the queue is a scaffold on fixtures and the
    *  browser is the only place a decision was ever going to live. */
   persist: boolean;
+  /** Is REVIEW_TOKEN set on the server? Distinguishes a browser that has not
+   *  been unlocked from a server that will refuse every write regardless. */
+  savingConfigured: boolean;
 }
 
 /**
@@ -38,7 +41,12 @@ interface Props {
  * The queue is ordered worst-confidence first, so attention goes where the
  * pipeline is least sure rather than in page order.
  */
-export function ReviewQueue({ items, topicOptions, persist }: Props) {
+export function ReviewQueue({
+  items,
+  topicOptions,
+  persist,
+  savingConfigured,
+}: Props) {
   const [decisions, setDecisions] = useState<Map<string, ReviewDecision> | null>(null);
   const [index, setIndex] = useState(0);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -157,6 +165,7 @@ export function ReviewQueue({ items, topicOptions, persist }: Props) {
           here: the work is gone and nobody knows to redo it. */}
       {savesToDatabase && !unlocked && (
         <UnlockBar
+          configured={savingConfigured}
           onUnlock={(token) => {
             setReviewToken(token);
             setUnlocked(Boolean(token));
@@ -482,8 +491,28 @@ function ReviewCard({
  *  HTML is readable by everyone who can load the page — which is exactly who it
  *  is meant to keep out. This is a stopgap for a single operator; /admin needs
  *  real accounts before it is served publicly. */
-function UnlockBar({ onUnlock }: { onUnlock: (token: string) => void }) {
+function UnlockBar({
+  configured,
+  onUnlock,
+}: {
+  configured: boolean;
+  onUnlock: (token: string) => void;
+}) {
   const [value, setValue] = useState("");
+
+  // Two different problems that used to share one message. "Enter the review
+  // token (REVIEW_TOKEN in web/.env.local)" reads, to someone who has already
+  // put it there, as a claim that it is missing — when what is actually being
+  // asked is that this browser be given a copy.
+  if (!configured) {
+    return (
+      <p className="mt-6 rounded-xl border border-incorrect/40 bg-incorrect/5 px-4 py-3 text-sm text-incorrect">
+        Saving is switched off: <span className="font-mono">REVIEW_TOKEN</span> is
+        not set in <span className="font-mono">web/.env.local</span>. Set it and
+        restart the server — approvals made now stay in this browser only.
+      </p>
+    );
+  }
 
   return (
     <form
@@ -494,11 +523,14 @@ function UnlockBar({ onUnlock }: { onUnlock: (token: string) => void }) {
       className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
     >
       <div className="min-w-[16rem] flex-1">
-        <p className="text-sm text-ink">Decisions are not being saved.</p>
+        <p className="text-sm text-ink">Unlock this browser to save decisions.</p>
         <p className="mt-0.5 text-xs leading-relaxed text-ink-3">
-          Enter the review token (<span className="font-mono">REVIEW_TOKEN</span> in
-          web/.env.local) to write approvals to the database. Without it, this
-          queue only remembers them in this browser.
+          The server has the token; this page deliberately does not contain it,
+          because anything rendered into the page is readable by everyone who can
+          open the page. Paste it once and this browser will remember it — it is{" "}
+          <span className="font-mono">REVIEW_TOKEN</span> in{" "}
+          <span className="font-mono">web/.env.local</span>. Until then, approvals
+          are remembered here and nowhere else.
         </p>
       </div>
       <input
