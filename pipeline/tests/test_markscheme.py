@@ -258,6 +258,102 @@ class TestParseStructuredMarkScheme:
         )
         assert [e.display_label for e in entries] == ["1(a)"]
 
+    def test_a_fifth_subpart_is_not_read_as_a_new_part_called_v(self):
+        # "(i)", "(v)" and "(x)" are both a single-letter part shape and a
+        # roman numeral. Once a part is already open — here, (b) — a bare
+        # "(v)" is its fifth sub-part, not an attempt to open a part
+        # literally called "(v)"; CAIE's own part-lettering never reaches
+        # that far. Read as a new part, it would close out (b) mid-way and
+        # misfile this point (and anything after it) under a part that does
+        # not exist in the question at all.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "10(a)", "x", "B1",
+                    "10(b)(i)", "first", "B1",
+                    "10(b)(ii)", "second", "B1",
+                    "10(b)(iii)", "third", "B1",
+                    "10(b)(iv)", "fourth", "B1",
+                    "10(b)(v)", "fifth", "A1",
+                )
+            ],
+            known_questions={"10"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label["10(b)(v)"].content == "fifth"
+        assert "10(v)" not in by_label
+
+    def test_an_uppercase_component_reference_is_not_a_part_label(self):
+        # A mark scheme routinely names a labelled point on a circuit or
+        # ray diagram in its own marking text — "(Z) has the same
+        # potential difference" — and CAIE always prints a real part or
+        # sub-part label lowercase. Matched case-insensitively, "(Z)" would
+        # close out the real part (b) and misfile the point after it under
+        # a part "(z)" that does not exist in the question at all.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "8(b)(i)", "first", "B1",
+                    "8(b)(ii)", "(Z) has the same reading", "B1",
+                )
+            ],
+            known_questions={"8"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label["8(b)(ii)"].content == "(Z) has the same reading"
+        assert "8(z)" not in by_label
+
+    def test_a_stray_space_inside_a_label_does_not_hide_it(self):
+        # A PDF's text layer occasionally renders a label's own glyph
+        # spacing as "(i )" rather than "(i)" — a rendering artefact of
+        # that particular print run, not a real character — which fails
+        # the exact match a sub-part label otherwise needs.
+        entries = parse_structured_mark_scheme(
+            [_page("9", "(b) (i ) 700 N", "B1")],
+            known_questions={"9"},
+        )
+        assert entries[0].display_label == "9(b)(i)"
+        assert entries[0].content == "700 N"
+
+    def test_a_doubled_opening_paren_does_not_hide_a_label(self):
+        # Another PDF-specific rendering glitch: "1(a)((i)" for "1(a)(i)",
+        # an extra open paren stuck to the front with nothing between them.
+        # The extra "(" breaks the clean "(x)" shape every label pattern
+        # needs, and unlike the merge cases above there is no real content
+        # to preserve by leaving it alone.
+        entries = parse_structured_mark_scheme(
+            [_page("1(a)((i)", "1.8 m / s2", "A1")],
+            known_questions={"1"},
+        )
+        assert entries[0].display_label == "1(a)(i)"
+        assert entries[0].content == "1.8 m / s2"
+
+    def test_a_nuclide_mass_number_is_not_a_new_question(self):
+        # Nuclide notation renders as a bare mass number on its own line,
+        # with the atomic number and element symbol glued together on the
+        # line right after it — "9" then "4Be" for beryllium-9. A bare
+        # number alone on its own line otherwise satisfies every check a
+        # genuine question start has (ascending, known, nothing else on
+        # the line), so a mass number matching a real, later question's own
+        # number would open it early — corrupting every label from there
+        # until the real one is reached and fails its own ascending check
+        # in turn, exactly the "11 250 J" case above one level up.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "5(a)(i)", "2 more protons than electrons", "B1",
+                    "5(a)(ii)", "9", "4Be", "B1",
+                    "5(b)", "a form of an element", "B1",
+                )
+            ],
+            known_questions={"5", "9"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert "5(a)(ii)" in by_label
+        assert by_label["5(a)(ii)"].content == "9 4Be"
+        assert "9" not in by_label
+        assert by_label["5(b)"].content == "a form of an element"
+
 
 class TestMatchMcqAnswers:
     def test_attaches_answers_by_question_number(self):

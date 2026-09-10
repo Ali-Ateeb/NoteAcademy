@@ -126,8 +126,16 @@ _SECTION_HEADING_RE = re.compile(r"^Section [A-Z]$")
 _MARK_CODE_RE = re.compile(r"^([BMCA])(\d)$", re.IGNORECASE)
 
 _QUESTION_NUMBER_RE = re.compile(r"^\d{1,2}$")
-_PART_TOKEN_RE = re.compile(r"^\(([a-z])\)$", re.IGNORECASE)
-_SUBPART_TOKEN_RE = re.compile(r"^\((i|ii|iii|iv|v|vi|vii|viii|ix|x)\)$", re.IGNORECASE)
+#  Case-sensitive on purpose, unlike the segmenter's own version of these
+# patterns: CAIE always prints a real part or sub-part label in lowercase,
+# but a mark scheme's own marking-point text routinely names a labelled
+# point on a diagram the same way — "(Z) has the same potential
+# difference", where Z is a component in the circuit, not a part. Matching
+# either case here read that as part "(z)" opening, closing out whatever
+# part was actually open and misfiling every point after it under a part
+# that does not exist.
+_PART_TOKEN_RE = re.compile(r"^\(([a-z])\)$")
+_SUBPART_TOKEN_RE = re.compile(r"^\((i|ii|iii|iv|v|vi|vii|viii|ix|x)\)$")
 
 # CAIE's three-column "Question / Answer / Marks" mark-scheme table (used from
 # roughly 2017 on) prints a label as one glued run — "1(a)", "1(b)(i)" — with
@@ -149,6 +157,33 @@ _GLUED_LABEL_RE = re.compile(r"(?<=[0-9)])(\([a-z]+\))", re.IGNORECASE)
 # its own and "1" to fall through as content exactly like an unglued
 # enumerated point already does.
 _DIGIT_AFTER_PAREN_RE = re.compile(r"(?<=\))(\d)")
+
+# A PDF's text layer occasionally puts a stray space just inside a label's
+# own parentheses — "(i )" for "(i)" — a rendering artefact of the exact
+# glyph spacing in that particular print run, not a real character. Left in,
+# it fails the exact match _SUBPART_TOKEN_RE requires, for exactly the same
+# reason a glued or mis-cased label does: the token on the page and the
+# pattern the label is recognised by disagree on what whitespace means here,
+# and it is safe to close the gap because it never appears inside a real
+# marking point's own prose, only immediately against a paren.
+_PAREN_INNER_SPACE_RE = re.compile(r"\(\s+")
+_PAREN_CLOSE_SPACE_RE = re.compile(r"\s+\)")
+
+# Another PDF-specific glitch of the same kind: "1(a)((i)" for "1(a)(i)", an
+# extra opening paren stuck to the front of a label with nothing between
+# them. Narrow on purpose — it only fires on two opens with no space or text
+# between them — so a real nested aside like "(the force (approx))" is
+# untouched; its inner paren always has real words before it.
+_DOUBLED_OPEN_PAREN_RE = re.compile(r"\(\(([a-z]+)\)")
+
+# Nuclide notation's mass number renders on its own line, with the atomic
+# number and element symbol glued together immediately below it —
+# "9" then "4Be" for beryllium-9. A bare mass number that happens to equal a
+# later, real question number satisfies every other check a genuine
+# question start has (ascending, known, alone on its own line), so this is
+# what actually tells them apart: nothing else that stands alone on a line
+# looks like a digit run glued straight onto an element symbol.
+_NUCLIDE_CONTINUATION_RE = re.compile(r"^\d{1,3}[A-Z][a-z]?$")
 
 
 def _structured_content_lines(pages_text: list[str]) -> list[str]:
@@ -189,6 +224,14 @@ def _structured_content_lines(pages_text: list[str]) -> list[str]:
         and not _PAGE_FOOTER_RE.match(line)
         and not _SECTION_HEADING_RE.match(line)
     ]
+
+
+def _next_content_line(lines: list[str], index: int) -> str | None:
+    """The next non-blank line after `index`, or None at the end."""
+    for line in lines[index + 1 :]:
+        if line:
+            return line
+    return None
 
 
 def parse_structured_mark_scheme(
@@ -250,10 +293,13 @@ def parse_structured_mark_scheme(
         )
         content, marks = [], 0
 
-    for raw_line in _structured_content_lines(pages_text):
+    content_lines = _structured_content_lines(pages_text)
+    for line_index, raw_line in enumerate(content_lines):
         if not raw_line:
             continue
-        line = _GLUED_LABEL_RE.sub(r" \1", raw_line)
+        line = _DOUBLED_OPEN_PAREN_RE.sub(r"(\1)", raw_line)
+        line = _PAREN_CLOSE_SPACE_RE.sub(")", _PAREN_INNER_SPACE_RE.sub("(", line))
+        line = _GLUED_LABEL_RE.sub(r" \1", line)
         line = _DIGIT_AFTER_PAREN_RE.sub(r" \1", line)
 
         if (code := _MARK_CODE_RE.match(line)) is not None:
@@ -279,6 +325,17 @@ def parse_structured_mark_scheme(
             # is reached and fails its own ascending check in turn.
             and (i + 1 == len(tokens) or _PART_TOKEN_RE.match(tokens[i + 1])
                  or _SUBPART_TOKEN_RE.match(tokens[i + 1]))
+            # A number alone on its own line is also exactly the shape of a
+            # nuclide's mass number, printed with its atomic number and
+            # element symbol glued together on the line right after it —
+            # "9" then "4Be". Checked only when nothing else on this line
+            # already ruled it out, since the next line is otherwise
+            # irrelevant to whether this one opens a question.
+            and not (
+                i + 1 == len(tokens)
+                and (next_line := _next_content_line(content_lines, line_index)) is not None
+                and _NUCLIDE_CONTINUATION_RE.match(next_line)
+            )
         ):
             if question is None or int(tokens[i]) > int(question):
                 new_question = tokens[i]
@@ -294,8 +351,17 @@ def parse_structured_mark_scheme(
                 # that is neither ascending nor a repeat of the current one
                 # is left as content, the same as before.
                 i += 1
-        if i < len(tokens) and (m := _PART_TOKEN_RE.match(tokens[i])):
-            candidate = m.group(1).lower()
+        part_match = _PART_TOKEN_RE.match(tokens[i]) if i < len(tokens) else None
+        # "(i)", "(v)" and "(x)" are both a single-letter part shape and a
+        # roman numeral, and once a part is already open the roman reading
+        # is what is actually meant — sub-part (v) is common, a fourth- or
+        # fifth part called "(v)" is not something CAIE's own lettering ever
+        # reaches. Treated as a part match here, "(v)" would close out the
+        # real part (b) mid-way and misfile everything after it under a
+        # part that does not exist. Skipping it here (i left unchanged)
+        # lets the sub-part check just below try the same token instead.
+        if part_match and (part_match.group(1).lower() not in ("i", "v", "x") or part is None):
+            candidate = part_match.group(1).lower()
             # Same table-row repetition as the question number, one level
             # down: "(b)" reprints on every row of part (b), including the
             # ones that are really just its own next enumerated point
