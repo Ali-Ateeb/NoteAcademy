@@ -102,6 +102,23 @@ def match_mark_scheme(
 
 _STRUCTURED_HEADER_END = re.compile(r"^©")
 
+# The "Question / Answer / Marks" table style repeats its own column header
+# on every page, right after the copyright line and a "Page N of M" footer —
+# boilerplate exactly like the rest of the header, but past where the single
+# `_STRUCTURED_HEADER_END` line was assumed to end it. Left in, this becomes
+# three extra content lines tacked onto whatever entry was still open when
+# the page broke: real, already-matched entries picked up "Question Answer
+# Marks" at the end of their own content on every paper using this style,
+# not only the ones a page break happened to land on awkwardly.
+_PAGE_FOOTER_RE = re.compile(r"^Page \d+ of \d+$")
+_TABLE_HEADER_WORDS = {"Question", "Answer", "Marks"}
+
+# The same "Section B" heading the question paper carries between its own
+# sections (see segment_structured.py's SECTION_RE) is reprinted in the mark
+# scheme too, wherever the last question of one section falls at a table
+# break — page furniture, not a marking point for whatever question was open.
+_SECTION_HEADING_RE = re.compile(r"^Section [A-Z]$")
+
 # A CAIE structured mark scheme's own mark-type codes: B (independent mark),
 # M (method mark), C (method mark contingent on an earlier one), A (accuracy
 # mark, contingent on its C). Always a letter immediately followed by the
@@ -112,12 +129,46 @@ _QUESTION_NUMBER_RE = re.compile(r"^\d{1,2}$")
 _PART_TOKEN_RE = re.compile(r"^\(([a-z])\)$", re.IGNORECASE)
 _SUBPART_TOKEN_RE = re.compile(r"^\((i|ii|iii|iv|v|vi|vii|viii|ix|x)\)$", re.IGNORECASE)
 
+# CAIE's three-column "Question / Answer / Marks" mark-scheme table (used from
+# roughly 2017 on) prints a label as one glued run — "1(a)", "1(b)(i)" — with
+# no space at all, unlike the older prose-style scheme's "10 (a)" or
+# "(a) (i)". The token-by-token walk below only ever recognises one label
+# component per token, so a glued run matched none of them and was silently
+# read as body text — every label in the paper, not just the merged ones,
+# which is why this failed completely rather than losing a few labels the
+# way the space-separated merge case does. Splitting on a paren that follows
+# a digit or a closing paren turns "1(b)(i)" into "1 (b) (i)" before it ever
+# reaches the tokeniser; a paren glued to a letter ("resultant(net) force")
+# has neither preceding it and is left alone.
+_GLUED_LABEL_RE = re.compile(r"(?<=[0-9)])(\([a-z]+\))", re.IGNORECASE)
+
+# The same table glues a marking point's own enumerated list straight onto
+# the sub-part label that opens it — "10(b)(ii)1" is sub-part (ii)'s first
+# point, not a fourth label component — so a bare digit immediately after a
+# closing paren is split off the same way, leaving "(ii)" recognisable on
+# its own and "1" to fall through as content exactly like an unglued
+# enumerated point already does.
+_DIGIT_AFTER_PAREN_RE = re.compile(r"(?<=\))(\d)")
+
 
 def _structured_content_lines(pages_text: list[str]) -> list[str]:
     """Every real line of a structured mark scheme, across every page, with
     the repeated page header/footer (page number, syllabus, paper code,
-    copyright line — identical on every page) removed."""
-    lines: list[str] = []
+    copyright line — identical on every page) removed.
+
+    The "Question / Answer / Marks" table style also carries one or two
+    generic-marking-principles pages before the real per-question table
+    starts — "Science-Specific Marking Principles" opens with its own bare
+    numbered list, 1 upwards, which is indistinguishable from a real
+    question number by shape alone and satisfies the ascending-order and
+    known-questions checks just as well as a genuine one. Rather than
+    special-case a preamble heading, whose wording is not the same across
+    subjects, everything before the first real table header is dropped
+    outright: that header is the one thing every version of this style
+    reliably prints exactly once before question 1's own row, unlike a
+    subject-specific heading that might not be there at all.
+    """
+    all_lines: list[str] = []
     for text in pages_text:
         page_lines = [line.strip() for line in text.splitlines()]
         header_end = next(
@@ -126,8 +177,18 @@ def _structured_content_lines(pages_text: list[str]) -> list[str]:
         )
         if header_end is None:
             continue
-        lines.extend(page_lines[header_end + 1 :])
-    return lines
+        all_lines.extend(page_lines[header_end + 1 :])
+
+    table_start = next(
+        (i for i, line in enumerate(all_lines) if line == "Question"), 0
+    )
+    return [
+        line
+        for line in all_lines[table_start:]
+        if line not in _TABLE_HEADER_WORDS
+        and not _PAGE_FOOTER_RE.match(line)
+        and not _SECTION_HEADING_RE.match(line)
+    ]
 
 
 def parse_structured_mark_scheme(
@@ -189,9 +250,11 @@ def parse_structured_mark_scheme(
         )
         content, marks = [], 0
 
-    for line in _structured_content_lines(pages_text):
-        if not line:
+    for raw_line in _structured_content_lines(pages_text):
+        if not raw_line:
             continue
+        line = _GLUED_LABEL_RE.sub(r" \1", raw_line)
+        line = _DIGIT_AFTER_PAREN_RE.sub(r" \1", line)
 
         if (code := _MARK_CODE_RE.match(line)) is not None:
             marks += int(code.group(2))
@@ -206,7 +269,6 @@ def parse_structured_mark_scheme(
         if (
             i < len(tokens)
             and _QUESTION_NUMBER_RE.match(tokens[i])
-            and (question is None or int(tokens[i]) > int(question))
             and (known_questions is None or tokens[i] in known_questions)
             # CAIE prints a question number alone on its own line, or merged
             # with the part label that opens it ("10 (a)") — never followed
@@ -215,18 +277,43 @@ def parse_structured_mark_scheme(
             # indistinguishable from that question actually starting here,
             # and the false start corrupts every label until the real one
             # is reached and fails its own ascending check in turn.
-            and (i + 1 == len(tokens) or _PART_TOKEN_RE.match(tokens[i + 1]))
+            and (i + 1 == len(tokens) or _PART_TOKEN_RE.match(tokens[i + 1])
+                 or _SUBPART_TOKEN_RE.match(tokens[i + 1]))
         ):
-            new_question = tokens[i]
-            i += 1
+            if question is None or int(tokens[i]) > int(question):
+                new_question = tokens[i]
+                i += 1
+            elif tokens[i] == question:
+                # The "Question / Answer / Marks" table style (roughly 2017
+                # on) repeats the current question's own number on every one
+                # of its rows — "1(b)(i)", "1(c)" — not only when a new
+                # question opens, unlike the older prose style where a
+                # question's number appears exactly once. Consumed here
+                # without treating it as a transition, so the part or
+                # sub-part token that follows still gets read; a number
+                # that is neither ascending nor a repeat of the current one
+                # is left as content, the same as before.
+                i += 1
         if i < len(tokens) and (m := _PART_TOKEN_RE.match(tokens[i])):
-            new_part = m.group(1).lower()
+            candidate = m.group(1).lower()
+            # Same table-row repetition as the question number, one level
+            # down: "(b)" reprints on every row of part (b), including the
+            # ones that are really just its own next enumerated point
+            # ("10(b)(ii)2"). Consumed either way so the sub-part token
+            # after it still gets read, but only counted as *opening* (b)
+            # the first time — repeating it must not re-flush and reopen
+            # the entry that same row's own content belongs to.
+            if candidate != part:
+                new_part = candidate
             i += 1
         if i < len(tokens) and (m := _SUBPART_TOKEN_RE.match(tokens[i])):
-            new_sub = m.group(1).lower()
+            candidate = m.group(1).lower()
+            if candidate != sub:
+                new_sub = candidate
             i += 1
 
         rest = " ".join(tokens[i:])
+        consumed = i > 0
 
         if new_question or new_part or new_sub:
             flush()
@@ -236,6 +323,15 @@ def parse_structured_mark_scheme(
                 part, sub = new_part, None
             if new_sub:
                 sub = new_sub
+            if rest:
+                content.append(rest)
+        elif consumed:
+            # Every label token on this row repeated what was already open —
+            # not a transition, just this row's own share of the same
+            # sub-part's content (its next enumerated marking point, most
+            # often). Appending `line` here, as the no-label case below
+            # does, would put the now-redundant repeated label text back
+            # into the content it was just stripped out of.
             if rest:
                 content.append(rest)
         else:

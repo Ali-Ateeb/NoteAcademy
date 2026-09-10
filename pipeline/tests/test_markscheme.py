@@ -172,6 +172,92 @@ class TestParseStructuredMarkScheme:
         assert "11 250 J" in by_label["10(c)"].content
         assert by_label["11(a)(i)"].content == "51"
 
+    def test_reads_the_glued_table_style_with_no_space_in_the_label(self):
+        # The "Question / Answer / Marks" table style (CAIE structured mark
+        # schemes from roughly 2017 on) prints a label as one run with no
+        # space at all — "1(a)", "1(b)(i)" — never split across tokens the
+        # way the older prose style's own merges are.
+        entries = parse_structured_mark_scheme(
+            [_page("Question", "Answer", "Marks", "1(a)", "5.0 m", "B1", "1(b)(i)", "12 s", "M1")],
+            known_questions={"1"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label["1(a)"].content == "5.0 m"
+        assert by_label["1(b)(i)"].content == "12 s"
+
+    def test_a_repeated_question_number_on_every_row_does_not_reopen_it(self):
+        # The table style reprints the current question's own number on
+        # every one of its rows, not only when a new question opens — so
+        # "1(c)" after "1(b)(i)"/"1(b)(ii)" must not be read as an attempt
+        # to reopen question 1 (which the ascending check would reject
+        # outright, leaving the whole row as unlabelled content instead).
+        entries = parse_structured_mark_scheme(
+            [_page("1(a)", "5.0 m", "B1", "1(b)", "6.0 m", "B1", "1(c)", "7.0 m", "B1")],
+            known_questions={"1"},
+        )
+        assert {e.display_label for e in entries} == {"1(a)", "1(b)", "1(c)"}
+        assert entries[-1].content == "7.0 m"
+
+    def test_a_repeated_subpart_glued_to_its_next_point_is_not_a_new_entry(self):
+        # "10(b)(ii)1" and "10(b)(ii)2" are sub-part (ii)'s first and second
+        # marking points, glued straight onto its own repeated label with no
+        # space anywhere — not a fourth label component, and not two
+        # separate sub-parts that both happen to be called "(ii)". The
+        # digit split off the label stays part of the content, the same as
+        # an already-unglued enumerated point does.
+        entries = parse_structured_mark_scheme(
+            [_page("10(a)", "x", "B1", "10(b)(i)", "y", "B1", "10(b)(ii)1", "first point", "B1", "10(b)(ii)2", "second point", "B1")],
+            known_questions={"10"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert sum(1 for e in entries if e.display_label == "10(b)(ii)") == 1
+        assert by_label["10(b)(ii)"].content == "1 first point 2 second point"
+
+    def test_strips_the_repeated_table_header_and_page_furniture(self):
+        # The column header and page footer reprint before every top-level
+        # question's own block, not only once per physical page — left in,
+        # they read as trailing content tacked onto whatever entry was open
+        # when one of them appeared.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "Question", "Answer", "Marks",
+                    "1(a)", "first answer", "B1",
+                    "Page 2 of 8", "Question", "Answer", "Marks",
+                    "1(b)", "second answer", "B1",
+                    "Section B",
+                    "2(a)", "third answer", "B1",
+                )
+            ],
+            known_questions={"1", "2"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label["1(a)"].content == "first answer"
+        assert by_label["1(b)"].content == "second answer"
+        assert by_label["2(a)"].content == "third answer"
+
+    def test_skips_a_generic_marking_principles_preamble(self):
+        # "Science-Specific Marking Principles" opens with its own bare
+        # numbered list before the real per-question table — indistinguishable
+        # from a real question number by shape, ascending order, or even
+        # known-questions membership alone if the preamble happens to run as
+        # far as a real question number. The first "Question"/"Answer"/
+        # "Marks" table header is what actually marks where the real table
+        # begins, so everything before it is dropped rather than parsed.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "Science-Specific Marking Principles",
+                    "1", "keywords should be read in context",
+                    "2", "contradictory statements are not credited",
+                    "Question", "Answer", "Marks",
+                    "1(a)", "5.0 m", "B1",
+                )
+            ],
+            known_questions={"1", "2"},
+        )
+        assert [e.display_label for e in entries] == ["1(a)"]
+
 
 class TestMatchMcqAnswers:
     def test_attaches_answers_by_question_number(self):
