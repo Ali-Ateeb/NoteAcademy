@@ -11,7 +11,7 @@
  * catalog.ts for the seam.
  */
 
-import type { Level, McqQuestion, Paper, Subject, Topic } from "./types";
+import type { Level, McqQuestion, Paper, StructuredQuestion, Subject, Topic } from "./types";
 
 export const SEED_NOTICE =
   "Sample content written for development. Not Cambridge past-paper material.";
@@ -395,5 +395,66 @@ export const mcqQuestions: McqQuestion[] = [
     topicCodes: ["4.2"],
     cropUrl: null,
     alsoIn: [],
+  },
+];
+
+const SP = "physics-5054-2019-may-june-p22";
+
+/** Sample structured (Paper 2) questions, authored for this scaffold — see
+ *  the file header. `cropUrl: null` throughout: there is no real page to
+ *  render without a database behind it, so the arena's fixture path shows
+ *  its own placeholder rather than a broken image. */
+export const structuredQuestions: StructuredQuestion[] = [
+  {
+    id: "s1",
+    paperSlug: SP,
+    displayLabel: "1",
+    questionText:
+      "A trolley of mass 2.0 kg is pulled from rest along a horizontal track by a string. Fig. 1.1 shows the arrangement.",
+    crops: [{ pageNumber: 2, cropUrl: null }],
+    parts: [
+      {
+        displayLabel: "1(a)(i)",
+        maxMarks: 1,
+        markSchemeText: "weight / gravity acting downwards on the trolley",
+      },
+      {
+        displayLabel: "1(a)(ii)",
+        maxMarks: 2,
+        markSchemeText: "a = F / m or 4.0 / 2.0 2.0 m / s2",
+      },
+      {
+        displayLabel: "1(b)",
+        maxMarks: 2,
+        markSchemeText:
+          "straight line from origin with positive gradient any correct reading used to find a consistent gradient",
+      },
+    ],
+  },
+  {
+    id: "s2",
+    paperSlug: SP,
+    displayLabel: "2",
+    questionText:
+      "Fig. 2.1 shows a fixed mass of gas trapped in a sealed syringe at room temperature.",
+    crops: [{ pageNumber: 4, cropUrl: null }],
+    parts: [
+      {
+        displayLabel: "2(a)",
+        maxMarks: 1,
+        markSchemeText: "molecules moving randomly / in all directions colliding with the walls",
+      },
+      {
+        displayLabel: "2(b)(i)",
+        maxMarks: 1,
+        markSchemeText: "pressure increases",
+      },
+      {
+        displayLabel: "2(b)(ii)",
+        maxMarks: 2,
+        markSchemeText:
+          "molecules closer together / same number in a smaller volume more frequent collisions with the walls",
+      },
+    ],
   },
 ];

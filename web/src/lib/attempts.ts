@@ -142,6 +142,76 @@ export function topicStats(
   return stats;
 }
 
+/* ---------------------------------------------------------------------------
+   Structured (Paper 2) practice
+   --------------------------------------------------------------------------- */
+
+/** A student's self-assessed score for one part, checked against the mark
+ *  scheme themselves — there is no answer to grade automatically, the way an
+ *  mcq's option letter can be. `marksAwarded` is what the student claims,
+ *  not something the app has any way to verify; the point of the record is
+ *  the same one exam self-marking always serves — an honest read of where
+ *  marks are actually being lost. */
+export interface StructuredAttemptRecord {
+  questionId: string;
+  paperSlug: string;
+  marksAwarded: number;
+  maxMarks: number;
+  timeSpentMs: number;
+  createdAt: number;
+  seq: number;
+}
+
+export interface StructuredSessionState {
+  sessionKey: string;
+  questionIds: string[];
+  /** This question's mark scheme has been shown. Gates self-marking: a mark
+   *  entered before the mark scheme is seen is not a self-assessment. */
+  revealed: string[];
+  /** marks[questionId][partDisplayLabel] = what the student gave themself.
+   *  A part missing from the inner record is not yet marked — distinct from
+   *  an actual 0, which the student has to choose the same as any other
+   *  value. */
+  marks: Record<string, Record<string, number>>;
+  currentIndex: number;
+  startedAt: number;
+  submitted: boolean;
+}
+
+const STRUCTURED_ATTEMPTS_KEY = "na-structured-attempts";
+const STRUCTURED_SESSION_PREFIX = "na-structured-session:";
+
+export function loadStructuredAttempts(): StructuredAttemptRecord[] {
+  return read<StructuredAttemptRecord[]>(STRUCTURED_ATTEMPTS_KEY, []);
+}
+
+export function appendStructuredAttempts(
+  records: Omit<StructuredAttemptRecord, "seq">[],
+): void {
+  const existing = loadStructuredAttempts();
+  const nextSeq = existing.reduce((max, a) => Math.max(max, a.seq), 0) + 1;
+  write(
+    STRUCTURED_ATTEMPTS_KEY,
+    existing.concat(records.map((record, i) => ({ ...record, seq: nextSeq + i }))),
+  );
+}
+
+export function loadStructuredSession(sessionKey: string): StructuredSessionState | null {
+  return read<StructuredSessionState | null>(STRUCTURED_SESSION_PREFIX + sessionKey, null);
+}
+
+export function saveStructuredSession(state: StructuredSessionState): void {
+  write(STRUCTURED_SESSION_PREFIX + state.sessionKey, state);
+}
+
+export function clearStructuredSession(sessionKey: string): void {
+  try {
+    localStorage.removeItem(STRUCTURED_SESSION_PREFIX + sessionKey);
+  } catch {
+    // Nothing to do; a stale session is harmless.
+  }
+}
+
 export function formatDuration(ms: number): string {
   const total = Math.round(ms / 1000);
   const minutes = Math.floor(total / 60);

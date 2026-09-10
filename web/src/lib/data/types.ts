@@ -88,6 +88,40 @@ export interface McqQuestion {
   alsoIn: DuplicateRef[];
 }
 
+/** One leaf under a structured question, in paper order — the unit a student
+ *  actually self-marks against, the same reason `ReviewPart` exists for the
+ *  reviewer. `maxMarks`/`markSchemeText` are null only when the mark scheme
+ *  never matched this label (see the review queue's `unmatched_mark_scheme`)
+ *  and a reviewer approved the question anyway; the arena shows it but
+ *  cannot ask the student to self-mark it. */
+export interface StructuredPart {
+  displayLabel: string;
+  maxMarks: number | null;
+  markSchemeText: string | null;
+}
+
+/** One page of a structured question's crop, in reading order. Always more
+ *  than one for a question that runs across a page break — CAIE's Section B
+ *  routinely does — since a figure on an earlier page can be what a later
+ *  part refers back to. */
+export interface StructuredQuestionCrop {
+  pageNumber: number;
+  cropUrl: string | null;
+}
+
+export interface StructuredQuestion {
+  id: string;
+  paperSlug: string;
+  displayLabel: string;
+  /** Real, unlike an mcq's: a structured question's own text is read
+   *  directly off the page during segmentation, not left for a later pass.
+   *  Can still be empty — a question that opens straight into "(a)" with no
+   *  introductory text of its own. */
+  questionText: string;
+  crops: StructuredQuestionCrop[];
+  parts: StructuredPart[];
+}
+
 export interface DuplicateRef {
   paperSlug: string;
   displayLabel: string;

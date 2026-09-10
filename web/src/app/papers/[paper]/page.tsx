@@ -44,7 +44,7 @@ export default async function PaperPage({ params }: Params) {
   const subject = await getSubject(paper.subjectSlug);
   if (!subject) notFound();
 
-  const isPlayable = paper.questionType === "mcq";
+  const isPlayable = paper.questionType === "mcq" || paper.questionType === "structured";
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">
@@ -82,7 +82,7 @@ export default async function PaperPage({ params }: Params) {
             href={`/practice/${paper.slug}`}
             className="rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
           >
-            Sit this paper →
+            {paper.questionType === "mcq" ? "Sit this paper →" : "Practise this paper →"}
           </Link>
         )}
       </div>

@@ -39,6 +39,8 @@ import type {
   ReviewFlag,
   ReviewItem,
   Season,
+  StructuredPart,
+  StructuredQuestion,
   Subject,
   Topic,
 } from "./types";
@@ -136,6 +138,26 @@ interface PaperRow {
   documents: PaperDocument[];
 }
 
+interface StructuredCropRow {
+  pageNumber: number;
+  storageKey: string;
+}
+
+interface StructuredPartRow {
+  displayLabel: string;
+  maxMarks: number | null;
+  markSchemeText: string | null;
+}
+
+interface StructuredRow {
+  id: string;
+  paper_slug: string;
+  display_label: string;
+  question_text: string | null;
+  crops: StructuredCropRow[];
+  parts: StructuredPartRow[];
+}
+
 interface McqRow {
   id: string;
   paper_slug: string;
@@ -198,6 +220,23 @@ const toMcq = (row: McqRow): McqQuestion => ({
   alsoIn: row.also_in ?? [],
 });
 
+const toStructuredPart = (part: StructuredPartRow): StructuredPart => ({
+  displayLabel: part.displayLabel,
+  maxMarks: part.maxMarks,
+  markSchemeText: part.markSchemeText,
+});
+
+const toStructured = (row: StructuredRow): StructuredQuestion => ({
+  id: row.id,
+  paperSlug: row.paper_slug,
+  displayLabel: row.display_label,
+  questionText: row.question_text ?? "",
+  crops: row.crops
+    .map((crop) => ({ pageNumber: crop.pageNumber, cropUrl: assetUrl(crop.storageKey) }))
+    .sort((a, b) => a.pageNumber - b.pageNumber),
+  parts: row.parts.map(toStructuredPart),
+});
+
 /** The stable, unsigned URL a page can carry. /api/asset checks the question is
  *  approved and redirects to a freshly signed one, so a prerendered page never
  *  holds a link that expires. */
@@ -215,6 +254,7 @@ const PAPER_COLUMNS =
 // the literal text of the column list, and `"a," + "b"` widens to `string`.
 const MCQ_COLUMNS =
   "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key,also_in";
+const STRUCTURED_COLUMNS = "id,paper_slug,display_label,question_text,crops,parts";
 
 /* ---------------------------------------------------------------------------
    Catalogue
@@ -372,6 +412,28 @@ export async function getMcqQuestions(paperSlug: string): Promise<McqQuestion[]>
   return result.map(toMcq);
 }
 
+/** A structured paper's top-level questions — the practice unit, each one
+ *  carrying every part and sub-part underneath it. See v_structured_questions
+ *  (db/migrations/0023) for why this is not simply every row of the paper. */
+export async function getStructuredQuestions(
+  paperSlug: string,
+): Promise<StructuredQuestion[]> {
+  const client = db();
+  if (!client) {
+    return seed.structuredQuestions.filter((q) => q.paperSlug === paperSlug);
+  }
+
+  const result = await rows<StructuredRow>(
+    "structured questions",
+    client
+      .from("v_structured_questions")
+      .select(STRUCTURED_COLUMNS)
+      .eq("paper_slug", paperSlug)
+      .order("ordinal"),
+  );
+  return result.map(toStructured);
+}
+
 /** Questions for one topic, across every paper — the topical engine. */
 export async function getQuestionsByTopic(
   subjectSlug: string,
@@ -433,12 +495,16 @@ export async function getQuestionTopicsForSubject(
   return result.map((row) => ({ id: row.id, topicCodes: row.topic_codes }));
 }
 
-/** Papers that have MCQs loaded and are therefore playable in the arena. */
+/** Papers with questions loaded and therefore playable in an arena — timed
+ *  multiple-choice or self-marked structured, either one. */
 export async function getPlayablePapers(subjectSlug: string): Promise<Paper[]> {
   const client = db();
   if (!client) {
     const papers = await getPapers(subjectSlug);
-    const loaded = new Set(seed.mcqQuestions.map((q) => q.paperSlug));
+    const loaded = new Set([
+      ...seed.mcqQuestions.map((q) => q.paperSlug),
+      ...seed.structuredQuestions.map((q) => q.paperSlug),
+    ]);
     return papers.filter((p) => loaded.has(p.slug));
   }
 
@@ -448,7 +514,7 @@ export async function getPlayablePapers(subjectSlug: string): Promise<Paper[]> {
       .from("v_papers")
       .select(PAPER_COLUMNS)
       .eq("subject_slug", subjectSlug)
-      .eq("question_type", "mcq")
+      .in("question_type", ["mcq", "structured"])
       // A paper with no approved questions is listed but not playable: an arena
       // that opens on an empty paper is worse than one not offered at all.
       .gt("question_count", 0)
