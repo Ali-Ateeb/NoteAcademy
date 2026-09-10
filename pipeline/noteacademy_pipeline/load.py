@@ -163,9 +163,20 @@ def upsert_question(
               correct_option        = coalesce(excluded.correct_option,
                                                questions.correct_option),
               extraction_confidence = excluded.extraction_confidence,
-              review_flags          = excluded.review_flags,
               -- A paper already signed off by a human stays signed off; a
-              -- re-run must not silently revoke an approval.
+              -- re-run must not silently revoke an approval. review_flags
+              -- gets the same protection and for the same reason: a flag a
+              -- reviewer resolved by hand (attaching a mark scheme the
+              -- matcher couldn't pair on its own, say) is a decision, not a
+              -- cache of the last extraction run — a later re-ingestion
+              -- re-deriving the same "no match" from the same mark scheme
+              -- text would otherwise silently reinstate a flag on a
+              -- question already approved without it, which is exactly
+              -- what happened here before this guard existed.
+              review_flags          = case
+                when questions.extraction_status = 'approved' then questions.review_flags
+                else excluded.review_flags
+              end,
               extraction_status     = case
                 when questions.extraction_status = 'approved' then 'approved'
                 else excluded.extraction_status
