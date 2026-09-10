@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
-import { Dashboard } from "@/components/Dashboard";
-import { getMcqQuestions, getTopics } from "@/lib/data/catalog";
+import { DashboardOverview } from "@/components/DashboardOverview";
+import { getQuestionTopicsForSubject, getSubjects } from "@/lib/data/catalog";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -9,22 +9,25 @@ export const metadata: Metadata = {
 };
 
 export default async function DashboardPage() {
-  const [topics, questions] = await Promise.all([
-    getTopics("physics-5054"),
-    getMcqQuestions("physics-5054-2019-may-june-p12"),
-  ]);
+  const subjects = (await getSubjects()).filter((s) => s.isPublished);
+
+  const summaries = await Promise.all(
+    subjects.map(async (subject) => ({
+      slug: subject.slug,
+      title: subject.title,
+      syllabusCode: subject.syllabusCode,
+      questionIds: (await getQuestionTopicsForSubject(subject.slug)).map((q) => q.id),
+    })),
+  );
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-12">
-      <h1 className="font-serif text-4xl tracking-tight text-ink">Your weak areas</h1>
+      <h1 className="font-serif text-4xl tracking-tight text-ink">Your dashboard</h1>
       <p className="mt-3 max-w-xl leading-relaxed text-ink-2">
-        Accuracy per topic, worst first. Revision goes where it is needed, not
-        where it is comfortable.
+        Pick a subject to see accuracy per topic, worst first — revision goes
+        where it is needed, not where it is comfortable.
       </p>
-      <Dashboard
-        topics={topics}
-        questionTopics={questions.map((q) => ({ id: q.id, topicCodes: q.topicCodes }))}
-      />
+      <DashboardOverview subjects={summaries} />
     </div>
   );
 }

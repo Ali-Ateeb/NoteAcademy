@@ -8,11 +8,12 @@ import { formatDuration, topicStats, type TopicStat } from "@/lib/attempts";
 import type { Topic } from "@/lib/data/types";
 
 interface Props {
+  subjectSlug: string;
   topics: Topic[];
   questionTopics: { id: string; topicCodes: string[] }[];
 }
 
-export function Dashboard({ topics, questionTopics }: Props) {
+export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
   // Attempts live in localStorage, which is unavailable during server render.
   // Reading them in an effect keeps the markup identical on both passes.
   const [stats, setStats] = useState<Map<string, TopicStat> | null>(null);
@@ -43,10 +44,10 @@ export function Dashboard({ topics, questionTopics }: Props) {
           Sit a paper and this fills with accuracy per topic and time per question.
         </p>
         <Link
-          href="/practice/physics-5054-2019-may-june-p12"
+          href={`/subjects/${subjectSlug}` as Route}
           className="mt-5 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
         >
-          Sit a Paper 1
+          Browse papers →
         </Link>
       </div>
     );
@@ -81,7 +82,7 @@ export function Dashboard({ topics, questionTopics }: Props) {
           return (
             <Link
               key={topic.code}
-              href={`/topics/physics-5054/${topic.slug}/practice` as Route}
+              href={`/topics/${subjectSlug}/${topic.slug}/practice` as Route}
               className="block rounded-xl border border-line bg-surface p-4 shadow-card transition-colors hover:border-line-strong"
             >
               <div className="flex items-baseline justify-between gap-4">

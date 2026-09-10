@@ -406,6 +406,33 @@ export async function getQuestionsByTopic(
   return result.map(toMcq);
 }
 
+/** The question id and topic codes for every playable MCQ in a subject, across
+ *  every paper — the dashboard's weak-topic accuracy is computed against a
+ *  student's whole local attempt log, and an attempt can land on any paper
+ *  the subject has, not just one. Deliberately not deduplicated by
+ *  `canonical_question_id`: the timed arena never folds a paper's own
+ *  duplicate questions either, so an attempt at one is a real attempt and
+ *  belongs in the count, the same as it does in the arena itself. */
+export async function getQuestionTopicsForSubject(
+  subjectSlug: string,
+): Promise<{ id: string; topicCodes: string[] }[]> {
+  const client = db();
+  if (!client) {
+    const papers = new Set(
+      seed.papers.filter((p) => p.subjectSlug === subjectSlug).map((p) => p.slug),
+    );
+    return seed.mcqQuestions
+      .filter((q) => papers.has(q.paperSlug))
+      .map((q) => ({ id: q.id, topicCodes: q.topicCodes }));
+  }
+
+  const result = await rows<{ id: string; topic_codes: string[] }>(
+    "question topics for a subject",
+    client.from("v_mcq_questions").select("id,topic_codes").eq("subject_slug", subjectSlug),
+  );
+  return result.map((row) => ({ id: row.id, topicCodes: row.topic_codes }));
+}
+
 /** Papers that have MCQs loaded and are therefore playable in the arena. */
 export async function getPlayablePapers(subjectSlug: string): Promise<Paper[]> {
   const client = db();
