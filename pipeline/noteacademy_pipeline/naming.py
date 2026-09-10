@@ -136,3 +136,14 @@ def document_key(prefix: str, doc_type: str) -> str:
 
 def crop_key(prefix: str, question_number: int) -> str:
     return f"{prefix}/crops/{question_number}.png"
+
+
+def structured_crop_key(prefix: str, label: str, sort_order: int = 0) -> str:
+    """A structured question's display label is never a bare integer once it
+    has parts (`'10(a)'`), but the *top-level* crop this names is always keyed
+    by the bare question number — parts share one crop, not one each. The
+    suffix only appears past the first page, so a single-page question's key
+    looks exactly like an MCQ's.
+    """
+    suffix = "" if sort_order == 0 else f".{sort_order}"
+    return f"{prefix}/crops/{label}{suffix}.png"

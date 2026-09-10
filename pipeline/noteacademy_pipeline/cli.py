@@ -9,6 +9,7 @@ Postgres, it exits.
     noteacademy extract  work/5054-2019-mj-12 --pdf paper.pdf
     noteacademy mcq-key  ms.pdf
     noteacademy load-mcq 5054_s19_qp_11.pdf 5054_s19_ms_11.pdf
+    noteacademy load-structured 5054_s15_qp_21.pdf 5054_s15_ms_21.pdf
     noteacademy load-syllabus 5054-2026-2028-syllabus.pdf
     noteacademy estimate --papers 3400 --pages 14
 """
@@ -306,6 +307,106 @@ def load_mcq(
         "[dim]Loaded unapproved. Nothing here is visible to a student until it "
         "is approved in the review queue.[/dim]"
     )
+
+
+@app.command(name="load-structured")
+def load_structured(
+    qp_pdf: Path = typer.Argument(..., exists=True, help="Structured (Paper 2) question paper."),
+    ms_pdf: Path = typer.Argument(..., exists=True, help="Its mark scheme."),
+    subject: str = typer.Option(None, help="Subject slug. Inferred from the syllabus code."),
+    crops: Path = typer.Option(None, help="Also write the crops here, as PNG."),
+    dpi: int = typer.Option(150, help="Crop resolution."),
+    upload: bool = typer.Option(True, help="Upload the crops, if storage is set up."),
+    dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
+) -> None:
+    """Load a structured sitting into the database. No model, no API key.
+
+    Boundaries come from each label's left indent, not a vision pass, so this
+    only understands papers that follow CAIE's usual question/part/sub-part
+    layout. Everything lands unapproved, the same as `load-mcq`.
+    """
+    from .ingest import disagreements, ingest_structured_paper, resolve_subject_slug
+    from .load import connect
+    from .naming import parse_paper_filename
+    from .storage import StorageError, SupabaseStorage, upload_crops
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    try:
+        qp = parse_paper_filename(qp_pdf.stem)
+        ms = parse_paper_filename(ms_pdf.stem)
+    except ValueError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=2) from error
+
+    mismatch = disagreements(qp, ms)
+    if mismatch:
+        console.print(
+            f"[red]{qp_pdf.name} and {ms_pdf.name} disagree on: "
+            f"{', '.join(mismatch)}[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        subject_slug = subject or resolve_subject_slug(conn, qp.syllabus_code)
+        report = ingest_structured_paper(
+            conn,
+            qp_pdf=qp_pdf,
+            ms_pdf=ms_pdf,
+            paper=qp,
+            subject_slug=subject_slug,
+            crops_dir=crops,
+            crop_dpi=dpi,
+        )
+
+        if report.questions == 0:
+            conn.rollback()
+        elif dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    if upload and not dry_run and report.crops:
+        storage = SupabaseStorage.from_settings(settings)
+        if storage is None:
+            console.print(
+                "[yellow]storage is not configured, so the crops stay local — "
+                "until they are uploaded these questions have nothing to "
+                "display[/yellow]"
+            )
+        else:
+            try:
+                report.crops_uploaded = upload_crops(storage, report.crops)
+            except StorageError as error:
+                console.print(f"[red]upload failed: {error}[/red]")
+
+    for problem in report.problems:
+        console.print(f"[red]{problem}[/red]")
+
+    if report.questions == 0:
+        console.print(
+            "[yellow]Nothing loaded. Geometry does not match the structured "
+            "template — this paper needs a person, not this path.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    table = Table("", "", title=report.paper_slug or subject_slug)
+    table.add_row("questions and parts", str(report.questions))
+    table.add_row("matched to mark scheme", str(report.with_answer))
+    table.add_row("flagged for review", str(report.flagged))
+    if crops is not None:
+        table.add_row("crops written", f"{report.crops_written} -> {crops}")
+    if report.crops_uploaded:
+        table.add_row("crops uploaded", str(report.crops_uploaded))
+    console.print(table)
+    console.print(
+        "[dim]Loaded unapproved. Nothing here is visible to a student until it "
+        "is approved in the review queue.[/dim]"
+    )
+
 
 @app.command(name="load-syllabus")
 def load_syllabus(

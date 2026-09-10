@@ -100,6 +100,151 @@ def match_mark_scheme(
     return result
 
 
+_STRUCTURED_HEADER_END = re.compile(r"^©")
+
+# A CAIE structured mark scheme's own mark-type codes: B (independent mark),
+# M (method mark), C (method mark contingent on an earlier one), A (accuracy
+# mark, contingent on its C). Always a letter immediately followed by the
+# number of marks it is worth, alone on its own line.
+_MARK_CODE_RE = re.compile(r"^([BMCA])(\d)$", re.IGNORECASE)
+
+_QUESTION_NUMBER_RE = re.compile(r"^\d{1,2}$")
+_PART_TOKEN_RE = re.compile(r"^\(([a-z])\)$", re.IGNORECASE)
+_SUBPART_TOKEN_RE = re.compile(r"^\((i|ii|iii|iv|v|vi|vii|viii|ix|x)\)$", re.IGNORECASE)
+
+
+def _structured_content_lines(pages_text: list[str]) -> list[str]:
+    """Every real line of a structured mark scheme, across every page, with
+    the repeated page header/footer (page number, syllabus, paper code,
+    copyright line — identical on every page) removed."""
+    lines: list[str] = []
+    for text in pages_text:
+        page_lines = [line.strip() for line in text.splitlines()]
+        header_end = next(
+            (i for i, line in enumerate(page_lines) if _STRUCTURED_HEADER_END.match(line)),
+            None,
+        )
+        if header_end is None:
+            continue
+        lines.extend(page_lines[header_end + 1 :])
+    return lines
+
+
+def parse_structured_mark_scheme(
+    pages_text: list[str], known_questions: set[str] | None = None
+) -> list[MarkSchemeEntry]:
+    """Read question-by-question marking points from a structured paper's
+    mark scheme.
+
+    CAIE sets this as plain, regular prose rather than a table: a question
+    number alone on its own line, then each part and sub-part's label
+    immediately followed by its marking point, then that point's mark code
+    (B1, C1, A1, M1) alone on the next line. A sub-part can carry more than
+    one marking point — its label is not repeated, so a bare content line
+    with no label of its own is a second (or third) point for whatever label
+    most recently opened, not a new entry.
+
+    Deliberately does not require a question number to open every entry: a
+    part with sub-parts is rarely followed by one on the mark scheme's own
+    reading, but a fresh top-level number always is, so the two together are
+    enough to track which question is current without asking every line to
+    repeat it.
+
+    `known_questions` is the question paper's own top-level labels ('1'
+    through however many it has). A marking point is itself sometimes an
+    enumerated list — "1 speed and direction ... 2 direction changes ..." as
+    the reasons behind one mark — and a bare "2" there is indistinguishable
+    from a real question number by shape alone. Real question numbers only
+    increase across a paper and are drawn from a small, known set; an
+    enumerated reason is neither, so both conditions have to hold before a
+    bare digit is trusted as a new question rather than folded into the
+    current one's content. Without `known_questions` only the ordering is
+    checked, which is weaker but still rejects the common case (a list
+    restarting from 1 or 2 while well into a later question).
+
+    Also does not assume a label is alone on its own line: the same run-
+    together labelling the question paper does — "10 (a) " as one span when a
+    question's first part opens on its very first line — happens here too,
+    so a line is walked token by token from the left rather than matched as
+    one shape, and whatever is left over after the labels found becomes this
+    line's own content.
+    """
+    entries: list[MarkSchemeEntry] = []
+    question = part = sub = None
+    content: list[str] = []
+    marks = 0
+
+    def flush() -> None:
+        nonlocal content, marks
+        if question is None or not content:
+            content, marks = [], 0
+            return
+        label = question
+        if part:
+            label += f"({part})"
+        if sub:
+            label += f"({sub})"
+        entries.append(
+            MarkSchemeEntry(display_label=label, marks=marks or None, content=" ".join(content))
+        )
+        content, marks = [], 0
+
+    for line in _structured_content_lines(pages_text):
+        if not line:
+            continue
+
+        if (code := _MARK_CODE_RE.match(line)) is not None:
+            marks += int(code.group(2))
+            continue
+
+        tokens = line.split()
+        i = 0
+        new_question: str | None = None
+        new_part: str | None = None
+        new_sub: str | None = None
+
+        if (
+            i < len(tokens)
+            and _QUESTION_NUMBER_RE.match(tokens[i])
+            and (question is None or int(tokens[i]) > int(question))
+            and (known_questions is None or tokens[i] in known_questions)
+            # CAIE prints a question number alone on its own line, or merged
+            # with the part label that opens it ("10 (a)") — never followed
+            # by anything else. Without this, a space-grouped thousands value
+            # ("11 250 J") that happens to share a real question's number is
+            # indistinguishable from that question actually starting here,
+            # and the false start corrupts every label until the real one
+            # is reached and fails its own ascending check in turn.
+            and (i + 1 == len(tokens) or _PART_TOKEN_RE.match(tokens[i + 1]))
+        ):
+            new_question = tokens[i]
+            i += 1
+        if i < len(tokens) and (m := _PART_TOKEN_RE.match(tokens[i])):
+            new_part = m.group(1).lower()
+            i += 1
+        if i < len(tokens) and (m := _SUBPART_TOKEN_RE.match(tokens[i])):
+            new_sub = m.group(1).lower()
+            i += 1
+
+        rest = " ".join(tokens[i:])
+
+        if new_question or new_part or new_sub:
+            flush()
+            if new_question:
+                question, part, sub = new_question, None, None
+            if new_part:
+                part, sub = new_part, None
+            if new_sub:
+                sub = new_sub
+            if rest:
+                content.append(rest)
+        else:
+            content.append(line)
+
+    flush()
+    return entries
+
+
 def match_mcq_answers(
     question_labels: list[str], answers: dict[str, str]
 ) -> tuple[dict[str, str], list[str]]:

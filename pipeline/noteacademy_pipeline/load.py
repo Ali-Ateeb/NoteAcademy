@@ -238,15 +238,19 @@ def attach_asset(
     bbox: tuple[float, float, float, float],
     width_px: int | None = None,
     height_px: int | None = None,
+    sort_order: int = 0,
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
             insert into question_assets
-              (question_id, kind, storage_key, page_number, bbox, width_px, height_px)
-            values (%s, %s, %s, %s, %s, %s, %s)
+              (question_id, kind, storage_key, page_number, bbox, width_px, height_px, sort_order)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (question_id, kind, storage_key, page_number, list(bbox), width_px, height_px),
+            (
+                question_id, kind, storage_key, page_number, list(bbox),
+                width_px, height_px, sort_order,
+            ),
         )
 
 

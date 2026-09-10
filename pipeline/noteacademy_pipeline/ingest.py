@@ -33,10 +33,16 @@ from .load import (
     resolve_paper_id,
     upsert_question,
 )
-from .markscheme import parse_mcq_answer_grid, validate_answer_grid
-from .naming import PaperFile, crop_key, document_key, storage_prefix
+from .markscheme import (
+    match_mark_scheme,
+    parse_mcq_answer_grid,
+    parse_structured_mark_scheme,
+    validate_answer_grid,
+)
+from .naming import PaperFile, crop_key, document_key, storage_prefix, structured_crop_key
 from .render import crop
 from .segment import segment_mcq_paper
+from .segment_structured import segment_structured_paper, top_level_regions
 
 log = logging.getLogger(__name__)
 
@@ -251,6 +257,161 @@ def ingest_mcq_paper(
             )
             report.crops_written += 1
             report.crops.append((crop_key(prefix, region.number), written))
+
+    with conn.cursor() as cur:
+        cur.execute("select slug from papers where id = %s", (paper_id,))
+        report.paper_slug = cur.fetchone()["slug"]
+
+    return report
+
+
+class _StructuredStub:
+    """`_McqStub`'s counterpart for a question this path *has* read.
+
+    Segmentation returns real text here — its own region's, read straight off
+    the page — so there is no "not read yet" gap to mark. What is still
+    missing is a figure's description, and that shows up as short or empty
+    text on whatever item sits under the diagram, not as an absent field.
+    """
+
+    question_type = "structured"
+
+    def __init__(
+        self, display_label: str, question_text: str | None, max_marks: int | None
+    ) -> None:
+        self.display_label = display_label
+        self.question_text = question_text
+        self.max_marks = max_marks
+
+
+def ingest_structured_paper(
+    conn: psycopg.Connection,
+    *,
+    qp_pdf: Path,
+    ms_pdf: Path,
+    paper: PaperFile,
+    subject_slug: str,
+    crops_dir: Path | None = None,
+    crop_dpi: int = 150,
+) -> IngestReport:
+    """Load one structured (Paper 2 style) sitting. Idempotent, like the MCQ path.
+
+    Boundaries come from a different grid than a multiple-choice paper's, but
+    it is still a grid: a question's indent puts it in the gutter, a part's
+    indent puts it past that, and neither drifts across pages. Marks are read
+    the same way the MCQ answer grid is, off the mark scheme's own text layer.
+    A leaf whose label the mark scheme never mentions is loaded flagged, not
+    guessed at — the same refusal `match_mark_scheme` already makes on its own.
+
+    Every item lands as a row, containers included: a part with sub-parts of
+    its own carries no marks and no crop, but its id is what those sub-parts'
+    `parent_question_id` points at, and it is what the top-level crop (shared
+    across every part that needs the same figure) attaches to.
+    """
+    report = IngestReport()
+
+    if paper.component is None:
+        report.problems.append(f"{qp_pdf.name} does not name a component")
+        return report
+
+    items, problems = segment_structured_paper(qp_pdf)
+    if problems:
+        report.problems.extend(problems)
+        return report
+
+    with pymupdf.open(ms_pdf) as doc:
+        pages_text = [page.get_text("text") for page in doc]
+    known_questions = {item.display_label for item in items if item.level == 0}
+    entries = parse_structured_mark_scheme(pages_text, known_questions=known_questions)
+
+    leaf_labels = {item.display_label for item in items} - {
+        item.parent_label for item in items if item.parent_label
+    }
+    match = match_mark_scheme(sorted(leaf_labels), entries)
+
+    prefix = storage_prefix(
+        paper.syllabus_code, paper.year, paper.season, paper.component, paper.variant
+    )
+
+    paper_id = resolve_paper_id(
+        conn,
+        PaperRef(
+            subject_slug=subject_slug,
+            year=paper.year,
+            season=paper.season,
+            component=paper.component,
+            variant=paper.variant,
+            question_type="structured",
+        ),
+    )
+
+    for doc_type, path in (("qp", qp_pdf), ("ms", ms_pdf)):
+        record_document(
+            conn,
+            paper_id,
+            doc_type=doc_type,
+            storage_key=document_key(prefix, doc_type),
+            page_count=page_count(path),
+            byte_size=path.stat().st_size,
+            checksum=file_digest(path),
+        )
+
+    question_ids: dict[str, str] = {}
+    for ordinal, item in enumerate(items, start=1):
+        entry = match.matched.get(item.display_label) if item.display_label in leaf_labels else None
+        flags = (
+            ["unmatched_mark_scheme"]
+            if item.display_label in leaf_labels and entry is None
+            else []
+        )
+
+        question_id = upsert_question(
+            conn,
+            paper_id,
+            _StructuredStub(
+                item.display_label,
+                item.question_text or None,
+                item.max_marks or (entry.marks if entry else None),
+            ),
+            ordinal=ordinal,
+            parent_id=question_ids.get(item.parent_label) if item.parent_label else None,
+            mark_scheme_text=entry.content if entry else None,
+            confidence=1.0,
+            review_flags=flags,
+        )
+        question_ids[item.display_label] = question_id
+        report.questions += 1
+        if flags:
+            report.flagged += 1
+        if entry is not None:
+            report.with_answer += 1
+
+    for label, regions in top_level_regions(items).items():
+        question_id = question_ids[label]
+        clear_assets(conn, question_id, "question_crop")
+        for sort_order, (page_no, bbox) in enumerate(regions):
+            attach_asset(
+                conn,
+                question_id,
+                kind="question_crop",
+                storage_key=structured_crop_key(prefix, label, sort_order),
+                page_number=page_no,
+                bbox=bbox,
+                sort_order=sort_order,
+            )
+            if crops_dir is not None:
+                suffix = "" if sort_order == 0 else f".{sort_order}"
+                written = crop(
+                    qp_pdf,
+                    page_no,
+                    bbox,
+                    crops_dir / f"{label}{suffix}.png",
+                    dpi=crop_dpi,
+                )
+                report.crops_written += 1
+                report.crops.append(
+                    (structured_crop_key(prefix, label, sort_order), written)
+                )
 
     with conn.cursor() as cur:
         cur.execute("select slug from papers where id = %s", (paper_id,))
