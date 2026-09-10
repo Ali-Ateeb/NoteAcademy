@@ -106,8 +106,17 @@ def find_question_starts(page: pymupdf.Page) -> list[tuple[int, float]]:
 
 
 def is_footer(span: dict) -> bool:
-    """Is this span part of the page's running footer rather than a question?"""
-    return span["size"] < FOOTER_MAX_SIZE and span["bbox"][1] > FOOTER_TOP
+    """Is this span part of the page's running footer rather than a question?
+
+    Small size catches the copyright line and the paper code, but not the
+    "[Turn over" note next to them — CAIE sets that at body-text size, so it
+    reads as ordinary content to a size test alone. Its wording is as fixed as
+    its position, and no question renders that exact phrase, so matching on it
+    directly is what actually separates it from the question above it.
+    """
+    if span["bbox"][1] <= FOOTER_TOP:
+        return False
+    return span["size"] < FOOTER_MAX_SIZE or span["text"].strip().startswith("[Turn over")
 
 
 def is_footer_rule(rect: pymupdf.Rect) -> bool:
@@ -122,27 +131,42 @@ def is_footer_rule(rect: pymupdf.Rect) -> bool:
 def content_bottom(page: pymupdf.Page, top: float, limit: float) -> float | None:
     """Lowest point of any text or artwork between `top` and `limit`.
 
-    Used to trim trailing whitespace from the last crop on a page. Returns None
-    when the region is empty, in which case the caller keeps its own bound.
+    Used to trim trailing whitespace from the last crop on a page. A span
+    counts if it *starts* at or above `limit` — its bottom edge is allowed to
+    run past it, which matters for a wrapped option or a tall diagram whose
+    last line starts just inside the body but ends a few points past the
+    boundary. Requiring the bottom edge to clear `limit` too silently dropped
+    such a line from consideration, which then made the caller trim the crop
+    to whatever ended above it — cutting the option off before it started.
+    Only something that *starts* past `limit` (the footer, "[Turn over") is
+    genuinely page furniture rather than this question's own content.
+    Returns None when the region is empty, in which case the caller keeps its
+    own bound.
     """
     lowest: float | None = None
 
-    def consider(y1: float) -> None:
+    def consider(y0: float, y1: float) -> None:
         nonlocal lowest
-        if top < y1 <= limit and (lowest is None or y1 > lowest):
+        if top < y0 <= limit and (lowest is None or y1 > lowest):
             lowest = y1
 
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line.get("spans", []):
-                if is_footer(span):
+                # A handful of CAIE PDFs carry invisible spacing glyphs — a
+                # blank character set to an oversized font purely to push
+                # layout around in whatever tool produced the file. It has a
+                # real bbox but no ink; counting it as content pulled crops
+                # dozens of points past the actual last line, onto blank
+                # paper (or into the footer below).
+                if is_footer(span) or not span["text"].strip():
                     continue
-                consider(span["bbox"][3])
+                consider(span["bbox"][1], span["bbox"][3])
 
     for drawing in page.get_drawings():
         if is_footer_rule(drawing["rect"]):
             continue
-        consider(drawing["rect"].y1)
+        consider(drawing["rect"].y0, drawing["rect"].y1)
 
     return lowest
 
@@ -173,18 +197,24 @@ def segment_mcq_paper(pdf_path: Path) -> tuple[list[QuestionRegion], list[str]]:
 
             starts = find_question_starts(page)
             for i, (number, y0) in enumerate(starts):
-                # A question runs to the next one on the page, or to the footer.
-                next_y = starts[i + 1][1] if i + 1 < len(starts) else BODY_BOTTOM
-                bottom = max(y0 + 1.0, next_y - CROP_GAP)
-
-                # The last question on a page would otherwise be padded out to
-                # the footer with blank paper. Trim to where the ink actually
-                # stops — a crop with an inch of whitespace under it looks
-                # broken on a question card.
-                if i + 1 == len(starts):
-                    ink = content_bottom(page, y0, bottom)
-                    if ink is not None:
-                        bottom = min(bottom, ink + CROP_GAP)
+                if i + 1 < len(starts):
+                    # A question runs to the next one on the page.
+                    bottom = max(y0 + 1.0, starts[i + 1][1] - CROP_GAP)
+                else:
+                    # The last question on a page has no next question to
+                    # bound it, only page furniture (footer, "[Turn over").
+                    # Padding it out to BODY_BOTTOM would leave blank paper
+                    # under a short question, so trim to where this
+                    # question's own ink actually stops. Reusing
+                    # `next_y - CROP_GAP` here (as if BODY_BOTTOM were the
+                    # next question) instead clipped that ceiling 8pt short —
+                    # tight enough that a last option sitting close to the
+                    # body edge (a wide table, a large diagram pushing the
+                    # options down) fell entirely outside it and so was
+                    # invisible to `content_bottom`, which then trimmed the
+                    # crop to whatever ended *above* the missing option.
+                    ink = content_bottom(page, y0, BODY_BOTTOM)
+                    bottom = max(y0 + 1.0, ink + CROP_GAP if ink is not None else BODY_BOTTOM)
                 regions.append(
                     QuestionRegion(
                         number=number,
