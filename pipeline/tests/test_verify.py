@@ -46,6 +46,18 @@ class TestNormalise:
     def test_folds_accents(self):
         assert _normalise("Réfraction") == "refraction"
 
+    def test_strips_the_questions_own_printed_number(self):
+        # The bug this rule exists for: the same question renumbered between
+        # two CAIE variants of one sitting compared unequal on the label
+        # alone, even though the content after it was identical.
+        assert _normalise("3 A student measures the speed of a trolley") == \
+            _normalise("4 A student measures the speed of a trolley")
+
+    def test_does_not_strip_a_number_that_is_part_of_the_stem(self):
+        # Only the leading item number goes; a real quantity right after it
+        # is content, not a label, and must survive.
+        assert _normalise("7 2 kg of ice is heated") == "2 kg of ice is heated"
+
 
 def paper_question(**overrides) -> TaggedQuestion:
     base = dict(

@@ -146,6 +146,19 @@ def load_mcq_questions(conn: psycopg.Connection, subject_slug: str) -> list[Tagg
 
 
 def _normalise(text: str) -> str:
+    # A question's crop includes its own printed number as the first thing in
+    # it — "3  A student measures ..." — and two CAIE variants of one sitting
+    # routinely renumber a shared item by a slot or two (one paper drops or
+    # adds an earlier question and everything after it shifts), so the same
+    # question turns up as "3 a student measures..." in one paper and
+    # "4 a student measures..." in the other. Compared whole, those two
+    # strings are never equal no matter how identical the rest of them is —
+    # confirmed against a real pair this way: physics-5054 2010 May/June P11
+    # Q3 and P12 Q4 are the same trolley-acceleration question, and were
+    # silently never matched because of exactly this. Stripped before the
+    # label ever reaches the comparison; a real stem never opens on a bare
+    # number followed by whitespace the way a printed item number does.
+    text = re.sub(r"^\s*\d+\s+", "", text)
     folded = unicodedata.normalize("NFKD", text)
     ascii_only = "".join(c for c in folded if not unicodedata.combining(c))
     return re.sub(r"[^a-z0-9 ]", "", ascii_only.lower())
