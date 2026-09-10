@@ -663,3 +663,96 @@ def bulk_approve(
 
     report.approved = 0 if dry_run else len(ids)
     return report
+
+
+@dataclass
+class BulkApproveStructuredReport:
+    subject: str
+    candidates: int = 0
+    approved: int = 0
+    questions_moved: int = 0
+
+
+def bulk_approve_structured(
+    conn: psycopg.Connection,
+    subject_slug: str,
+    *,
+    dry_run: bool = False,
+) -> BulkApproveStructuredReport:
+    """Approve every structured question whose whole subtree is flag-free,
+    without a human opening each one individually.
+
+    `bulk_approve` above ties approval to a topic tag, because for an mcq the
+    tag is the only judgement call ingestion leaves open — everything else
+    (the crop, the answer key) is machine-read and either matched or the
+    paper was refused outright. A structured question has that same
+    machine-read pairing one level down: `segment_structured_paper` refuses
+    the whole paper on any geometry it does not recognise, and
+    `match_mark_scheme` only ever pairs a leaf with its mark scheme entry on
+    an exact label match, never a guess. A subtree with zero `review_flags`
+    on it or any of its leaves is exactly the population that pairing
+    already vetted — a topic tag is a separate, later concern (which topic
+    a question drills, not whether it is correct), not a gate on whether the
+    content itself can be trusted, so this does not wait on one.
+
+    Cascades to every row in a passing top-level question's subtree, the
+    same as the review queue's own approve action does (see
+    web/src/app/api/review/route.ts's `resolveGroup`) — a structured
+    question's leaves carry their own marks and mark scheme text, and the
+    arena reads them through row level security applied per row, not
+    inherited from the top-level one.
+    """
+    report = BulkApproveStructuredReport(subject=subject_slug)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select q.id, q.paper_id, q.display_label
+              from questions q
+              join papers p on p.id = q.paper_id
+              join subjects s on s.id = p.subject_id
+             where s.slug = %s
+               and q.question_type = 'structured'
+               and q.parent_question_id is null
+               and q.extraction_status in ('extracted', 'needs_review')
+               and not exists (
+                 select 1 from questions leaf
+                  where leaf.paper_id = q.paper_id
+                    and (leaf.id = q.id or leaf.display_label like q.display_label || '(%%')
+                    and cardinality(leaf.review_flags) > 0
+               )
+             order by q.id
+            """,
+            (subject_slug,),
+        )
+        candidates = cur.fetchall()
+
+    report.candidates = len(candidates)
+    if not candidates:
+        return report
+
+    all_ids: list[str] = []
+    with conn.cursor() as cur:
+        for row in candidates:
+            cur.execute(
+                """
+                select id from questions
+                 where paper_id = %s
+                   and (id = %s or display_label like %s)
+                """,
+                (row["paper_id"], row["id"], row["display_label"] + "(%"),
+            )
+            all_ids.extend(r["id"] for r in cur.fetchall())
+
+    report.questions_moved = len(all_ids)
+
+    if not dry_run and all_ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update questions set extraction_status = 'approved', reviewed_at = now()"
+                " where id = any(%s)",
+                (all_ids,),
+            )
+
+    report.approved = 0 if dry_run else len(candidates)
+    return report

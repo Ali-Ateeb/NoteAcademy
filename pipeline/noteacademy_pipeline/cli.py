@@ -793,6 +793,49 @@ def bulk_approve_cmd(
         )
 
 
+@app.command(name="bulk-approve-structured")
+def bulk_approve_structured_cmd(
+    subject: str = typer.Option("physics-5054", help="Subject slug to approve within."),
+    dry_run: bool = typer.Option(
+        True, help="List how many would be approved, without approving them."
+    ),
+) -> None:
+    """Approve every structured question whose whole subtree is flag-free.
+
+    No topic-confidence floor, unlike `bulk-approve`: a structured question's
+    content is already vetted by the same refuse-rather-than-guess pairing an
+    mcq's is (geometry that either matches the template or refuses the whole
+    paper; a mark scheme matched only on an exact label, never a guess), and
+    a topic tag is a separate concern from whether that content can be
+    trusted. Defaults to a dry run: approving publishes a paper's questions
+    to students, and one call can move hundreds of rows across many papers.
+    """
+    from .load import connect
+    from .verify import bulk_approve_structured
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        report = bulk_approve_structured(conn, subject, dry_run=dry_run)
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+
+    table = Table("", "", title="Bulk approve structured" + (" (dry run)" if dry_run else ""))
+    table.add_row("subject", report.subject)
+    table.add_row("candidate questions", str(report.candidates))
+    table.add_row("rows moved (incl. parts)", str(report.questions_moved))
+    table.add_row("approved", str(report.approved))
+    console.print(table)
+    if dry_run:
+        console.print(
+            "[yellow]dry run: nothing was written. Re-run with --no-dry-run to approve.[/yellow]"
+        )
+
+
 @app.command()
 def estimate(
     papers: int = typer.Option(3400, help="Documents in the target corpus."),
