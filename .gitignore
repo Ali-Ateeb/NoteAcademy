@@ -20,10 +20,12 @@ venv/
 .env.local
 .env*.local
 
-# Pipeline working data
+# Pipeline working data. Anchored to the repo root (leading slash) — a bare
+# `papers/` also matched web/src/app/papers/, a real tracked Next.js route,
+# and made `git add` on anything under it warn that it was ignored.
 pipeline/work/
 pipeline/out/
-papers/
+/papers/
 *.pdf
 
 # OS / editor
