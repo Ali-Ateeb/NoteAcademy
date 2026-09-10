@@ -213,6 +213,83 @@ def build_worksheet(
     return sheet
 
 
+def build_structured_worksheet(
+    conn: psycopg.Connection,
+    subject_slug: str,
+    *,
+    paper_slug: str | None = None,
+    limit: int | None = None,
+    include_tagged: bool = False,
+) -> Worksheet:
+    """The structured counterpart to `build_worksheet`.
+
+    An mcq's text is not in the database at all — it is read fresh from the
+    question paper's own PDF here, off the crop's own bbox, because ingestion
+    deliberately never extracted it (see ingest.py). A structured question's
+    text *is* already in the database: segmentation reads it directly off the
+    page as it segments, so there is no PDF to reopen and no missing-paper
+    case to report.
+
+    Tagged per top-level question, the same practice unit everywhere else in
+    the app treats a structured question as one thing — a topic belongs to
+    "9", not separately to "9(a)(ii)" and "9(c)(iii)". The text handed to
+    the classifier is the top-level question's own words plus every leaf
+    underneath it, in paper order: the top-level text alone is often just a
+    figure's caption ("Fig. 9.1 shows a satellite..."), and the actual
+    syllabus outcome usually only becomes clear once a part asks something
+    concrete of it.
+    """
+    label, topics = revisable_topics(conn, subject_slug)
+    sheet = Worksheet(subject_slug=subject_slug, syllabus_label=label, topics=topics)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select q.id, q.display_label, q.question_text, p.slug as paper_slug
+              from questions q
+              join papers p on p.id = q.paper_id
+              join subjects sub on sub.id = p.subject_id
+             where sub.slug = %s
+               and q.question_type = 'structured'
+               and q.parent_question_id is null
+               {"" if include_tagged else
+                "and not exists (select 1 from question_topics qt"
+                " where qt.question_id = q.id)"}
+               {"and p.slug = %s" if paper_slug else ""}
+             order by p.slug, q.ordinal
+             {"limit %s" if limit else ""}
+            """,
+            tuple(x for x in (subject_slug, paper_slug, limit) if x is not None),
+        )
+        top_level = cur.fetchall()
+
+        for row in top_level:
+            cur.execute(
+                """
+                select question_text from questions
+                 where paper_id = (select paper_id from questions where id = %s)
+                   and display_label like %s
+                   and question_text is not null and question_text <> ''
+                 order by ordinal
+                """,
+                (row["id"], row["display_label"] + "(%"),
+            )
+            parts_text = [r["question_text"] for r in cur.fetchall()]
+            text = " ".join(([row["question_text"]] if row["question_text"] else []) + parts_text)
+
+            sheet.questions.append(
+                WorksheetQuestion(
+                    id=str(row["id"]),
+                    paper_slug=row["paper_slug"],
+                    display_label=row["display_label"],
+                    text=text,
+                    correct_option=None,
+                )
+            )
+
+    return sheet
+
+
 @dataclass
 class ApplyReport:
     tagged: int = 0

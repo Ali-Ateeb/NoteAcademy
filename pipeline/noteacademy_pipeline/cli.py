@@ -510,6 +510,9 @@ def tag_export(
     paper: str = typer.Option(None, help="Restrict to one paper slug."),
     limit: int = typer.Option(None, help="Stop after this many questions."),
     retag: bool = typer.Option(False, help="Include questions that already have a topic."),
+    structured: bool = typer.Option(
+        False, help="Tag structured questions instead of mcq. Needs no source PDF."
+    ),
 ) -> None:
     """Export the questions that still need a topic, with their text.
 
@@ -521,15 +524,21 @@ def tag_export(
     import json
 
     from .load import connect
-    from .worksheet import build_worksheet
+    from .worksheet import build_structured_worksheet, build_worksheet
 
     if not settings.database_url:
         console.print("[red]DATABASE_URL is not set.[/red]")
         raise typer.Exit(code=2)
 
     with connect(settings.database_url) as conn:
-        sheet = build_worksheet(
-            conn, subject, papers, paper_slug=paper, limit=limit, include_tagged=retag
+        sheet = (
+            build_structured_worksheet(
+                conn, subject, paper_slug=paper, limit=limit, include_tagged=retag
+            )
+            if structured
+            else build_worksheet(
+                conn, subject, papers, paper_slug=paper, limit=limit, include_tagged=retag
+            )
         )
 
     out = out or settings.work_dir / f"{subject}-tags.json"
