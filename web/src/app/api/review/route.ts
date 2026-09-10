@@ -55,6 +55,63 @@ function tokenMatches(supplied: string | null): boolean {
   return difference === 0;
 }
 
+/** One row in the group a decision applies to, with just enough of it to
+ *  decide what that row's own restored status should be on undo. */
+interface GroupRow {
+  id: string;
+  reviewFlags: string[];
+}
+
+/** Every row a decision on `questionId` should actually touch.
+ *
+ *  For everything but a structured question this is just the row itself. A
+ *  structured question is a tree — marks and mark-scheme text live on its
+ *  leaves, not on "9" itself — but the review queue shows one card per
+ *  top-level question (see db/migrations/0022), and approving that card
+ *  means signing off on the whole thing: the crop, and every part and
+ *  sub-part it covers. Scoped by a `like` on `display_label` rather than a
+ *  recursive walk of `parent_question_id`: "10(a)" cannot match a pattern
+ *  built from "1", because the pattern requires the literal "(" immediately
+ *  after the number, so a plain prefix match cannot cross from one top-level
+ *  question into a sibling with a shared leading digit.
+ */
+async function resolveGroup(
+  client: SupabaseClient,
+  questionId: string,
+): Promise<GroupRow[] | null> {
+  const { data: question } = await client
+    .from("questions")
+    .select("id,paper_id,display_label,question_type,review_flags")
+    .eq("id", questionId)
+    .maybeSingle();
+  if (!question) return null;
+
+  const q = question as {
+    id: string;
+    paper_id: string;
+    display_label: string;
+    question_type: string;
+    review_flags: string[];
+  };
+  const self: GroupRow = { id: q.id, reviewFlags: q.review_flags ?? [] };
+  if (q.question_type !== "structured") return [self];
+
+  const { data: descendants, error } = await client
+    .from("questions")
+    .select("id,review_flags")
+    .eq("paper_id", q.paper_id)
+    .like("display_label", `${q.display_label}(%`);
+  if (error) return [self];
+
+  return [
+    self,
+    ...(descendants ?? []).map((row) => ({
+      id: (row as { id: string; review_flags: string[] }).id,
+      reviewFlags: (row as { id: string; review_flags: string[] }).review_flags ?? [],
+    })),
+  ];
+}
+
 function guard(request: Request): NextResponse | null {
   if (!process.env.REVIEW_TOKEN) {
     return NextResponse.json(
@@ -107,19 +164,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Bad decision." }, { status: 400 });
   }
 
+  const group = await resolveGroup(client, questionId);
+  if (!group) {
+    return NextResponse.json({ error: "No such question." }, { status: 404 });
+  }
+
   // Only an undecided question can be decided. Without this a replayed request
-  // could quietly re-approve something a reviewer had already rejected.
+  // could quietly re-approve something a reviewer had already rejected. For a
+  // structured question this updates the whole group at once — the card the
+  // reviewer approved and every part and sub-part under it — so the decision
+  // reaches every row the crop actually covers, not just the top-level one.
   const { data, error } = await client
     .from("questions")
     .update({ extraction_status: decision, reviewed_at: new Date().toISOString() })
-    .eq("id", questionId)
+    .in("id", group.map((row) => row.id))
     .in("extraction_status", UNDECIDED)
     .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  if (!data?.length) {
+  // The row the reviewer actually decided on has to be among what moved — a
+  // structured question's *parts* being already decided is not this check's
+  // business, but the question itself already being decided is exactly the
+  // replayed-request case above.
+  if (!data?.some((row) => (row as { id: string }).id === questionId)) {
     return NextResponse.json(
       { error: "That question is not awaiting a decision." },
       { status: 409 },
@@ -287,23 +356,40 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "questionId is required." }, { status: 400 });
   }
 
-  const { data: question } = await client
-    .from("questions")
-    .select("review_flags")
-    .eq("id", questionId)
-    .maybeSingle();
+  const group = await resolveGroup(client, questionId);
+  if (!group) {
+    return NextResponse.json({ error: "No such question." }, { status: 404 });
+  }
 
-  const flags = (question as { review_flags?: string[] } | null)?.review_flags ?? [];
-  const restored = flags.length ? "needs_review" : "extracted";
+  // Each row goes back to what its *own* flags say, not the top-level
+  // question's — a structured question's container rows are never flagged
+  // themselves, so restoring the whole group to one status picked from the
+  // question alone would put an unmatched leaf back as 'extracted' and hide
+  // it from the queue's flagged-first sort.
+  const withFlags = group.filter((row) => row.reviewFlags.length > 0).map((row) => row.id);
+  const withoutFlags = group.filter((row) => row.reviewFlags.length === 0).map((row) => row.id);
 
-  const { error } = await client
-    .from("questions")
-    .update({ extraction_status: restored, reviewed_at: null })
-    .eq("id", questionId)
-    .in("extraction_status", ["approved", "rejected"]);
+  const decided = ["approved", "rejected"];
+  const [flagged, clean] = await Promise.all([
+    withFlags.length
+      ? client
+          .from("questions")
+          .update({ extraction_status: "needs_review", reviewed_at: null })
+          .in("id", withFlags)
+          .in("extraction_status", decided)
+      : Promise.resolve({ error: null }),
+    withoutFlags.length
+      ? client
+          .from("questions")
+          .update({ extraction_status: "extracted", reviewed_at: null })
+          .in("id", withoutFlags)
+          .in("extraction_status", decided)
+      : Promise.resolve({ error: null }),
+  ]);
 
+  const error = flagged.error ?? clean.error;
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, questionId, restored });
+  return NextResponse.json({ ok: true, questionId });
 }

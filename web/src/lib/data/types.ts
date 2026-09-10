@@ -175,22 +175,45 @@ export interface ProposedTopic {
   reasoning: string;
 }
 
+/** One page of a question's crop. A multiple-choice question is always one;
+ *  a structured question can run to several — CAIE routinely carries a
+ *  question across a page break, and the reviewer needs to see all of it,
+ *  not just where it starts. */
+export interface ReviewCrop {
+  storageKey: string;
+  pageNumber: number;
+  /** Signed at render time. The queue shows unapproved questions, which
+   *  /api/asset deliberately refuses, so these are signed directly instead. */
+  url: string | null;
+}
+
+/** One leaf under a structured question — "9(a)(ii)", not "9" or "9(a)" — the
+ *  unit marks and a mark scheme entry actually attach to. Absent on an mcq
+ *  item, where the row already is the whole practice unit. */
+export interface ReviewPart {
+  displayLabel: string;
+  maxMarks: number | null;
+  markSchemeText: string | null;
+  reviewFlags: ReviewFlag[];
+}
+
 export interface ReviewItem {
   id: string;
   paperSlug: string;
   paperTitle: string;
   displayLabel: string;
   questionType: QuestionType;
-  pageNumber: number;
   questionText: string;
+  /** An mcq's answer-grid entry. Null for a structured question, whose marking
+   *  lives on `parts` instead — an mcq's marking never does, so the two never
+   *  need to be read together. */
   markScheme: string | null;
   correctOption: McqOption | null;
-  /** Object-storage key for the rendered crop. Served as a signed URL; the
-   *  scaffold shows a placeholder until storage is wired up. */
-  cropStorageKey: string | null;
-  /** Signed at render time. The queue shows unapproved questions, which
-   *  /api/asset deliberately refuses, so these are signed directly instead. */
-  cropUrl: string | null;
+  crops: ReviewCrop[];
+  /** Non-null only for a structured question — its leaves, in paper order.
+   *  Null, not empty, for an mcq: "no parts" and "not a structured question"
+   *  are different facts, and the card renders them differently. */
+  parts: ReviewPart[] | null;
   extractionConfidence: number;
   flags: ReviewFlag[];
   proposedTopics: ProposedTopic[];

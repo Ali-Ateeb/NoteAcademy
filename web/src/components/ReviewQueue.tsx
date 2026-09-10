@@ -17,6 +17,7 @@ import {
   REVIEW_FLAG_HINTS,
   REVIEW_FLAG_LABELS,
   type DecidedItem,
+  type ReviewCrop,
   type ReviewDecision,
   type ReviewItem,
 } from "@/lib/data/types";
@@ -28,6 +29,16 @@ import {
  *  badge and as a sort key. */
 function tagConfidence(item: ReviewItem): number {
   return item.proposedTopics[0]?.confidence ?? 0;
+}
+
+/** "page 12" for one crop, "pages 12–14" for a question that runs across
+ *  several — a structured question routinely does, where an mcq never has. */
+function pageLabel(crops: ReviewCrop[]): string {
+  if (crops.length === 0) return "no crop";
+  const pages = crops.map((crop) => crop.pageNumber);
+  const min = Math.min(...pages);
+  const max = Math.max(...pages);
+  return min === max ? `page ${min}` : `pages ${min}–${max}`;
 }
 
 interface Props {
@@ -337,7 +348,7 @@ function ReviewCard({
           Q{item.displayLabel}
         </span>
         <span className="text-xs text-ink-3">
-          {item.paperTitle} · page {item.pageNumber}
+          {item.paperTitle} · {pageLabel(item.crops)}
         </span>
         {/* The *topic* confidence, not the extraction confidence.
             extraction_confidence is 1.0 on every geometrically segmented
@@ -386,29 +397,45 @@ function ReviewCard({
         ))}
       </div>
 
-      {item.cropUrl ? (
+      {item.crops.length ? (
         /* The question as printed. This is what the reviewer is actually
            judging — the extracted text is checked against it, and for a
            multiple-choice question whose options are diagrams it is the only
            faithful rendering there is. White background regardless of theme:
-           it is a photograph of a page, not part of the interface. */
-        <div className="mt-5 overflow-hidden rounded-xl border border-line bg-white">
-          {/* eslint-disable-next-line @next/next/no-img-element -- a signed URL
-              on a bucket host, resolved per request; next/image would need the
-              host allow-listed and would proxy every crop for no benefit. */}
-          <img
-            src={item.cropUrl}
-            alt={`Question ${item.displayLabel} of ${item.paperTitle}, as printed`}
-            className="w-full"
-            loading="lazy"
-          />
+           it is a photograph of a page, not part of the interface.
+           A structured question can run across a page break, in which case
+           this is more than one image — stacked in reading order, each still
+           the whole width of the card, rather than a carousel that hides how
+           long the question actually is. */
+        <div className="mt-5 space-y-2">
+          {item.crops.map((crop) => (
+            <div
+              key={crop.storageKey}
+              className="overflow-hidden rounded-xl border border-line bg-white"
+            >
+              {crop.url ? (
+                /* eslint-disable-next-line @next/next/no-img-element -- a signed URL
+                   on a bucket host, resolved per request; next/image would need the
+                   host allow-listed and would proxy every crop for no benefit. */
+                <img
+                  src={crop.url}
+                  alt={`Question ${item.displayLabel} of ${item.paperTitle}, page ${crop.pageNumber}, as printed`}
+                  className="w-full"
+                  loading="lazy"
+                />
+              ) : (
+                <p className="p-4 text-center text-xs text-ink-3">
+                  Signed URL missing for page {crop.pageNumber} —{" "}
+                  <span className="font-mono">{crop.storageKey}</span>
+                </p>
+              )}
+            </div>
+          ))}
         </div>
       ) : (
         <div className="mt-5 flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-line bg-surface-2 p-5 text-center">
           <p className="text-xs leading-relaxed text-ink-3">
-            No crop to show
-            <br />
-            <span className="font-mono">{item.cropStorageKey ?? "not generated"}</span>
+            No crop to show — not generated
             <br />
             <span className="mt-1 inline-block">
               The reviewer checks the question against this image, so approving
@@ -435,30 +462,66 @@ function ReviewCard({
         )}
       </div>
 
-      <div className="mt-4">
-        <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
-          {item.questionType === "mcq" ? "Answer key" : "Mark scheme"}
-        </p>
-        {/* A multiple-choice mark scheme is an answer grid, so the answer is
-            the mark scheme. Warning that none is attached when the key is
-            recorded is a false alarm on every MCQ in the bank, and false
-            alarms are how a reviewer learns to stop reading them. */}
-        {item.correctOption ? (
-          <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
-            <span className="font-mono font-semibold text-correct">
-              {item.correctOption}
-            </span>
-            {item.markScheme ? ` — ${item.markScheme}` : " — from the mark scheme's answer grid"}
+      {item.parts ? (
+        /* A structured question's marks and mark scheme text live on its
+           leaves, not on the top-level row this card is for — "9" itself is
+           never short an answer key, because it was never meant to have one.
+           One row per leaf, in paper order, is what a reviewer actually
+           checks the crop against: does 9(a)(ii) on the page match what is
+           printed here for 9(a)(ii). */
+        <div className="mt-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
+            Mark scheme · {item.parts.length} part{item.parts.length === 1 ? "" : "s"}
           </p>
-        ) : item.markScheme ? (
-          <p className="mt-1.5 text-sm leading-relaxed text-ink-2">{item.markScheme}</p>
-        ) : (
-          <p className="mt-1.5 text-sm italic text-incorrect">
-            None attached — approving without one leaves the question unusable in
-            the arena.
+          <div className="mt-1.5 space-y-2.5">
+            {item.parts.map((part) => (
+              <div key={part.displayLabel} className="flex gap-3 text-sm">
+                <span className="w-20 shrink-0 font-mono text-xs text-ink-3">
+                  {part.displayLabel}
+                  {part.maxMarks != null && (
+                    <span className="ml-1">[{part.maxMarks}]</span>
+                  )}
+                </span>
+                {part.markSchemeText ? (
+                  <p className="leading-relaxed text-ink-2">{part.markSchemeText}</p>
+                ) : (
+                  <p className="italic text-incorrect">
+                    No mark scheme matched
+                    {part.reviewFlags.includes("unmatched_mark_scheme")
+                      ? " — check the mark scheme's own text for this label before rejecting."
+                      : "."}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
+            {item.questionType === "mcq" ? "Answer key" : "Mark scheme"}
           </p>
-        )}
-      </div>
+          {/* A multiple-choice mark scheme is an answer grid, so the answer is
+              the mark scheme. Warning that none is attached when the key is
+              recorded is a false alarm on every MCQ in the bank, and false
+              alarms are how a reviewer learns to stop reading them. */}
+          {item.correctOption ? (
+            <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
+              <span className="font-mono font-semibold text-correct">
+                {item.correctOption}
+              </span>
+              {item.markScheme ? ` — ${item.markScheme}` : " — from the mark scheme's answer grid"}
+            </p>
+          ) : item.markScheme ? (
+            <p className="mt-1.5 text-sm leading-relaxed text-ink-2">{item.markScheme}</p>
+          ) : (
+            <p className="mt-1.5 text-sm italic text-incorrect">
+              None attached — approving without one leaves the question unusable in
+              the arena.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="mt-5">
         <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
@@ -530,7 +593,9 @@ function ReviewCard({
           Reject
         </button>
         <p className="ml-auto self-center text-xs text-ink-3">
-          Approving publishes this to students.
+          {item.parts
+            ? `Approving publishes this and all ${item.parts.length} part${item.parts.length === 1 ? "" : "s"} to students.`
+            : "Approving publishes this to students."}
         </p>
       </div>
     </div>

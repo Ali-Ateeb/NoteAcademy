@@ -472,6 +472,18 @@ const REVIEW_PAGE = 1000;
  *  bigger number here. */
 const REVIEW_QUEUE_MAX = 5000;
 
+interface ReviewCropRow {
+  storageKey: string;
+  pageNumber: number;
+}
+
+interface ReviewPartRow {
+  displayLabel: string;
+  maxMarks: number | null;
+  markSchemeText: string | null;
+  reviewFlags: ReviewFlag[];
+}
+
 interface ReviewRow {
   id: string;
   paper_slug: string;
@@ -481,8 +493,8 @@ interface ReviewRow {
   question_text: string | null;
   mark_scheme_text: string | null;
   correct_option: McqOption | null;
-  crop_storage_key: string | null;
-  page_number: number | null;
+  crops: ReviewCropRow[];
+  parts: ReviewPartRow[] | null;
   extraction_confidence: number | null;
   extraction_status: "extracted" | "needs_review";
   review_flags: ReviewFlag[];
@@ -553,11 +565,10 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
   // Signed here rather than through /api/asset: every row in this queue is
   // unapproved, which is exactly what that route refuses. One request for the
   // whole page — a hundred crops signed one at a time is a hundred round trips
-  // before anything renders.
+  // before anything renders. A structured question can carry several of its
+  // own, so this flattens every row's crops rather than just the first.
   const urls = await signedUrls(
-    flaggedFirst.map((row) => row.crop_storage_key).filter((key): key is string =>
-      Boolean(key),
-    ),
+    flaggedFirst.flatMap((row) => row.crops.map((crop) => crop.storageKey)),
   );
 
   return flaggedFirst.map((row) => ({
@@ -566,12 +577,22 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
     paperTitle: row.paper_title,
     displayLabel: row.display_label,
     questionType: row.question_type,
-    pageNumber: row.page_number ?? 0,
     questionText: row.question_text ?? "",
     markScheme: row.mark_scheme_text,
     correctOption: row.correct_option,
-    cropStorageKey: row.crop_storage_key,
-    cropUrl: (row.crop_storage_key && urls.get(row.crop_storage_key)) || null,
+    crops: row.crops.map((crop) => ({
+      storageKey: crop.storageKey,
+      pageNumber: crop.pageNumber,
+      url: urls.get(crop.storageKey) ?? null,
+    })),
+    parts:
+      row.parts &&
+      row.parts.map((part) => ({
+        displayLabel: part.displayLabel,
+        maxMarks: part.maxMarks,
+        markSchemeText: part.markSchemeText,
+        reviewFlags: part.reviewFlags,
+      })),
     extractionConfidence: row.extraction_confidence ?? 0,
     flags: row.review_flags,
     proposedTopics: row.proposed_topics.map((topic) => ({
