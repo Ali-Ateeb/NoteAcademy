@@ -121,6 +121,15 @@ def record_document(
         return cur.fetchone()["id"]
 
 
+def _strip_nul(text: str | None) -> str | None:
+    """Postgres text columns reject a NUL byte outright — rare, but a PDF's
+    own text layer occasionally has one baked into a font's glyph mapping,
+    surfacing as a real \\x00 character in whatever this pipeline extracted
+    from it. Not a real character in any exam's own text either way, so
+    dropping it costs nothing."""
+    return text.replace("\x00", "") if text is not None else None
+
+
 def upsert_question(
     conn: psycopg.Connection,
     paper_id: str,
@@ -191,9 +200,9 @@ def upsert_question(
                 ordinal,
                 question.question_type,
                 question.max_marks,
-                question.question_text,
-                mark_scheme_text,
-                examiner_comment,
+                _strip_nul(question.question_text),
+                _strip_nul(mark_scheme_text),
+                _strip_nul(examiner_comment),
                 correct_option if question.question_type == "mcq" else None,
                 status,
                 confidence,
