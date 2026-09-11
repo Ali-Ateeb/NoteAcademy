@@ -217,13 +217,22 @@ _NUCLIDE_CONTINUATION_RE = re.compile(r"^\d{1,3}[A-Z][a-z]?$")
 # all. The lookahead requires whitespace, an opening paren, or the end of the
 # line right after the letter, since "the letter E immediately followed by a
 # digit" is also standard-form scientific notation ("5E10" for 5×10^10) —
-# a shape no genuine label ever takes.
+# a shape no genuine label ever takes. Deliberately uppercase-only, unlike
+# the other two forms below: a lower-case "5e10" is exactly that notation,
+# with nothing else here to tell the two apart.
 _GLUED_BRANCH_RE = re.compile(r"^(\d{1,2})([EO])(?=[\s(]|$)")
 
 # The same split, printed the other way round: a label carrying the split's
 # own opening word at the *end* of its line instead — "(b) EITHER" — rather
 # than the word opening a line of its own.
-_TRAILING_BRANCH_RE = re.compile(r"^(.*\S)\s+(EITHER|OR)$")
+#
+# Matches "EITHER"/"OR" and "Either"/"Or" — CAIE prints one in some subjects
+# and the other elsewhere, sometimes both in the same document — but not the
+# all lower-case "either"/"or": unlike the other two, that is an ordinary
+# word ordinary prose uses constantly, including alone on a wrapped line,
+# and nothing else here would tell a real split from a false one at that
+# point (see segment_structured.py's own `_ALTERNATIVE_LABELS`).
+_TRAILING_BRANCH_RE = re.compile(r"^(.*\S)\s+(EITHER|OR|Either|Or)$")
 
 
 def _structured_content_lines(pages_text: list[str]) -> list[str]:
@@ -400,11 +409,11 @@ def parse_structured_mark_scheme(
             continue
 
         if (
-            line in ("EITHER", "OR")
+            line in ("EITHER", "OR", "Either", "Or")
             and path
             and (branched_roots is None or path[0] in branched_roots)
         ):
-            if line == "EITHER":
+            if line in ("EITHER", "Either"):
                 # Where this actually belongs is not yet knowable — see the
                 # docstring — so it waits for the part or sub-part label
                 # that turns up on a later row instead of guessing now.

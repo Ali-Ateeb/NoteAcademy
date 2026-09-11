@@ -82,8 +82,13 @@ SECTION_RE = re.compile(r"^Section [A-Z]$")
 # straight under a bare question number, each option then carrying a full
 # (a)/(b)/(c) of its own) and in the sub-part band (opening under an already-
 # indented part, each option a single ungrouped answer). The word itself,
-# not its column, is what identifies it.
-_ALTERNATIVE_LABELS = ("EITHER", "OR")
+# not its column, is what identifies it — and not even its exact case: CAIE
+# prints "EITHER"/"OR" in one subject and "Either"/"Or" in another, sometimes
+# both in the same document. Lower-case "either"/"or" is deliberately not
+# accepted alongside them — unlike the other two, it is an ordinary word
+# ordinary prose uses constantly, including alone on a wrapped line, and nothing
+# else here would tell a real split from a false one at that point.
+_ALTERNATIVE_LABELS = ("EITHER", "OR", "Either", "Or")
 
 _BRANCH_LABEL_RE = re.compile(r"^(?:EITHER|OR)\s*")
 
@@ -188,7 +193,13 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
                 # known how deep the branch actually has room to attach.
                 band = _level_for_x0(x0)
                 markers.append(
-                    Marker(1 if band is None else band, first_word, page_number, y0, is_branch=True)
+                    Marker(
+                        1 if band is None else band,
+                        first_word.upper(),
+                        page_number,
+                        y0,
+                        is_branch=True,
+                    )
                 )
                 continue
 
@@ -197,11 +208,23 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
                 continue
 
             for token in text.split():
-                if level > 2 or not _LEVEL_PATTERNS[level].match(token):
+                if level > 2:
                     break
-                label = token if level == 0 else token[1:-1].lower()
-                markers.append(Marker(level, label, page_number, y0))
-                level += 1
+                matched_level = level
+                if not _LEVEL_PATTERNS[level].match(token):
+                    # A branch's own content is sometimes indented one step
+                    # deeper than its actual level — CAIE nests an "EITHER"'s
+                    # or "OR"'s first part under the word itself the way it
+                    # would a question's first part under the question number
+                    # — landing a part in what would otherwise be the
+                    # sub-part band. Shape, not position, settles it once
+                    # position alone comes up empty.
+                    if level != 2 or not PART_RE.match(token):
+                        break
+                    matched_level = 1
+                label = token if matched_level == 0 else token[1:-1].lower()
+                markers.append(Marker(matched_level, label, page_number, y0))
+                level = matched_level + 1
 
     markers.sort(key=lambda m: m.y0)
     breaks.sort(key=lambda b: b.y0)
@@ -289,6 +312,13 @@ def segment_structured_paper(
                     token = "or"
                 path = path[:branch_index] + [token]
             elif marker.level == 0:
+                if path and path[0] == marker.label:
+                    # CAIE sometimes reprints the bare question number as its
+                    # own heading a second time, once per side of a split —
+                    # a real repeat of the current question, exactly like a
+                    # mark scheme's table restating it on every row, not a
+                    # second question sharing its number.
+                    continue
                 path = [marker.label]
                 branch_index = None
             else:

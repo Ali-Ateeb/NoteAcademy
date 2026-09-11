@@ -311,3 +311,89 @@ class TestAlternativeQuestions:
 
         _, problems = segment_structured_paper(out)
         assert any("without a preceding EITHER" in problem for problem in problems)
+
+    def test_title_case_either_or_is_recognised(self, tmp_path):
+        # CAIE prints "EITHER"/"OR" in one subject and "Either"/"Or" in
+        # another, sometimes both in the same document.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "8")
+        _insert_label(page, PART_X, 130.0, "Either")
+        _insert_label(page, PART_X, 160.0, "(a)")
+        _insert_body(page, BODY_X, 160.0, "Describe the pathway. [2]")
+        _insert_label(page, PART_X, 200.0, "Or")
+        _insert_label(page, PART_X, 230.0, "(a)")
+        _insert_body(page, BODY_X, 230.0, "Define mitosis. [1]")
+        out = tmp_path / "title-case.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert "8(either)(a)" in labels
+        assert "8(or)(a)" in labels
+
+    def test_lower_case_either_or_is_not_a_split(self, tmp_path):
+        # Unlike the other two, plain "either"/"or" is an ordinary word
+        # ordinary prose uses constantly — never treated as the split.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "1")
+        _insert_label(page, PART_X, 130.0, "(a)")
+        _insert_body(page, BODY_X, 130.0, "State either the mass or the volume. [1]")
+        out = tmp_path / "lower-case.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == ["1", "1(a)"]
+
+    def test_question_number_repeated_before_each_side_is_not_a_duplicate(self, tmp_path):
+        # CAIE sometimes reprints the bare question number as its own
+        # heading a second time, once per side of the split, rather than
+        # printing it once up front — a real repeat, not a second question
+        # sharing its number.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "8")
+        _insert_label(page, PART_X, 130.0, "EITHER")
+        _insert_label(page, PART_X, 160.0, "(a)")
+        _insert_body(page, BODY_X, 160.0, "Describe the pathway. [2]")
+        _insert_label(page, QUESTION_X, 200.0, "8")
+        _insert_label(page, PART_X, 230.0, "OR")
+        _insert_label(page, PART_X, 260.0, "(a)")
+        _insert_body(page, BODY_X, 260.0, "Define mitosis. [1]")
+        out = tmp_path / "repeated-root.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels.count("8") == 1
+        assert "8(either)(a)" in labels
+        assert "8(or)(a)" in labels
+
+    def test_a_part_indented_into_the_subpart_band_after_a_branch(self, tmp_path):
+        # CAIE sometimes nests a branch's own first part one indent step
+        # deeper than usual — under the "EITHER"/"OR" itself, the way a
+        # question's first part nests under the question number — landing
+        # it in what would otherwise be the sub-part band. Shape (still a
+        # single letter, not a roman numeral) is what tells the two apart.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "8")
+        _insert_label(page, PART_X, 130.0, "EITHER")
+        _insert_label(page, SUBPART_X, 160.0, "(a)")
+        _insert_body(page, BODY_X, 160.0, "Describe the pathway. [2]")
+        out = tmp_path / "shifted-indent.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert "8(either)(a)" in labels
