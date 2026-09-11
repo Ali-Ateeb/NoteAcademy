@@ -6,6 +6,7 @@ pinning down with tests.
 """
 
 from noteacademy_pipeline.markscheme import (
+    _root_ordinal,
     match_mark_scheme,
     match_mcq_answers,
     normalise_label,
@@ -476,6 +477,62 @@ class TestStructuredAlternativeQuestions:
         )
         by_label = {e.display_label: e for e in entries}
         assert by_label.keys() == {"10(c)", "10(d)(i)", "10(e)"}
+
+
+class TestLetteredQuestionNumbers:
+    """Chemistry numbers its two sections as one continuing sequence rather
+    than restarting each one — "A1".."A5" then "B6".."B9" — unlike a plain
+    "1".."9". See segment_structured.py's own `_LEVEL_PATTERNS` for the
+    question-paper side of the same convention."""
+
+    def test_root_ordinal_reads_past_the_section_letter(self):
+        assert _root_ordinal("7") == 7
+        assert _root_ordinal("A1") == 1
+        assert _root_ordinal("B6") == 6
+
+    def test_a_lettered_question_opens_normally(self):
+        entries = parse_structured_mark_scheme(
+            [_page("A1 (a) Nickel / Ni", "B1")],
+            known_questions={"A1", "A1(a)"},
+        )
+        assert entries[0].display_label == "A1(a)"
+
+    def test_a_second_section_continues_the_same_numbering(self):
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "A1", "(a) Nickel", "B1",
+                    "B2", "(a) Sulfuric acid is a strong acid", "B1",
+                )
+            ],
+            known_questions={"A1", "A1(a)", "B2", "B2(a)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() == {"A1(a)", "B2(a)"}
+
+    def test_a_guidance_note_before_any_part_still_opens_the_question(self):
+        # A section-lettered question sometimes opens with a guidance note
+        # of its own before any part does, with nothing part-shaped
+        # anywhere on the same line — unlike a plain-numbered question,
+        # this is not mistaken for content the way "11 250 J" would be,
+        # since a measurement is never written with a letter prefix.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "A1 Allow correct name but formula takes precedence",
+                    "(a) V2O5",
+                    "B1",
+                )
+            ],
+            known_questions={"A1", "A1(a)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        # The guidance note itself becomes its own entry, attached to the
+        # question as a whole rather than any one part — an orphan once
+        # matched against the question paper's own leaves, since "A1" is a
+        # container there, but real: a marker really did write it down.
+        assert by_label["A1"].content == "Allow correct name but formula takes precedence"
+        assert by_label["A1(a)"].content == "V2O5"
 
 
 class TestMatchMcqAnswers:

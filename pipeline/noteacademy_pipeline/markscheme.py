@@ -26,8 +26,20 @@ from .schemas import MarkSchemeEntry
 # only ever runs on a label this pipeline already built for itself — never on
 # raw text off a page — so there is nothing to gain from also validating that
 # a given group looks like a real letter or roman numeral.
-_LABEL_NUMBER_RE = re.compile(r"^(\d{1,2})")
+#
+# The number itself is sometimes a bare "7" and sometimes a section letter
+# glued to one — "A1", "B6" — one syllabus's own numbering across its two
+# sections, continuing the same count rather than restarting it for the
+# second letter (see segment_structured.py's `_LEVEL_PATTERNS`).
+_LABEL_NUMBER_RE = re.compile(r"^([A-Z]?\d{1,2})")
 _LABEL_GROUP_RE = re.compile(r"\(\s*([a-zA-Z]+)\s*\)")
+
+
+def _root_ordinal(root: str) -> int:
+    """The part of a question root that actually counts up — "7" from "7",
+    "1" from "A1", "6" from "B6" — so "A5" then "B6" reads as ascending the
+    same way "5" then "6" already does."""
+    return int(root.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 
 
 def normalise_label(label: str) -> str | None:
@@ -150,7 +162,8 @@ _SECTION_HEADING_RE = re.compile(r"^Section [A-Z]$")
 # number of marks it is worth, alone on its own line.
 _MARK_CODE_RE = re.compile(r"^([BMCA])(\d)$", re.IGNORECASE)
 
-_QUESTION_NUMBER_RE = re.compile(r"^\d{1,2}$")
+# A bare "7", or a section-lettered "A1"/"B6" (see `_root_ordinal` above).
+_QUESTION_NUMBER_RE = re.compile(r"^[A-Z]?\d{1,2}$")
 #  Case-sensitive on purpose, unlike the segmenter's own version of these
 # patterns: CAIE always prints a real part or sub-part label in lowercase,
 # but a mark scheme's own marking-point text routinely names a labelled
@@ -404,7 +417,12 @@ def parse_structured_mark_scheme(
         line = _GLUED_LABEL_RE.sub(r" \1", line)
         line = _DIGIT_AFTER_PAREN_RE.sub(r" \1", line)
 
-        if (code := _MARK_CODE_RE.match(line)) is not None:
+        # "A1" is both a mark code (Accuracy, worth 1 mark) and, in a
+        # section-lettered syllabus, a genuine question root — a real,
+        # known root always wins the ambiguity, since a mark code is never
+        # itself a label the question paper produced.
+        is_known_root = known_questions is not None and line in known_questions
+        if not is_known_root and (code := _MARK_CODE_RE.match(line)) is not None:
             marks += int(code.group(2))
             continue
 
@@ -454,9 +472,20 @@ def parse_structured_mark_scheme(
             # ("11 250 J") that happens to share a real question's number is
             # indistinguishable from that question actually starting here,
             # and the false start corrupts every label until the real one
-            # is reached and fails its own ascending check in turn.
-            and (i + 1 == len(tokens) or _PART_TOKEN_RE.match(tokens[i + 1])
-                 or _SUBPART_TOKEN_RE.match(tokens[i + 1]))
+            # is reached and fails its own ascending check in turn. Not
+            # required for a section-lettered root ("A1"): a measurement is
+            # never written that way, so the shape alone already rules out
+            # what this guards against — which matters here, since a
+            # section-lettered question sometimes opens with a guidance note
+            # of its own before any part does ("A1 Allow correct name but
+            # formula takes precedence"), with nothing part-shaped anywhere
+            # on the same line.
+            and (
+                tokens[i][0].isalpha()
+                or i + 1 == len(tokens)
+                or _PART_TOKEN_RE.match(tokens[i + 1])
+                or _SUBPART_TOKEN_RE.match(tokens[i + 1])
+            )
             # A number alone on its own line is also exactly the shape of a
             # nuclide's mass number, printed with its atomic number and
             # element symbol glued together on the line right after it —
@@ -469,7 +498,7 @@ def parse_structured_mark_scheme(
                 and _NUCLIDE_CONTINUATION_RE.match(next_line)
             )
         ):
-            if current_root is None or int(tokens[i]) > int(current_root):
+            if current_root is None or _root_ordinal(tokens[i]) > _root_ordinal(current_root):
                 new_root = tokens[i]
                 i += 1
             elif tokens[i] == current_root:

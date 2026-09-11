@@ -397,3 +397,63 @@ class TestAlternativeQuestions:
         assert problems == []
         labels = [item.display_label for item in items]
         assert "8(either)(a)" in labels
+
+
+class TestLetteredQuestionNumbers:
+    """Chemistry numbers its two sections as one continuing sequence rather
+    than restarting each one — "A1".."A5" then "B6".."B9" — unlike a plain
+    "1".."9". The letter carries no meaning of its own beyond which section
+    a question is in; see markscheme.py's `_root_ordinal`."""
+
+    def test_a_lettered_question_number_opens_a_question(self, tmp_path):
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "A1")
+        _insert_body(page, BODY_X, 100.0, "Choose from the following elements.")
+        _insert_label(page, PART_X, 130.0, "(a)")
+        _insert_body(page, BODY_X, 130.0, "is a catalyst. [1]")
+        out = tmp_path / "lettered.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == ["A1", "A1(a)"]
+
+    def test_a_lettered_number_merged_with_its_first_part(self, tmp_path):
+        # CAIE sometimes opens a question straight into its first part on
+        # one printed line, exactly as a plain-numbered question's own
+        # "10 (a)" already does.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "A1 (a) ")
+        _insert_body(page, BODY_X, 100.0, "Nickel.")
+        out = tmp_path / "lettered-merged.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == ["A1", "A1(a)"]
+
+    def test_a_second_section_continues_the_same_numbering(self, tmp_path):
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "A1")
+        _insert_body(page, BODY_X, 100.0, "Choose an element.")
+        _insert_label(page, PART_X, 130.0, "(a)")
+        _insert_body(page, BODY_X, 130.0, "is a catalyst. [1]")
+        _insert_label(page, QUESTION_X, 200.0, "B2")
+        _insert_body(page, BODY_X, 200.0, "Sulfuric acid is a strong acid.")
+        _insert_label(page, PART_X, 230.0, "(a)")
+        _insert_body(page, BODY_X, 230.0, "Explain why. [1]")
+        out = tmp_path / "two-sections.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == ["A1", "A1(a)", "B2", "B2(a)"]

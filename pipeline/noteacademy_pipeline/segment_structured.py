@@ -122,7 +122,11 @@ class StructuredItem:
 
 
 _LEVEL_PATTERNS = (
-    re.compile(r"^\d{1,2}$"),
+    # A bare "7", or a syllabus that numbers its two sections as one
+    # continuing sequence rather than restarting each one — "A1".."A5" then
+    # "B6".."B9" — with the letter carrying no meaning of its own beyond
+    # which section it is (see markscheme.py's `_root_ordinal`).
+    re.compile(r"^[A-Z]?\d{1,2}$"),
     PART_RE,
     SUBPART_RE,
 )
