@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pymupdf
 
+from .boldness import BoldChecker, build_bold_checker
 from .segment import BODY_BOTTOM, BODY_TOP, CROP_LEFT, CROP_RIGHT, content_bottom, is_footer
 from .worksheet import question_text as extract_text
 
@@ -139,7 +140,9 @@ def _level_for_x0(x0: float) -> int | None:
     return None
 
 
-def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
+def find_markers(
+    page: pymupdf.Page, checker: BoldChecker | None = None
+) -> tuple[list[Marker], list[SectionBreak]]:
     """Question/part/sub-part labels on one page, plus any section heading.
 
     A label is the first span of its line: bold, sitting in one of the three
@@ -154,6 +157,11 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
     is; every token after that is checked against the next level down, so a
     merged run still yields one marker per label instead of being missed
     entirely because the run as a whole matches no single pattern.
+
+    `checker` is `None` in the (many) call sites — mostly tests — that build
+    a page directly rather than going through `segment_structured_paper`,
+    in which case "bold" falls back to the font-name check alone, same as
+    before boldness.py existed.
     """
     page_number = page.number + 1
     markers: list[Marker] = []
@@ -174,7 +182,8 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
                 breaks.append(SectionBreak(page_number, y0))
                 continue
 
-            if "Bold" not in span["font"]:
+            is_bold = checker.is_bold(page.number, span) if checker else "Bold" in span["font"]
+            if not is_bold:
                 continue
 
             # Usually alone on its own line, but CAIE sometimes runs the
@@ -282,6 +291,107 @@ def page_bottom(page: pymupdf.Page) -> float:
     return bottom if bottom is not None else BODY_BOTTOM
 
 
+def _unconfirmed_roots(page: pymupdf.Page) -> list[tuple[str, int, float]]:
+    """Every question-shaped bare label sitting in the gutter on this page,
+    regardless of its own boldness — a recovery pool for the one gap
+    boldness.py's glyph-based detection still cannot close on its own: a
+    specific digit whose bold and regular glyphs happen to be rendered as
+    the exact same outline in one document's own font subset, leaving no
+    signal at all — not frequency, not ink — to tell the two apart.
+    Deliberately not filtered by shape or level beyond the gutter band
+    itself; `_fill_missing_roots` is what keeps this safe, by only ever
+    drawing from here to fill a specific, already-expected gap."""
+    page_number = page.number + 1
+    found: list[tuple[str, int, float]] = []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            spans = line.get("spans", [])
+            if not spans:
+                continue
+            span = spans[0]
+            text = span["text"].strip()
+            x0, y0 = span["bbox"][0], span["bbox"][1]
+            if not (BODY_TOP < y0 < BODY_BOTTOM) or not text:
+                continue
+            token = text.split(None, 1)[0]
+            if x0 < LEVEL_MAX_X[0] and _LEVEL_PATTERNS[0].match(token):
+                found.append((token, page_number, y0))
+    return found
+
+
+def _find_unconfirmed_root(
+    unconfirmed: list[tuple[str, int, float]],
+    label: str,
+    after: tuple[int, float],
+    before: tuple[int, float] | None,
+) -> tuple[str, int, float] | None:
+    return next(
+        (
+            candidate
+            for candidate in unconfirmed
+            if candidate[0] == label
+            and (candidate[1], candidate[2]) > after
+            and (before is None or (candidate[1], candidate[2]) < before)
+        ),
+        None,
+    )
+
+
+def _fill_missing_roots(
+    markers: list[Marker], unconfirmed: list[tuple[str, int, float]]
+) -> list[Marker]:
+    """Recovers a root marker missing from an otherwise unbroken, ascending
+    run of question numbers — the identical-glyph gap `_unconfirmed_roots`
+    exists for (see its own docstring). Only ever fills a specific,
+    already-expected number either between two confirmed ones or right
+    after the last one (a paper's final question, with nothing of its own
+    after it to bracket the gap); a paper missing a marker for any other
+    reason is exactly as refused as it always was, since nothing here
+    lowers the bar for what counts as a real question number anywhere
+    else.
+    """
+    roots = sorted(
+        (m for m in markers if m.level == 0 and not m.is_branch),
+        key=lambda m: (m.page_number, m.y0),
+    )
+    if not roots:
+        return markers
+
+    recovered: list[Marker] = []
+    for previous, following in zip(roots, roots[1:]):
+        try:
+            previous_n, following_n = int(previous.label), int(following.label)
+        except ValueError:
+            continue  # a section-lettered root ("A1") — not this gap
+        after = (previous.page_number, previous.y0)
+        before = (following.page_number, following.y0)
+        for missing_n in range(previous_n + 1, following_n):
+            candidate = _find_unconfirmed_root(unconfirmed, str(missing_n), after, before)
+            if candidate is not None:
+                label, page_number, y0 = candidate
+                recovered.append(Marker(0, label, page_number, y0))
+                after = (page_number, y0)
+
+    last = roots[-1]
+    try:
+        next_n = int(last.label) + 1
+    except ValueError:
+        next_n = None
+    if next_n is not None:
+        after = (last.page_number, last.y0)
+        while (
+            candidate := _find_unconfirmed_root(unconfirmed, str(next_n), after, None)
+        ) is not None:
+            label, page_number, y0 = candidate
+            recovered.append(Marker(0, label, page_number, y0))
+            after = (page_number, y0)
+            next_n += 1
+
+    if not recovered:
+        return markers
+    return sorted(markers + recovered, key=lambda m: (m.page_number, m.y0))
+
+
 def segment_structured_paper(
     pdf_path: Path,
 ) -> tuple[list[StructuredItem], list[str]]:
@@ -297,15 +407,20 @@ def segment_structured_paper(
 
     with pymupdf.open(pdf_path) as doc:
         pages = list(doc)
+        checker = build_bold_checker(doc)
         all_markers: list[Marker] = []
         all_breaks: list[SectionBreak] = []
+        all_unconfirmed: list[tuple[str, int, float]] = []
         for page in pages:
-            markers, breaks = find_markers(page)
+            markers, breaks = find_markers(page, checker)
             all_markers.extend(markers)
             all_breaks.extend(breaks)
+            all_unconfirmed.extend(_unconfirmed_roots(page))
 
         if not all_markers:
             return [], ["no question markers found"]
+
+        all_markers = _fill_missing_roots(all_markers, all_unconfirmed)
 
         # `path` is the nesting currently open — ["8"], ["8", "a"], ["8", "a",
         # "i"] — one entry per label from the question down to whatever is

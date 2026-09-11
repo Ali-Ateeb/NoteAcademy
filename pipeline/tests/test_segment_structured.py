@@ -11,6 +11,9 @@ from pathlib import Path
 import pymupdf
 
 from noteacademy_pipeline.segment_structured import (
+    Marker,
+    _fill_missing_roots,
+    _unconfirmed_roots,
     find_markers,
     segment_structured_paper,
     validate_items,
@@ -533,3 +536,93 @@ class TestShapeOverPositionForLabels:
         labels = [item.display_label for item in items]
         assert "2(either)(a)" in labels
         assert not any(label.startswith("Or") for label in labels)
+
+
+class TestFillMissingRoots:
+    """boldness.py's glyph-based detection has one gap it cannot close on
+    its own: a specific digit whose bold and regular glyphs happen to be
+    rendered as the exact same outline in one document's own font subset,
+    leaving no signal at all to tell them apart (see its own module
+    docstring). `_fill_missing_roots` recovers that specific, already-
+    expected number from a position-only pass over the page, using the
+    paper's own unbroken ascending numbering as the only evidence it needs."""
+
+    @staticmethod
+    def _root(label: str, page: int = 1, y0: float = 0.0) -> Marker:
+        return Marker(0, label, page, y0)
+
+    def test_fills_a_single_interior_gap(self):
+        markers = [self._root("6", y0=10.0), self._root("8", y0=30.0)]
+        unconfirmed = [("7", 1, 20.0)]
+        result = _fill_missing_roots(markers, unconfirmed)
+        labels = sorted(m.label for m in result if m.level == 0)
+        assert labels == ["6", "7", "8"]
+
+    def test_fills_more_than_one_missing_number_in_a_row(self):
+        markers = [self._root("5", y0=10.0), self._root("8", y0=40.0)]
+        unconfirmed = [("6", 1, 20.0), ("7", 1, 30.0)]
+        result = _fill_missing_roots(markers, unconfirmed)
+        labels = sorted(int(m.label) for m in result if m.level == 0)
+        assert labels == [5, 6, 7, 8]
+
+    def test_fills_the_papers_final_question_with_nothing_after_it(self):
+        markers = [self._root("7", y0=10.0)]
+        unconfirmed = [("8", 1, 20.0)]
+        result = _fill_missing_roots(markers, unconfirmed)
+        labels = sorted(m.label for m in result if m.level == 0)
+        assert labels == ["7", "8"]
+
+    def test_does_not_recover_past_a_candidate_that_never_turns_up(self):
+        # Only "8" exists in the recovery pool — nothing says a "9" is
+        # missing too, so nothing is invented past the one real gap.
+        markers = [self._root("7", y0=10.0)]
+        unconfirmed = [("8", 1, 20.0)]
+        result = _fill_missing_roots(markers, unconfirmed)
+        assert [m.label for m in result if m.level == 0] == ["7", "8"]
+
+    def test_does_nothing_when_the_sequence_is_already_unbroken(self):
+        markers = [self._root("1", y0=10.0), self._root("2", y0=20.0)]
+        result = _fill_missing_roots(markers, unconfirmed=[])
+        assert [m.label for m in result if m.level == 0] == ["1", "2"]
+
+    def test_ignores_a_section_lettered_sequence(self):
+        # "A1"/"B2" (see markscheme.py's `_root_ordinal`) is not this gap —
+        # left exactly as unfilled as it always was.
+        markers = [self._root("A1", y0=10.0), self._root("B3", y0=30.0)]
+        unconfirmed = [("B2", 1, 20.0)]
+        result = _fill_missing_roots(markers, unconfirmed)
+        assert [m.label for m in result if m.level == 0] == ["A1", "B3"]
+
+    def test_a_candidate_outside_the_gap_is_not_used(self):
+        # "7" turns up, but *before* "6" rather than between "6" and "8" —
+        # not the gap it would need to fill.
+        markers = [self._root("6", y0=10.0), self._root("8", y0=30.0)]
+        unconfirmed = [("7", 1, 5.0)]
+        result = _fill_missing_roots(markers, unconfirmed)
+        assert [m.label for m in result if m.level == 0] == ["6", "8"]
+
+
+class TestUnconfirmedRoots:
+    def test_finds_a_non_bold_digit_sitting_in_the_gutter(self, tmp_path):
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        page.insert_text((QUESTION_X, 100.0), "7", fontsize=11, fontname="Helvetica")
+        out = tmp_path / "non-bold-root.pdf"
+        doc.save(out)
+        doc.close()
+
+        with pymupdf.open(out) as reopened:
+            found = _unconfirmed_roots(reopened[0])
+        assert [label for label, _, _ in found] == ["7"]
+
+    def test_ignores_text_outside_the_gutter(self, tmp_path):
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        page.insert_text((PART_X, 100.0), "7", fontsize=11, fontname="Helvetica")
+        out = tmp_path / "not-gutter.pdf"
+        doc.save(out)
+        doc.close()
+
+        with pymupdf.open(out) as reopened:
+            found = _unconfirmed_roots(reopened[0])
+        assert found == []
