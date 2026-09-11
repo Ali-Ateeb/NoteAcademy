@@ -162,6 +162,27 @@ _SECTION_HEADING_RE = re.compile(r"^Section [A-Z]$")
 # number of marks it is worth, alone on its own line.
 _MARK_CODE_RE = re.compile(r"^([BMCA])(\d)$", re.IGNORECASE)
 
+# Some subjects' mark schemes have no letter at all — a plain "Question /
+# Answer / Mark / Guidance" table whose "Mark" column is just the number on
+# its own line, with no B/M/C/A in front of it. On its own that number is
+# indistinguishable in shape from a bare question number ("2" is both "2
+# marks" and "question 2") — resolved by checking, once per document,
+# whether a bare number could ever mean anything other than a question
+# number there: a document that gives its marks a letter code, or gives
+# them bracketed inline ("sun / light ; [1]", never on a line of its own),
+# is read the usual way, and only a document that does neither — where a
+# bare number is never anything else — treats one as a mark value instead
+# of a question number, since in that style a real question root is always
+# glued to the part that opens it
+# ("1(a)"), never printed bare and alone.
+_BARE_MARK_VALUE_RE = re.compile(r"^\d{1,2}$")
+
+# A mark award folded into a marking point's own line rather than sitting on
+# a line of its own — "sun / light ; [1]". Its presence anywhere means a
+# bare number never needs to double as one, the same way a lettered code
+# elsewhere in the document already would.
+_INLINE_MARK_AWARD_RE = re.compile(r"\[\d{1,2}\]")
+
 # A bare "7", or a section-lettered "A1"/"B6" (see `_root_ordinal` above).
 _QUESTION_NUMBER_RE = re.compile(r"^[A-Z]?\d{1,2}$")
 #  Case-sensitive on purpose, unlike the segmenter's own version of these
@@ -394,6 +415,10 @@ def parse_structured_mark_scheme(
         trailing_split.append(m.group(2))
     content_lines = trailing_split
 
+    bare_number_could_be_a_root = any(_MARK_CODE_RE.match(line) for line in content_lines) or any(
+        _INLINE_MARK_AWARD_RE.search(line) for line in content_lines
+    )
+
     branched_roots = _branched_roots(known_questions) if known_questions is not None else None
     if branched_roots is not None:
         expanded_lines: list[str] = []
@@ -479,12 +504,17 @@ def parse_structured_mark_scheme(
             # section-lettered question sometimes opens with a guidance note
             # of its own before any part does ("A1 Allow correct name but
             # formula takes precedence"), with nothing part-shaped anywhere
-            # on the same line.
+            # on the same line. Also not enough on its own in a document
+            # where a bare number could only ever be its "Mark" column
+            # value — there, a real root is always glued to the part that
+            # opens it instead (see `_BARE_MARK_VALUE_RE`).
             and (
                 tokens[i][0].isalpha()
-                or i + 1 == len(tokens)
-                or _PART_TOKEN_RE.match(tokens[i + 1])
-                or _SUBPART_TOKEN_RE.match(tokens[i + 1])
+                or (i + 1 == len(tokens) and bare_number_could_be_a_root)
+                or (
+                    i + 1 < len(tokens)
+                    and (_PART_TOKEN_RE.match(tokens[i + 1]) or _SUBPART_TOKEN_RE.match(tokens[i + 1]))
+                )
             )
             # A number alone on its own line is also exactly the shape of a
             # nuclide's mass number, printed with its atomic number and
@@ -596,6 +626,8 @@ def parse_structured_mark_scheme(
             # into the content it was just stripped out of.
             if rest:
                 content.append(rest)
+        elif not bare_number_could_be_a_root and _BARE_MARK_VALUE_RE.match(line):
+            marks += int(line)
         else:
             content.append(line)
 

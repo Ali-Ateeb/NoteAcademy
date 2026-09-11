@@ -535,6 +535,54 @@ class TestLetteredQuestionNumbers:
         assert by_label["A1(a)"].content == "V2O5"
 
 
+class TestBareMarkValues:
+    """Some subjects' mark schemes give a marking point's own mark no
+    letter at all — a plain "Question / Answer / Mark / Guidance" table
+    whose "Mark" column is just the number on its own line. On its own
+    that number is indistinguishable in shape from a bare question number
+    ("2" is both "2 marks" and "question 2"), resolved by checking, once
+    per document, whether a bare number could ever mean anything else
+    there (see `_root_ordinal`'s neighbouring comment)."""
+
+    def test_a_bare_mark_value_is_not_mistaken_for_the_next_question(self):
+        # "2" here is 1(a)'s own mark total, not question 2 — nothing in
+        # this document ever gives a mark a letter or brackets it inline,
+        # so a bare number is read as a mark value instead.
+        entries = parse_structured_mark_scheme(
+            [_page("1(a)", "chromosome ;", "2", "1(b)", "allele(s) ;", "1")],
+            known_questions={"1", "1(a)", "1(b)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() == {"1(a)", "1(b)"}
+        assert by_label["1(a)"].marks == 2
+        assert by_label["1(b)"].marks == 1
+
+    def test_a_lettered_code_elsewhere_keeps_bare_numbers_as_questions(self):
+        # The reverse: this document *does* use a lettered code elsewhere,
+        # so a bare number is read the usual way — including a question
+        # with no lettered parts of its own, opening straight into a bare
+        # number's own content.
+        entries = parse_structured_mark_scheme(
+            [_page("1(a)", "chromosome", "B1", "2", "complete the paragraph", "B1")],
+            known_questions={"1", "1(a)", "2"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() == {"1(a)", "2"}
+
+    def test_an_inline_bracketed_award_elsewhere_keeps_bare_numbers_as_questions(self):
+        # A mark bracketed inline ("sun / light ; [1]") never sits on a
+        # line by itself, so it does not create the same ambiguity a
+        # bare-number "Mark" column does — a document that marks this way
+        # anywhere still reads a bare number as a question number,
+        # including one with no lettered parts of its own.
+        entries = parse_structured_mark_scheme(
+            [_page("1(a)", "sun / light ; [1]", "2", "complete the paragraph [1]")],
+            known_questions={"1", "1(a)", "2"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() == {"1(a)", "2"}
+
+
 class TestMatchMcqAnswers:
     def test_attaches_answers_by_question_number(self):
         matched, unmatched = match_mcq_answers(

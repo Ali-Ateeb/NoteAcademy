@@ -185,7 +185,17 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
             # same line is this option's own opening text, picked up the same
             # way a part's own intro text after "(a)" already is.
             first_word = text.split(None, 1)[0]
-            if first_word in _ALTERNATIVE_LABELS:
+            if (
+                first_word in _ALTERNATIVE_LABELS
+                and not (len(spans) > 1 and spans[1]["text"].startswith("."))
+            ):
+                # The trailing-period exclusion is for a genuine sentence
+                # that just happens to end in the word "Or" — the tail of a
+                # wrapped instruction ("...Question 7 or Question 8.") set
+                # in the same bold run as the rest of it and printed alone
+                # on its own line by the wrap, not a real split: a real
+                # split is never itself the end of a punctuated sentence.
+                #
                 # Which indent band it sits in still says something here, just
                 # not "which level" the way a real label's does: CAIE sets it
                 # flush with the question number when it is offering the
@@ -214,18 +224,38 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
             for token in text.split():
                 if level > 2:
                     break
-                matched_level = level
-                if not _LEVEL_PATTERNS[level].match(token):
-                    # A branch's own content is sometimes indented one step
-                    # deeper than its actual level — CAIE nests an "EITHER"'s
-                    # or "OR"'s first part under the word itself the way it
-                    # would a question's first part under the question number
-                    # — landing a part in what would otherwise be the
-                    # sub-part band. Shape, not position, settles it once
-                    # position alone comes up empty.
-                    if level != 2 or not PART_RE.match(token):
-                        break
-                    matched_level = 1
+                # The band settles which level a label is at most, never
+                # deeper, since nothing is ever indented past its own true
+                # depth — but not always exactly, so shape breaks the tie
+                # once it does not match: a branch's own content is
+                # sometimes indented one step deeper than its actual level
+                # (an "EITHER"'s or "OR"'s first part nests under the word
+                # itself the way a question's first part nests under the
+                # question number, landing a part in what would otherwise
+                # be the sub-part band), and a question number is sometimes
+                # printed a little further right than its neighbours — a
+                # diagram crowding the gutter on that one page — landing it
+                # in what would otherwise be the part band.
+                matched_level = next(
+                    (
+                        candidate
+                        for candidate in range(level, -1, -1)
+                        if _LEVEL_PATTERNS[candidate].match(token)
+                    ),
+                    None,
+                )
+                if matched_level is None:
+                    break
+                if matched_level < level and len(spans) > 1 and spans[1]["text"].startswith("."):
+                    # An enumerated list item inside an answer's own scaffolding
+                    # ("1. Explain why...", "2. ...") bolds its own numeral in
+                    # its own span exactly the way a real label does, in
+                    # whatever band that answer's own indentation happens to
+                    # land in — shape alone reads it as a promoted label the
+                    # same way a genuinely mis-indented one would be. What a
+                    # real label never has, and this always does, is a period
+                    # immediately after it, in the very next (unbolded) span.
+                    break
                 label = token if matched_level == 0 else token[1:-1].lower()
                 markers.append(Marker(matched_level, label, page_number, y0))
                 level = matched_level + 1

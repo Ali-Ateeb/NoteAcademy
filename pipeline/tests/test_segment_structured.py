@@ -457,3 +457,79 @@ class TestLetteredQuestionNumbers:
         assert problems == []
         labels = [item.display_label for item in items]
         assert labels == ["A1", "A1(a)", "B2", "B2(a)"]
+
+
+class TestShapeOverPositionForLabels:
+    """`find_markers` trusts a label's own indent band to say how deep it
+    is, but only up to a point: shape breaks the tie once the two disagree
+    (see the loop's own comment in segment_structured.py). Position still
+    protects against the one real risk that trade-off opens up — an
+    enumerated list item bolding its own numeral exactly like a real label
+    would — since that risk has its own distinct shape (a period glued on
+    immediately after, in a separate span) no real label ever has."""
+
+    def test_a_question_number_indented_past_its_usual_column_still_opens(self, tmp_path):
+        # A diagram crowding the gutter on one page can print a question
+        # number a little further right than its neighbours — landing it
+        # in what would otherwise be the part band.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "1")
+        _insert_body(page, BODY_X, 100.0, "Fig. 1.1 shows a thing.")
+        _insert_label(page, PART_X, 130.0, "(a)")
+        _insert_body(page, BODY_X, 130.0, "State the thing. [1]")
+        _insert_label(page, PART_X, 170.0, "2")
+        _insert_body(page, BODY_X, 170.0, "Cacti are desert plants.")
+        _insert_label(page, PART_X, 200.0, "(a)")
+        _insert_body(page, BODY_X, 200.0, "Name the part. [1]")
+        out = tmp_path / "indented-root.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == ["1", "1(a)", "2", "2(a)"]
+
+    def test_an_enumerated_list_item_is_not_mistaken_for_a_new_question(self, tmp_path):
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "1")
+        _insert_label(page, PART_X, 130.0, "(a)")
+        _insert_body(page, BODY_X, 130.0, "State two reasons:")
+        page.insert_text((PART_X, 160.0), "1", fontsize=11, fontname="Helvetica-Bold")
+        page.insert_text((PART_X + 7, 160.0), ". first reason", fontsize=11, fontname="Helvetica")
+        page.insert_text((PART_X, 190.0), "2", fontsize=11, fontname="Helvetica-Bold")
+        page.insert_text((PART_X + 7, 190.0), ". second reason [2]", fontsize=11, fontname="Helvetica")
+        out = tmp_path / "enumerated-list.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == ["1", "1(a)"]
+
+    def test_a_wrapped_instruction_ending_in_or_is_not_a_split(self, tmp_path):
+        # The tail of a wrapped instruction ("...Question 1 or Question
+        # 2.") can land the word "or" alone on its own line, capitalised
+        # and bold along with the rest of the sentence it was set in — not
+        # a real split, which is never itself the end of a punctuated
+        # sentence.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        page.insert_text((QUESTION_X, 100.0), "Or", fontsize=11, fontname="Helvetica-Bold")
+        page.insert_text((QUESTION_X + 14, 100.0), ".", fontsize=11, fontname="Helvetica")
+        _insert_label(page, QUESTION_X, 130.0, "2")
+        _insert_label(page, PART_X, 160.0, "Either")
+        _insert_label(page, PART_X, 190.0, "(a)")
+        _insert_body(page, BODY_X, 190.0, "Name the gate. [1]")
+        out = tmp_path / "wrapped-or.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert "2(either)(a)" in labels
+        assert not any(label.startswith("Or") for label in labels)
