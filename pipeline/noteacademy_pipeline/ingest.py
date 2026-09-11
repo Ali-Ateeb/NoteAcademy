@@ -321,7 +321,12 @@ def ingest_structured_paper(
 
     with pymupdf.open(ms_pdf) as doc:
         pages_text = [page.get_text("text") for page in doc]
-    known_questions = {item.display_label for item in items if item.level == 0}
+    # Every label the question paper produced, not only its top-level ones:
+    # `parse_structured_mark_scheme` also uses this to tell whether a part an
+    # "EITHER"/"OR" split answers already exists independently of the split
+    # (the branch nests inside it) or only ever appears inside it (the split
+    # opened before any part did) — see that function's own docstring.
+    known_questions = {item.display_label for item in items}
     entries = parse_structured_mark_scheme(pages_text, known_questions=known_questions)
 
     leaf_labels = {item.display_label for item in items} - {

@@ -73,6 +73,20 @@ PAGE_NUMBER_ONLY_RE = re.compile(r"^\d+$")
 # into the crop for whatever the last question of Section A was.
 SECTION_RE = re.compile(r"^Section [A-Z]$")
 
+# CAIE occasionally offers a straight choice between two ways of answering
+# the same question — a circuit built with a relay versus one built with a
+# transistor, say — rather than making that choice its own question. "EITHER"
+# opens the first option and "OR" the second, both still worth the same
+# marks. Unlike a part or sub-part label this is not indented on any fixed
+# geometric band: it has been observed sitting in the part band (opening
+# straight under a bare question number, each option then carrying a full
+# (a)/(b)/(c) of its own) and in the sub-part band (opening under an already-
+# indented part, each option a single ungrouped answer). The word itself,
+# not its column, is what identifies it.
+_ALTERNATIVE_LABELS = ("EITHER", "OR")
+
+_BRANCH_LABEL_RE = re.compile(r"^(?:EITHER|OR)\s*")
+
 
 @dataclass
 class Marker:
@@ -80,6 +94,7 @@ class Marker:
     label: str
     page_number: int
     y0: float
+    is_branch: bool = False
 
 
 @dataclass
@@ -153,6 +168,30 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
             if "Bold" not in span["font"]:
                 continue
 
+            # Usually alone on its own line, but CAIE sometimes runs the
+            # option's own text straight on from it in the same bold span —
+            # "EITHER  Explain the action of the capacitor..." — the same
+            # merged-run habit a question's own first part is set in. Only
+            # the leading word is ever the marker; whatever follows on the
+            # same line is this option's own opening text, picked up the same
+            # way a part's own intro text after "(a)" already is.
+            first_word = text.split(None, 1)[0]
+            if first_word in _ALTERNATIVE_LABELS:
+                # Which indent band it sits in still says something here, just
+                # not "which level" the way a real label's does: CAIE sets it
+                # flush with the question number when it is offering the
+                # alternative as a whole extra part alongside the ones already
+                # open, and flush with a part or sub-part when it is offering
+                # the alternative in place of one specific part's own answer.
+                # Both readings turn into the same thing one band up from
+                # where the word itself sits — worked out below, once it is
+                # known how deep the branch actually has room to attach.
+                band = _level_for_x0(x0)
+                markers.append(
+                    Marker(1 if band is None else band, first_word, page_number, y0, is_branch=True)
+                )
+                continue
+
             level = _level_for_x0(x0)
             if level is None:
                 continue
@@ -169,12 +208,16 @@ def find_markers(page: pymupdf.Page) -> tuple[list[Marker], list[SectionBreak]]:
     return markers, breaks
 
 
-def _display_label(current: list[str | None], level: int) -> tuple[str, str | None]:
-    if level == 0:
-        return current[0] or "", None
-    if level == 1:
-        return f"{current[0]}({current[1]})", current[0] or None
-    return f"{current[0]}({current[1]})({current[2]})", f"{current[0]}({current[1]})"
+def _path_label(path: list[str]) -> str:
+    """Render a nesting path as CAIE would print it: "8", "8(a)", "8(a)(i)" —
+    and, for a branch, "8(either)" or "8(b)(either)" (see
+    `_ALTERNATIVE_LABELS`) — a word rather than a single letter or roman
+    numeral on purpose, so it can never collide with a real part or
+    sub-part's own label the way "(e)" could with a question's genuine
+    fifth part."""
+    if not path:
+        return ""
+    return path[0] + "".join(f"({p})" for p in path[1:])
 
 
 def page_bottom(page: pymupdf.Page) -> float:
@@ -207,18 +250,67 @@ def segment_structured_paper(
         if not all_markers:
             return [], ["no question markers found"]
 
-        current: list[str | None] = [None, None, None]
-        entries: list[tuple[str, str | None, Marker]] = []
+        # `path` is the nesting currently open — ["8"], ["8", "a"], ["8", "a",
+        # "i"] — one entry per label from the question down to whatever is
+        # open right now. A part or sub-part always attaches at its own fixed
+        # depth (`marker.level`) UNLESS a branch is open at or above that
+        # depth, in which case everything from the branch down shifts one
+        # place deeper — the branch consumes the slot the label would
+        # otherwise have taken. `branch_index` is that slot, `None` when no
+        # branch is open. It is set the moment "EITHER" opens one (at
+        # whatever depth was current then — under the bare question number,
+        # or already under one of its parts) and cleared the moment a real
+        # label attaches at or above it, since that label is a fresh sibling
+        # of the branch, not something inside it.
+        path: list[str] = []
+        branch_index: int | None = None
+        entries: list[tuple[str, str | None, int, Marker]] = []
         for marker in all_markers:
-            current[marker.level] = marker.label
-            for lvl in range(marker.level + 1, 3):
-                current[lvl] = None
-            label, parent = _display_label(current, marker.level)
-            entries.append((label, parent, marker))
+            if marker.is_branch:
+                if not path:
+                    problems.append(
+                        f"'{marker.label}' on page {marker.page_number} with no question open"
+                    )
+                    continue
+                if marker.label == "EITHER":
+                    # At least a sibling of the parts already open (never the
+                    # question number itself, even when it is set flush with
+                    # it), and one deeper again when it is set flush with a
+                    # sub-part instead — but never deeper than what is
+                    # actually open to attach to.
+                    branch_index = min(max(marker.level, 1), len(path))
+                    token = "either"
+                else:
+                    if branch_index is None:
+                        problems.append(
+                            f"'OR' on page {marker.page_number} without a preceding EITHER"
+                        )
+                        continue
+                    token = "or"
+                path = path[:branch_index] + [token]
+            elif marker.level == 0:
+                path = [marker.label]
+                branch_index = None
+            else:
+                target = marker.level + (
+                    1 if branch_index is not None and branch_index <= marker.level else 0
+                )
+                if branch_index is not None and branch_index >= target:
+                    branch_index = None
+                path = path[:target] + [marker.label]
+
+            label = _path_label(path)
+            parent = _path_label(path[:-1]) if len(path) > 1 else None
+            # A branch itself is not part of the geometric hierarchy — it has
+            # no indent band of its own — so it is never mistaken for a real,
+            # possibly-empty leaf by `validate_items`, which only ever checks
+            # `level == 2`.
+            level = -1 if marker.is_branch else marker.level
+            entries.append((label, parent, level, marker))
 
         items: list[StructuredItem] = []
-        for i, (label, parent, marker) in enumerate(entries):
-            next_marker = entries[i + 1][2] if i + 1 < len(entries) else None
+        for i, (label, parent, level, marker) in enumerate(entries):
+            next_marker = entries[i + 1][3] if i + 1 < len(entries) else None
             # A break sitting between this marker and the next one ends this
             # item's content early, on the page it falls on.
             cut = next(
@@ -269,13 +361,14 @@ def segment_structured_paper(
             marks_match = MARKS_RE.search(raw_text)
             max_marks = int(marks_match.group(1)) if marks_match else None
             clean_text = DOTS_RE.sub("", raw_text).strip()
-            clean_text = _OWN_LABEL_RE[marker.level].sub("", clean_text, count=1).strip()
+            label_re = _BRANCH_LABEL_RE if marker.is_branch else _OWN_LABEL_RE[marker.level]
+            clean_text = label_re.sub("", clean_text, count=1).strip()
 
             items.append(
                 StructuredItem(
                     display_label=label,
                     parent_label=parent,
-                    level=marker.level,
+                    level=level,
                     question_text=clean_text,
                     max_marks=max_marks,
                     regions=regions,
@@ -303,7 +396,11 @@ def validate_items(items: list[StructuredItem]) -> list[str]:
     spanning the whole question to attach to."""
     problems: list[str] = []
     for item in items:
-        if item.level == 2 and len(item.question_text) < 3:
+        # A genuinely blank region's only "text" is the leaf's own label,
+        # already stripped out above — a real answer can be this short too
+        # ("(i) P, ....." names a component with a single letter, "(iii) R."
+        # closes the list), so nothing short of empty is worth refusing.
+        if item.level == 2 and not item.question_text:
             problems.append(f"{item.display_label}: no text found in its region")
     labels = [item.display_label for item in items]
     if len(labels) != len(set(labels)):

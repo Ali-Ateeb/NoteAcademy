@@ -355,6 +355,129 @@ class TestParseStructuredMarkScheme:
         assert by_label["5(b)"].content == "a form of an element"
 
 
+class TestStructuredAlternativeQuestions:
+    """CAIE's "EITHER ... OR ..." split (see segment_structured.py's
+    _ALTERNATIVE_LABELS) reads the same word two different ways: a real
+    structural split, or simply offering an alternative wording for one
+    already-open marking point. Only `known_questions` — the question
+    paper's own labels — tells the two apart."""
+
+    def test_whole_question_branch_matches_the_question_papers_own_shape(self):
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "8",
+                    "EITHER",
+                    "(a) steel",
+                    "B1",
+                    "(b) vertical",
+                    "B1",
+                    "OR",
+                    "(a) NOT gate",
+                    "B1",
+                )
+            ],
+            known_questions={"8", "8(either)", "8(either)(a)", "8(either)(b)", "8(or)", "8(or)(a)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() == {"8(either)(a)", "8(either)(b)", "8(or)(a)"}
+        assert by_label["8(or)(a)"].content == "NOT gate"
+
+    def test_mid_part_branch_nests_inside_a_part_the_question_paper_already_has(self):
+        # The table style never restates "(b)" before the split opens — only
+        # the part's own later row does — so the split's position can only
+        # be worked out once that row names it, checked against what the
+        # question paper itself already has.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "8(a)(i)", "7.5 V", "A1",
+                    "8(a)(ii)", "resistance falls", "B1",
+                    "EITHER",
+                    "8(b)", "coil becomes magnetised", "B1",
+                    "OR",
+                    "8(b)", "transistor switches on", "B1",
+                )
+            ],
+            known_questions={
+                "8", "8(a)", "8(a)(i)", "8(a)(ii)", "8(b)",
+                "8(b)(either)", "8(b)(or)",
+            },
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() >= {"8(b)(either)", "8(b)(or)"}
+        assert by_label["8(b)(either)"].content == "coil becomes magnetised"
+        assert by_label["8(b)(or)"].content == "transistor switches on"
+
+    def test_or_resolves_immediately_when_either_never_names_a_part(self):
+        # Both sides are pure prose, no part or sub-part label of their own —
+        # the split must be answering whatever was already open ("(b)"),
+        # worked out the moment "OR" arrives rather than waiting further.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "7(a)", "current = 0.25 A", "C1",
+                    "(b) EITHER",
+                    "capacitor stores charge", "B1",
+                    "OR",
+                    "current into transistor", "B1",
+                )
+            ],
+            known_questions={"7", "7(a)", "7(b)", "7(b)(either)", "7(b)(or)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label["7(b)(either)"].content == "capacitor stores charge"
+        assert by_label["7(b)(or)"].content == "current into transistor"
+
+    def test_glued_root_and_branch_letter_notation(self):
+        # A third way the table style marks the split: folded into the row's
+        # own repeated label, no separator at all — "5E(a)".
+        entries = parse_structured_mark_scheme(
+            [_page("5E(a)", "capacitor stores charge", "B1", "5O(a)", "NOT gate", "B1")],
+            known_questions={"5", "5(either)", "5(either)(a)", "5(or)", "5(or)(a)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label["5(either)(a)"].content == "capacitor stores charge"
+        assert by_label["5(or)(a)"].content == "NOT gate"
+
+    def test_a_glued_scientific_notation_value_is_not_read_as_a_split(self):
+        # "5E10" (5x10^10) has the same shape as a genuine glued branch up to
+        # the letter — the lookahead after it is what tells them apart.
+        entries = parse_structured_mark_scheme(
+            [_page("9", "(a) 5E10", "A1")],
+            known_questions={"9", "9(a)"},
+        )
+        assert entries[0].content == "5E10"
+
+    def test_content_or_is_not_mistaken_for_a_structural_split(self):
+        # An alternative acceptable value for the *same* marking point, not
+        # a structural split — the question paper never split this question,
+        # so "OR" here is read as ordinary content.
+        entries = parse_structured_mark_scheme(
+            [_page("9", "(a) Xe", "131", "54", "OR", "Xe", "131", "54", "B1")],
+            known_questions={"9", "9(a)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() == {"9(a)"}
+        assert "OR" in by_label["9(a)"].content
+
+    def test_a_genuine_fifth_part_does_not_look_like_a_branch(self):
+        # A question's own real "(e)" part must not make this parser treat
+        # an unrelated "OR" anywhere else in the same question as a split.
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "10(c)", "some value OR another value", "B1",
+                    "10(d)(i)", "answer one", "B1",
+                    "10(e)", "final answer", "B1",
+                )
+            ],
+            known_questions={"10", "10(c)", "10(d)", "10(d)(i)", "10(e)"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert by_label.keys() == {"10(c)", "10(d)(i)", "10(e)"}
+
+
 class TestMatchMcqAnswers:
     def test_attaches_answers_by_question_number(self):
         matched, unmatched = match_mcq_answers(

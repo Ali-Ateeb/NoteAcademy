@@ -195,3 +195,119 @@ class TestValidateItems:
         ]
         problems = validate_items(items)
         assert any("duplicate" in problem for problem in problems)
+
+    def test_a_short_but_real_answer_is_not_flagged(self):
+        # "(i) P, ....." names a component with a single letter — real
+        # content, just shorter than a part's own label plus punctuation.
+        from noteacademy_pipeline.segment_structured import StructuredItem
+
+        items = [StructuredItem("1(a)(i)", "1(a)", 2, "P,", None, [])]
+        assert validate_items(items) == []
+
+
+class TestAlternativeQuestions:
+    """CAIE occasionally offers a straight choice between two ways of
+    answering the same question — "EITHER ... OR ..." — rather than making
+    the choice its own question. See _ALTERNATIVE_LABELS in
+    segment_structured.py for the two shapes this takes on a real paper."""
+
+    def build_whole_question_branch(self, tmp_path: Path) -> Path:
+        """EITHER/OR right under the bare question number — each side
+        carries its own full (a)/(b) of parts, sharing nothing."""
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "8")
+        _insert_label(page, PART_X, 130.0, "EITHER")
+        _insert_label(page, PART_X, 160.0, "(a)")
+        _insert_body(page, BODY_X, 160.0, "Name the magnet's metal. [1]")
+        _insert_label(page, PART_X, 200.0, "(b)")
+        _insert_body(page, BODY_X, 200.0, "Explain the reading. [2]")
+        _insert_label(page, PART_X, 240.0, "OR")
+        _insert_label(page, PART_X, 270.0, "(a)")
+        _insert_body(page, BODY_X, 270.0, "Name the gate. [1]")
+        out = tmp_path / "whole-branch.pdf"
+        doc.save(out)
+        doc.close()
+        return out
+
+    def test_whole_question_branch_nests_parts_inside_each_side(self, tmp_path):
+        path = self.build_whole_question_branch(tmp_path)
+        items, problems = segment_structured_paper(path)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == [
+            "8",
+            "8(either)",
+            "8(either)(a)",
+            "8(either)(b)",
+            "8(or)",
+            "8(or)(a)",
+        ]
+
+    def test_whole_question_branch_children_share_no_labels(self, tmp_path):
+        # Each side gets its own "(a)" — real duplicate-part-letter
+        # collision before EITHER/OR support, since both branches reuse the
+        # question paper's own lettering.
+        path = self.build_whole_question_branch(tmp_path)
+        _, problems = segment_structured_paper(path)
+        assert not any("duplicate" in problem for problem in problems)
+
+    def test_mid_part_branch_nests_inside_the_part_it_answers(self, tmp_path):
+        # (a) is shared; only (b) offers a choice, each side a single leaf
+        # with no parts of its own — see the "5054_s19" case in
+        # segment_structured.py's own docstring.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "8")
+        _insert_label(page, PART_X, 130.0, "(a)")
+        _insert_body(page, BODY_X, 130.0, "Calculate the p.d. [2]")
+        _insert_label(page, PART_X, 170.0, "(b)")
+        _insert_body(page, BODY_X, 170.0, "The circuit can be adapted.")
+        _insert_label(page, SUBPART_X, 200.0, "EITHER")
+        _insert_body(page, BODY_X, 200.0, "Describe the relay. [2]")
+        _insert_label(page, SUBPART_X, 240.0, "OR")
+        _insert_body(page, BODY_X, 240.0, "Describe the transistor. [2]")
+        out = tmp_path / "mid-branch.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert labels == ["8", "8(a)", "8(b)", "8(b)(either)", "8(b)(or)"]
+
+    def test_either_merged_with_its_own_opening_text_is_still_a_marker(self, tmp_path):
+        # CAIE sometimes runs the option's own text on from "EITHER" in the
+        # same bold span, the way a question's first part is sometimes set.
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "7")
+        _insert_label(page, PART_X, 130.0, "(a)")
+        _insert_body(page, BODY_X, 130.0, "Calculate the current. [2]")
+        _insert_label(page, SUBPART_X, 160.0, "EITHER  Explain the capacitor. [2]")
+        _insert_label(page, SUBPART_X, 200.0, "OR")
+        _insert_body(page, BODY_X, 200.0, "Explain the transistor. [2]")
+        out = tmp_path / "merged-either.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, problems = segment_structured_paper(out)
+        assert problems == []
+        labels = [item.display_label for item in items]
+        assert "7(a)(either)" in labels
+        assert "7(a)(or)" in labels
+        leaf = next(item for item in items if item.display_label == "7(a)(either)")
+        assert leaf.question_text.startswith("Explain the capacitor")
+
+    def test_or_without_a_preceding_either_is_a_problem(self, tmp_path):
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page, QUESTION_X, 100.0, "1")
+        _insert_label(page, PART_X, 130.0, "OR")
+        _insert_body(page, BODY_X, 130.0, "Explain the thing. [1]")
+        out = tmp_path / "bare-or.pdf"
+        doc.save(out)
+        doc.close()
+
+        _, problems = segment_structured_paper(out)
+        assert any("without a preceding EITHER" in problem for problem in problems)

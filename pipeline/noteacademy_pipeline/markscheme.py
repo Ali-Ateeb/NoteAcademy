@@ -19,26 +19,51 @@ from dataclasses import dataclass, field
 
 from .schemas import MarkSchemeEntry
 
-# Splits '7(a)(ii)' into its parts, tolerating the spacing variations CAIE uses.
-LABEL_PARTS = re.compile(
-    r"(?P<number>\d{1,2})\s*"
-    r"(?:\(\s*(?P<part>[a-z])\s*\))?\s*"
-    r"(?:\(\s*(?P<sub>i{1,3}|iv|v|vi{1,3}|ix|x)\s*\))?",
-    re.IGNORECASE,
-)
+# A leading question number, then every "(xxx)" group after it — a part, a
+# sub-part, or a branch's own "(either)"/"(or)" token (see segment_structured.py's
+# _ALTERNATIVE_LABELS), in whatever order and however many of them the label
+# actually has. Unlike the segmenter's own strict per-level patterns, this
+# only ever runs on a label this pipeline already built for itself — never on
+# raw text off a page — so there is nothing to gain from also validating that
+# a given group looks like a real letter or roman numeral.
+_LABEL_NUMBER_RE = re.compile(r"^(\d{1,2})")
+_LABEL_GROUP_RE = re.compile(r"\(\s*([a-zA-Z]+)\s*\)")
 
 
 def normalise_label(label: str) -> str | None:
     """'7 (a) (II)' and '7(a)(ii)' both become '7(a)(ii)'."""
-    match = LABEL_PARTS.match(label.strip())
-    if not match or not match.group("number"):
+    stripped = label.strip()
+    match = _LABEL_NUMBER_RE.match(stripped)
+    if not match:
         return None
-    out = match.group("number")
-    if match.group("part"):
-        out += f"({match.group('part').lower()})"
-    if match.group("sub"):
-        out += f"({match.group('sub').lower()})"
+    out = match.group(1)
+    for group in _LABEL_GROUP_RE.finditer(stripped[match.end() :]):
+        out += f"({group.group(1).lower()})"
     return out
+
+
+def _branched_roots(labels: set[str]) -> set[str]:
+    """Which question numbers the question paper actually split with an
+    "EITHER"/"OR" — i.e. which of its own labels carry an "(either)" or
+    "(or)" token anywhere in their chain (see segment_structured.py).
+
+    A mark scheme uses the bare words "EITHER" and "OR" for two different
+    things: CAIE's own structural split, and simply offering an alternative
+    wording or value for one already-open marking point ("Xe / 131 / 54 OR
+    Xe / 131 / 54" — the same nuclide written the other way round). Only a
+    question the question paper itself split is ever read as the former;
+    everything else is read as content, exactly as if the two words carried
+    no special meaning at all.
+    """
+    roots: set[str] = set()
+    for label in labels:
+        match = _LABEL_NUMBER_RE.match(label)
+        if match is None:
+            continue
+        groups = {g.group(1).lower() for g in _LABEL_GROUP_RE.finditer(label[match.end() :])}
+        if "either" in groups or "or" in groups:
+            roots.add(match.group(1))
+    return roots
 
 
 @dataclass
@@ -185,6 +210,21 @@ _DOUBLED_OPEN_PAREN_RE = re.compile(r"\(\(([a-z]+)\)")
 # looks like a digit run glued straight onto an element symbol.
 _NUCLIDE_CONTINUATION_RE = re.compile(r"^\d{1,3}[A-Z][a-z]?$")
 
+# A third way the "Question / Answer / Marks" table style marks an
+# "EITHER"/"OR" split (see segment_structured.py's `_ALTERNATIVE_LABELS`):
+# folded into the row's own repeated label instead of a heading row of its
+# own — "5E(a)", "7O(b)(i)" — with no separator from the question number at
+# all. The lookahead requires whitespace, an opening paren, or the end of the
+# line right after the letter, since "the letter E immediately followed by a
+# digit" is also standard-form scientific notation ("5E10" for 5×10^10) —
+# a shape no genuine label ever takes.
+_GLUED_BRANCH_RE = re.compile(r"^(\d{1,2})([EO])(?=[\s(]|$)")
+
+# The same split, printed the other way round: a label carrying the split's
+# own opening word at the *end* of its line instead — "(b) EITHER" — rather
+# than the word opening a line of its own.
+_TRAILING_BRANCH_RE = re.compile(r"^(.*\S)\s+(EITHER|OR)$")
+
 
 def _structured_content_lines(pages_text: list[str]) -> list[str]:
     """Every real line of a structured mark scheme, across every page, with
@@ -272,28 +312,81 @@ def parse_structured_mark_scheme(
     so a line is walked token by token from the left rather than matched as
     one shape, and whatever is left over after the labels found becomes this
     line's own content.
+
+    `path` plays the same role here as it does in segment_structured.py:
+    ["8"], then ["8", "a"], then ["8", "a", "i"] — one entry per label from
+    the question down to whatever is currently open. A standalone "EITHER" or
+    "OR" line (CAIE's own way of offering two ways to answer the same
+    question — see segment_structured.py's `_ALTERNATIVE_LABELS`) opens a
+    branch with the same "either"/"or" token the segmenter assigns, and a part or
+    sub-part token found after it attaches one place deeper than usual for as
+    long as the branch stays open — `branch_index` is the depth it occupies.
+
+    Unlike the segmenter, this cannot always place the branch the moment it
+    opens: the "Question / Answer / Marks" table style never restates a part
+    that was already open before the split (only the older prose style
+    does), so the row right after "EITHER" is sometimes the first thing that
+    names which part the split actually belongs to. Placing the branch is
+    therefore deferred (`pending_branch`) until the next part or sub-part
+    label arrives, and that label's own shape then decides which side of it
+    the branch goes on: `known_questions` doubles here as every label the
+    question paper produced, so "does '8(b)' already exist without the
+    split" is answered by a lookup rather than a guess. If it does, the part
+    was open before the split and the branch nests inside it ('8(b)(either)');
+    if it does not, the split opened before any part did and the part is what
+    nests inside the branch instead ('8(either)(a)') — the same two shapes
+    segment_structured.py produces from the question paper's own geometry.
     """
     entries: list[MarkSchemeEntry] = []
-    question = part = sub = None
+    path: list[str] = []
+    branch_index: int | None = None
+    pending_branch: str | None = None
     content: list[str] = []
     marks = 0
 
     def flush() -> None:
         nonlocal content, marks
-        if question is None or not content:
+        if not path or not content:
             content, marks = [], 0
             return
-        label = question
-        if part:
-            label += f"({part})"
-        if sub:
-            label += f"({sub})"
+        label = path[0] + "".join(f"({p})" for p in path[1:])
         entries.append(
             MarkSchemeEntry(display_label=label, marks=marks or None, content=" ".join(content))
         )
         content, marks = [], 0
 
     content_lines = _structured_content_lines(pages_text)
+
+    # "(b) EITHER" — a part label carrying the split's own opening word on
+    # the same line, the same merged-run habit segment_structured.py sees on
+    # the question paper's side. Split so the part label is read first and
+    # the split opens right after it, same as if they had been printed on
+    # two lines to begin with.
+    trailing_split: list[str] = []
+    for line in content_lines:
+        m = _TRAILING_BRANCH_RE.match(line)
+        if m is None:
+            trailing_split.append(line)
+            continue
+        trailing_split.append(m.group(1))
+        trailing_split.append(m.group(2))
+    content_lines = trailing_split
+
+    branched_roots = _branched_roots(known_questions) if known_questions is not None else None
+    if branched_roots is not None:
+        expanded_lines: list[str] = []
+        for line in content_lines:
+            glued = _GLUED_BRANCH_RE.match(line)
+            if glued is None or glued.group(1) not in branched_roots:
+                expanded_lines.append(line)
+                continue
+            expanded_lines.append(glued.group(1))
+            expanded_lines.append("EITHER" if glued.group(2) == "E" else "OR")
+            rest = line[glued.end() :].strip()
+            if rest:
+                expanded_lines.append(rest)
+        content_lines = expanded_lines
+
     for line_index, raw_line in enumerate(content_lines):
         if not raw_line:
             continue
@@ -306,12 +399,42 @@ def parse_structured_mark_scheme(
             marks += int(code.group(2))
             continue
 
+        if (
+            line in ("EITHER", "OR")
+            and path
+            and (branched_roots is None or path[0] in branched_roots)
+        ):
+            if line == "EITHER":
+                # Where this actually belongs is not yet knowable — see the
+                # docstring — so it waits for the part or sub-part label
+                # that turns up on a later row instead of guessing now.
+                flush()
+                pending_branch = "either"
+                branch_index = None
+                continue
+            if branch_index is None:
+                # Nothing ever named the part or sub-part "EITHER" opened —
+                # its own content is prose only, no further label of its
+                # own — so it must be answering whatever was already open,
+                # attaching right there. The content already gathered since
+                # "EITHER" belongs to that placement, so it is pinned down
+                # *before* flushing rather than after, the same immediate
+                # placement segment_structured.py always uses when nothing
+                # forces a later one.
+                branch_index = len(path)
+                path = path[:branch_index] + [pending_branch or "either"]
+                pending_branch = None
+            flush()
+            path = path[:branch_index] + ["or"]
+            continue
+
         tokens = line.split()
         i = 0
-        new_question: str | None = None
+        new_root: str | None = None
         new_part: str | None = None
         new_sub: str | None = None
 
+        current_root = path[0] if path else None
         if (
             i < len(tokens)
             and _QUESTION_NUMBER_RE.match(tokens[i])
@@ -337,13 +460,13 @@ def parse_structured_mark_scheme(
                 and _NUCLIDE_CONTINUATION_RE.match(next_line)
             )
         ):
-            if question is None or int(tokens[i]) > int(question):
-                new_question = tokens[i]
+            if current_root is None or int(tokens[i]) > int(current_root):
+                new_root = tokens[i]
                 i += 1
-            elif tokens[i] == question:
+            elif tokens[i] == current_root:
                 # The "Question / Answer / Marks" table style (roughly 2017
-                # on) repeats the current question's own number on every one
-                # of its rows — "1(b)(i)", "1(c)" — not only when a new
+                # on) repeats the current question's own root number on every
+                # one of its rows — "1(b)(i)", "1(c)" — not only when a new
                 # question opens, unlike the older prose style where a
                 # question's number appears exactly once. Consumed here
                 # without treating it as a transition, so the part or
@@ -351,6 +474,19 @@ def parse_structured_mark_scheme(
                 # that is neither ascending nor a repeat of the current one
                 # is left as content, the same as before.
                 i += 1
+
+        # Same slots segment_structured.py computes for a real part/sub-part
+        # marker: normally 1 and 2, each pushed one deeper once a branch has
+        # claimed that slot or shallower. Read off the state *before* this
+        # row's own root token (if any) changed it, same as the part/sub
+        # variables this replaced were never reset until after both checks
+        # below ran — harmless, since CAIE's own lettering never opens a
+        # fresh question straight into a part called "(i)", "(v)" or "(x)".
+        part_index = 1 + (1 if branch_index is not None and branch_index <= 1 else 0)
+        sub_index = 2 + (1 if branch_index is not None and branch_index <= 2 else 0)
+        current_part = path[part_index] if len(path) > part_index else None
+        current_sub = path[sub_index] if len(path) > sub_index else None
+
         part_match = _PART_TOKEN_RE.match(tokens[i]) if i < len(tokens) else None
         # "(i)", "(v)" and "(x)" are both a single-letter part shape and a
         # roman numeral, and once a part is already open the roman reading
@@ -360,7 +496,9 @@ def parse_structured_mark_scheme(
         # real part (b) mid-way and misfile everything after it under a
         # part that does not exist. Skipping it here (i left unchanged)
         # lets the sub-part check just below try the same token instead.
-        if part_match and (part_match.group(1).lower() not in ("i", "v", "x") or part is None):
+        if part_match and (
+            part_match.group(1).lower() not in ("i", "v", "x") or current_part is None
+        ):
             candidate = part_match.group(1).lower()
             # Same table-row repetition as the question number, one level
             # down: "(b)" reprints on every row of part (b), including the
@@ -369,26 +507,46 @@ def parse_structured_mark_scheme(
             # after it still gets read, but only counted as *opening* (b)
             # the first time — repeating it must not re-flush and reopen
             # the entry that same row's own content belongs to.
-            if candidate != part:
+            if candidate != current_part:
                 new_part = candidate
             i += 1
         if i < len(tokens) and (m := _SUBPART_TOKEN_RE.match(tokens[i])):
             candidate = m.group(1).lower()
-            if candidate != sub:
+            if candidate != current_sub:
                 new_sub = candidate
             i += 1
 
         rest = " ".join(tokens[i:])
         consumed = i > 0
 
-        if new_question or new_part or new_sub:
+        if new_root or new_part or new_sub:
             flush()
-            if new_question:
-                question, part, sub = new_question, None, None
+            if new_root:
+                path = [new_root]
+                branch_index = None
+                pending_branch = None
             if new_part:
-                part, sub = new_part, None
+                # A part label is the first thing that can name where a split
+                # pending since the last "EITHER"/"OR" actually belongs — see
+                # the docstring. Once placed it behaves exactly like a branch
+                # the segmenter placed immediately: unresolved (a sub-part
+                # naming it first instead, not seen on any real paper yet) is
+                # left for a future paper to force a fix.
+                if pending_branch is not None and branch_index is None:
+                    root = path[0] if path else new_root
+                    if known_questions is not None and f"{root}({new_part})" in known_questions:
+                        path = path[:1] + [new_part, pending_branch]
+                        branch_index = 2
+                    else:
+                        path = path[:1] + [pending_branch, new_part]
+                        branch_index = 1
+                    pending_branch = None
+                else:
+                    idx = 1 + (1 if branch_index is not None and branch_index <= 1 else 0)
+                    path = path[:idx] + [new_part]
             if new_sub:
-                sub = new_sub
+                idx = 2 + (1 if branch_index is not None and branch_index <= 2 else 0)
+                path = path[:idx] + [new_sub]
             if rest:
                 content.append(rest)
         elif consumed:
