@@ -88,7 +88,13 @@ check("mark scheme revealed only after submitting", (await page.getByText("Mark 
 check("examiner report revealed", (await page.getByText("Examiner report").count()) > 0);
 
 // ---- dashboard ----
-await page.goto(`${BASE}/dashboard`, { waitUntil: "networkidle" });
+// The per-subject page, not the overview: "Questions attempted" and the
+// worst-first topic list both live on /dashboard/[subject]
+// (web/src/components/Dashboard.tsx) since the dashboard split into an
+// overview + per-subject page in 5453583. /dashboard itself
+// (DashboardOverview.tsx) only shows "X of Y correct so far" per subject
+// card, which this test never asserted on.
+await page.goto(`${BASE}/dashboard/physics-5054`, { waitUntil: "networkidle" });
 await page.waitForSelector("text=Questions attempted");
 const accuracies = await page.locator("a[href^='/topics/'] span.tabular-nums").allInnerTexts();
 check(
@@ -141,12 +147,23 @@ check(
   // confidence — which varies in these fixtures and is 1.0 on every real
   // geometrically segmented question, so the check passed here while the live
   // queue showed "100% confident" on all 1238 rows and sorted by a constant.
+  //
+  // It used to also assert "topic 55%" was on screen, expecting fixture item
+  // r3 to sort first. ca94c57 ("Extend the review queue to structured (Paper
+  // 2) questions") added r6, a structured question with no proposed topics at
+  // all — confidence 0, which legitimately sorts ahead of r3's 55% — so the
+  // card actually on screen first is r6, rendered "untagged" rather than a
+  // percentage (see the proposedTopics.length check in ReviewQueue.tsx).
   "queue is ordered worst-topic-confidence first",
-  (await page.getByText("topic 55%").count()) > 0,
+  (await page.getByText("untagged").count()) > 0,
 );
 check(
+  // Same r6-vs-r3 mismatch: r6's only flag is unmatched_mark_scheme, whose
+  // label is "No mark scheme matched" (REVIEW_FLAG_LABELS in
+  // lib/data/types.ts) — "Label not found in the page text" is
+  // text_layer_mismatch's label, which belongs to r3, not the card shown.
   "the reason it was held back is shown",
-  (await page.getByText("Label not found in the page text").count()) > 0,
+  (await page.getByText("No mark scheme matched").count()) > 0,
 );
 
 const pendingBefore = parseInt(
