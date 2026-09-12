@@ -4,7 +4,8 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { currentAnswers } from "@/lib/attempts";
+import { useAuth } from "@/components/AuthProvider";
+import { currentAnswers, fromRemoteCurrentAnswers, type RemoteCurrentAnswer } from "@/lib/attempts";
 
 interface SubjectSummary {
   slug: string;
@@ -23,26 +24,59 @@ interface SubjectCard extends SubjectSummary {
 }
 
 export function DashboardOverview({ subjects }: Props) {
-  // Attempts live in localStorage, unavailable during server render — read
-  // them in an effect so the markup matches on both passes.
+  // Signed out, attempts live in localStorage, unavailable during server
+  // render — read in an effect either way so the markup matches on both
+  // passes, and so signed-in state (also unknown at render time) has settled
+  // before deciding which source to read.
   const [cards, setCards] = useState<SubjectCard[] | null>(null);
+  const { user, supabase } = useAuth();
 
   useEffect(() => {
-    const answers = currentAnswers();
-    setCards(
-      subjects.map((subject) => {
-        const ids = new Set(subject.questionIds);
-        let attempted = 0;
-        let correct = 0;
-        for (const [questionId, attempt] of answers) {
-          if (!ids.has(questionId)) continue;
-          attempted += 1;
-          if (attempt.isCorrect) correct += 1;
+    if (user === undefined) return; // still resolving the session
+
+    let cancelled = false;
+
+    async function load() {
+      const answers: Map<string, { isCorrect: boolean }> = new Map();
+
+      if (user && supabase) {
+        // Cross-device history: current_answers is already scoped to this
+        // user by RLS (see 0024_secure_current_answers.sql), so no extra
+        // filter is needed here.
+        const { data } = await supabase
+          .from("current_answers")
+          .select("question_id, is_correct, time_spent_ms")
+          .returns<RemoteCurrentAnswer[]>();
+        for (const row of fromRemoteCurrentAnswers(data ?? [])) {
+          answers.set(row.questionId, { isCorrect: row.isCorrect });
         }
-        return { ...subject, attempted, correct };
-      }),
-    );
-  }, [subjects]);
+      } else {
+        for (const [questionId, attempt] of currentAnswers()) {
+          answers.set(questionId, { isCorrect: attempt.isCorrect });
+        }
+      }
+
+      if (cancelled) return;
+      setCards(
+        subjects.map((subject) => {
+          const ids = new Set(subject.questionIds);
+          let attempted = 0;
+          let correct = 0;
+          for (const [questionId, attempt] of answers) {
+            if (!ids.has(questionId)) continue;
+            attempted += 1;
+            if (attempt.isCorrect) correct += 1;
+          }
+          return { ...subject, attempted, correct };
+        }),
+      );
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [subjects, user, supabase]);
 
   if (cards === null) {
     return <div className="py-16 text-center text-ink-3">Loading…</div>;

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AccountMenu } from "@/components/AccountMenu";
+import { AuthProvider } from "@/components/AuthProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
 
@@ -28,7 +30,8 @@ function Header() {
             Dashboard
           </Link>
         </nav>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-4">
+          <AccountMenu />
           <ThemeToggle />
           <Link
             href="/subjects"
@@ -81,9 +84,11 @@ export default function RootLayout({
         />
       </head>
       <body suppressHydrationWarning>
-        <Header />
-        <main>{children}</main>
-        <Footer />
+        <AuthProvider>
+          <Header />
+          <main>{children}</main>
+          <Footer />
+        </AuthProvider>
       </body>
     </html>
   );

@@ -4,7 +4,15 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { formatDuration, topicStats, type TopicStat } from "@/lib/attempts";
+import { useAuth } from "@/components/AuthProvider";
+import {
+  computeTopicStats,
+  formatDuration,
+  fromRemoteCurrentAnswers,
+  topicStats,
+  type RemoteCurrentAnswer,
+  type TopicStat,
+} from "@/lib/attempts";
 import type { Topic } from "@/lib/data/types";
 
 interface Props {
@@ -14,9 +22,11 @@ interface Props {
 }
 
 export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
-  // Attempts live in localStorage, which is unavailable during server render.
-  // Reading them in an effect keeps the markup identical on both passes.
+  // Signed out, attempts live in localStorage, unavailable during server
+  // render; signed in, they live behind a database round trip. Either way
+  // this settles in an effect, so the markup matches on both passes.
   const [stats, setStats] = useState<Map<string, TopicStat> | null>(null);
+  const { user, supabase } = useAuth();
 
   const topicsByQuestion = useMemo(
     () => new Map(questionTopics.map((q) => [q.id, q.topicCodes])),
@@ -24,8 +34,26 @@ export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
   );
 
   useEffect(() => {
-    setStats(topicStats(topicsByQuestion));
-  }, [topicsByQuestion]);
+    if (user === undefined) return; // still resolving the session
+
+    if (!user || !supabase) {
+      setStats(topicStats(topicsByQuestion));
+      return;
+    }
+
+    let cancelled = false;
+    supabase
+      .from("current_answers")
+      .select("question_id, is_correct, time_spent_ms")
+      .returns<RemoteCurrentAnswer[]>()
+      .then(({ data }) => {
+        if (cancelled) return;
+        setStats(computeTopicStats(fromRemoteCurrentAnswers(data ?? []), topicsByQuestion));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [topicsByQuestion, user, supabase]);
 
   if (stats === null) {
     return <div className="py-16 text-center text-ink-3">Loading…</div>;

@@ -4,12 +4,14 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import {
   appendStructuredAttempts,
   clearStructuredSession,
   formatDuration,
   loadStructuredSession,
   saveStructuredSession,
+  syncStructuredAttemptsToServer,
   type StructuredSessionState,
 } from "@/lib/attempts";
 import type { StructuredPart, StructuredQuestion } from "@/lib/data/types";
@@ -41,6 +43,7 @@ interface Props {
 export function StructuredArena({ sessionKey, title, questions, backHref, backLabel = "Leave practice" }: Props) {
   const [state, setState] = useState<StructuredSessionState | null>(null);
   const [resumed, setResumed] = useState(false);
+  const { user, supabase } = useAuth();
   const questionEnteredAt = useRef<number>(Date.now());
   const timeSpent = useRef<Map<string, number>>(new Map());
 
@@ -125,25 +128,27 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
       const leaving = questions[prev.currentIndex];
       if (leaving) chargeTime(leaving.id);
 
-      appendStructuredAttempts(
-        questions
-          .filter((q) => prev.marks[q.id])
-          .map((q) => {
-            const given = prev.marks[q.id] ?? {};
-            const parts = markable(q).filter((p) => given[p.displayLabel] != null);
-            return {
-              questionId: q.id,
-              paperSlug: q.paperSlug,
-              marksAwarded: parts.reduce((sum, p) => sum + (given[p.displayLabel] ?? 0), 0),
-              maxMarks: parts.reduce((sum, p) => sum + (p.maxMarks ?? 0), 0),
-              timeSpentMs: timeSpent.current.get(q.id) ?? 0,
-              createdAt: Date.now(),
-            };
-          }),
-      );
+      const records = questions
+        .filter((q) => prev.marks[q.id])
+        .map((q) => {
+          const given = prev.marks[q.id] ?? {};
+          const parts = markable(q).filter((p) => given[p.displayLabel] != null);
+          return {
+            questionId: q.id,
+            paperSlug: q.paperSlug,
+            marksAwarded: parts.reduce((sum, p) => sum + (given[p.displayLabel] ?? 0), 0),
+            maxMarks: parts.reduce((sum, p) => sum + (p.maxMarks ?? 0), 0),
+            timeSpentMs: timeSpent.current.get(q.id) ?? 0,
+            createdAt: Date.now(),
+          };
+        });
+
+      appendStructuredAttempts(records);
+      if (user && supabase) void syncStructuredAttemptsToServer(supabase, user.id, records);
+
       return { ...prev, submitted: true };
     });
-  }, [chargeTime, questions, markable]);
+  }, [chargeTime, questions, markable, user, supabase]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {

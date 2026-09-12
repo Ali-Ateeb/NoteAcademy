@@ -4,6 +4,7 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import {
   appendAttempts,
   clearSession,
@@ -11,6 +12,7 @@ import {
   formatDuration,
   loadSession,
   saveSession,
+  syncAttemptsToServer,
   type SessionState,
 } from "@/lib/attempts";
 import type { McqOption, McqQuestion } from "@/lib/data/types";
@@ -46,6 +48,7 @@ export function McqArena({
 }: Props) {
   const [state, setState] = useState<SessionState | null>(null);
   const [resumed, setResumed] = useState(false);
+  const { user, supabase } = useAuth();
   const questionEnteredAt = useRef<number>(Date.now());
   /** Time accumulated per question across visits — a student who returns to
    *  question 3 three times has spent all of it on question 3. */
@@ -147,21 +150,25 @@ export function McqArena({
       const leaving = questions[prev.currentIndex];
       if (leaving) chargeTime(leaving.id);
 
-      appendAttempts(
-        questions
-          .filter((question) => prev.answers[question.id])
-          .map((question) => ({
-            questionId: question.id,
-            paperSlug: question.paperSlug,
-            selectedOption: prev.answers[question.id] as string,
-            isCorrect: prev.answers[question.id] === question.correctOption,
-            timeSpentMs: timeSpent.current.get(question.id) ?? 0,
-            createdAt: Date.now(),
-          })),
-      );
+      const records = questions
+        .filter((question) => prev.answers[question.id])
+        .map((question) => ({
+          questionId: question.id,
+          paperSlug: question.paperSlug,
+          selectedOption: prev.answers[question.id] as string,
+          isCorrect: prev.answers[question.id] === question.correctOption,
+          timeSpentMs: timeSpent.current.get(question.id) ?? 0,
+          createdAt: Date.now(),
+        }));
+
+      appendAttempts(records);
+      // Local storage first, always — the mirror below is best-effort and
+      // must never be what the arena's own UI depends on to show a result.
+      if (user && supabase) void syncAttemptsToServer(supabase, user.id, records);
+
       return { ...prev, submitted: true };
     });
-  }, [chargeTime, questions]);
+  }, [chargeTime, questions, user, supabase]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {

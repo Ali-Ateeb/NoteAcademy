@@ -1,16 +1,26 @@
 /**
  * Attempt persistence.
  *
- * localStorage for now, so the arena is usable with no auth and no backend. The
- * shape mirrors the `attempts` and `practice_sessions` tables exactly, which is
- * what makes the switch to Postgres a change of transport rather than a rewrite
- * — and what lets a signed-out student's local history be migrated into their
- * account on first login.
+ * localStorage always, so the arena is usable with no auth and no backend, and
+ * stays usable offline even once signed in. The shape mirrors the `attempts`
+ * and `practice_sessions` tables exactly, which is what makes writing to
+ * Postgres a second transport rather than a rewrite — and what lets a
+ * signed-out student's local history be migrated into their account on first
+ * login (see `migrateLocalAttempts` below).
  *
  * The log is append-only here for the same reason it is in the database: a
  * changed answer is a new entry, and "their answer" is the last one. Keeping the
  * history is what makes "you got this wrong the first two times" possible.
+ *
+ * Signed in, every submit writes both places: local storage first — instant,
+ * and the thing the arena's own UI reads back — then a best-effort mirror to
+ * `attempts` (see `syncAttemptsToServer`/`syncStructuredAttemptsToServer`).
+ * The dashboard is the one thing that actually switches source when signed
+ * in, reading `current_answers` instead of the local log, which is what
+ * makes progress visible on a second device.
  */
+
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface AttemptRecord {
   questionId: string;
@@ -108,13 +118,17 @@ export interface TopicStat {
   medianMs: number;
 }
 
-/** Per-topic accuracy from the local log — the weak-area heatmap. */
-export function topicStats(
+/** Per-topic accuracy from an already-loaded set of current answers. Pulled
+ *  out of `topicStats` so the identical aggregation can run over either the
+ *  local log or a `current_answers` row set from the server — the two differ
+ *  only in where the attempts came from, never in how they are summarised. */
+export function computeTopicStats(
+  attempts: Iterable<Pick<AttemptRecord, "questionId" | "isCorrect" | "timeSpentMs">>,
   topicsByQuestion: Map<string, string[]>,
 ): Map<string, TopicStat> {
   const buckets = new Map<string, { correct: number; times: number[] }>();
 
-  for (const attempt of currentAnswers().values()) {
+  for (const attempt of attempts) {
     for (const code of topicsByQuestion.get(attempt.questionId) ?? []) {
       const bucket = buckets.get(code) ?? { correct: 0, times: [] };
       if (attempt.isCorrect) bucket.correct += 1;
@@ -140,6 +154,14 @@ export function topicStats(
     });
   }
   return stats;
+}
+
+/** Per-topic accuracy from the local log — the weak-area heatmap when signed
+ *  out. */
+export function topicStats(
+  topicsByQuestion: Map<string, string[]>,
+): Map<string, TopicStat> {
+  return computeTopicStats(currentAnswers().values(), topicsByQuestion);
 }
 
 /* ---------------------------------------------------------------------------
@@ -210,6 +232,124 @@ export function clearStructuredSession(sessionKey: string): void {
   } catch {
     // Nothing to do; a stale session is harmless.
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Server-side mirror
+   --------------------------------------------------------------------------- */
+
+/** One row per (browser, account): set the moment this device's local history
+ *  has been pushed to the server, so a second sign-in on the same device does
+ *  not insert the same attempts again. Never cleared — the point is exactly
+ *  that it stays true forever once migration has happened once. */
+function migratedKey(userId: string): string {
+  return `na-migrated:${userId}`;
+}
+
+function hasMigrated(userId: string): boolean {
+  try {
+    return localStorage.getItem(migratedKey(userId)) === "true";
+  } catch {
+    // Can't tell — assume yes rather than risk inserting the same history on
+    // every sign-in for a browser that cannot remember it already did.
+    return true;
+  }
+}
+
+function markMigrated(userId: string): void {
+  try {
+    localStorage.setItem(migratedKey(userId), "true");
+  } catch {
+    // Storage is blocked; migration will simply be retried next sign-in.
+  }
+}
+
+/** Mirrors a batch of mcq attempts to `attempts`. Called after the local
+ *  append, never instead of it — a failed write here costs a student nothing
+ *  they did not already have on this device. */
+export async function syncAttemptsToServer(
+  supabase: SupabaseClient,
+  userId: string,
+  records: readonly Pick<AttemptRecord, "questionId" | "selectedOption" | "isCorrect" | "timeSpentMs">[],
+): Promise<void> {
+  if (records.length === 0) return;
+  await supabase.from("attempts").insert(
+    records.map((r) => ({
+      user_id: userId,
+      question_id: r.questionId,
+      selected_option: r.selectedOption,
+      is_correct: r.isCorrect,
+      time_spent_ms: r.timeSpentMs,
+    })),
+  );
+}
+
+/** Same idea for structured self-marks: `marksAwarded / maxMarks` is the
+ *  0–1 self_marked_score column asks for. A question with no markable parts
+ *  (maxMarks 0) has nothing to record — there is no meaningful fraction of
+ *  zero. */
+export async function syncStructuredAttemptsToServer(
+  supabase: SupabaseClient,
+  userId: string,
+  records: readonly Pick<StructuredAttemptRecord, "questionId" | "marksAwarded" | "maxMarks" | "timeSpentMs">[],
+): Promise<void> {
+  const markable = records.filter((r) => r.maxMarks > 0);
+  if (markable.length === 0) return;
+  await supabase.from("attempts").insert(
+    markable.map((r) => ({
+      user_id: userId,
+      question_id: r.questionId,
+      self_marked_score: r.marksAwarded / r.maxMarks,
+      time_spent_ms: r.timeSpentMs,
+    })),
+  );
+}
+
+/** Runs once per (browser, account), triggered from `AuthProvider` on
+ *  sign-in: pushes whatever this device recorded while signed out into the
+ *  student's real history, rather than a new account starting from zero and
+ *  quietly discarding practice that already happened. Left unmigrated on
+ *  failure so the next sign-in tries again instead of losing the history for
+ *  good. */
+export async function migrateLocalAttempts(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  if (hasMigrated(userId)) return;
+
+  try {
+    await syncAttemptsToServer(supabase, userId, loadAttempts());
+    await syncStructuredAttemptsToServer(supabase, userId, loadStructuredAttempts());
+    markMigrated(userId);
+  } catch {
+    // Network error or an RLS/schema mismatch — either way, silent failure
+    // here is the right default: it must never block the sign-in itself.
+  }
+}
+
+/** The shape of a row read back from the `current_answers` view — the
+ *  server-side counterpart to `currentAnswers()` above. */
+export interface RemoteCurrentAnswer {
+  question_id: string;
+  is_correct: boolean | null;
+  time_spent_ms: number | null;
+}
+
+/** Adapts `current_answers` rows into the shape `computeTopicStats` expects.
+ *  Structured self-marks carry no `is_correct` (there is nothing to compare
+ *  against) and are excluded here, matching `topicStats()`'s own local
+ *  behaviour today — this is a transport change, not a change in what the
+ *  dashboard measures. */
+export function fromRemoteCurrentAnswers(
+  rows: readonly RemoteCurrentAnswer[],
+): Pick<AttemptRecord, "questionId" | "isCorrect" | "timeSpentMs">[] {
+  return rows
+    .filter((row): row is RemoteCurrentAnswer & { is_correct: boolean } => row.is_correct !== null)
+    .map((row) => ({
+      questionId: row.question_id,
+      isCorrect: row.is_correct,
+      timeSpentMs: row.time_spent_ms ?? 0,
+    }));
 }
 
 export function formatDuration(ms: number): string {
