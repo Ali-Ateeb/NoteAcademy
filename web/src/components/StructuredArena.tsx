@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { SolutionButton } from "@/components/SolutionButton";
 import {
   appendStructuredAttempts,
   clearStructuredSession,
@@ -577,6 +578,8 @@ function StructuredResults({
                       ))}
                     </div>
                   )}
+
+                  <SolutionButton questionId={question.id} />
                 </div>
               </div>
             </div>
