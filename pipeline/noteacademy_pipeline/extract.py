@@ -17,7 +17,8 @@ from __future__ import annotations
 import logging
 import re
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from .config import settings
 from .render import RenderedPage
@@ -25,9 +26,11 @@ from .schemas import ExtractedPage, MarkSchemeGrid
 
 log = logging.getLogger(__name__)
 
-# Stable prefix, cached across every page of every paper in a run. It is the bulk
-# of the input tokens, so caching it is the difference between a affordable
-# backfill and an expensive one.
+# No explicit prompt caching here: Gemini's is a separate CachedContent object
+# with its own minimum-token threshold and TTL, not a per-block flag like the
+# provider this replaced, and the system prompt below is well under that
+# threshold. Revisit if a large shared prefix (e.g. a syllabus block) ever
+# needs one.
 EXTRACTION_SYSTEM = """You extract exam questions from Cambridge (CAIE) past papers.
 
 You are given one rendered page and, when available, the text layer beneath it.
@@ -59,59 +62,48 @@ incorrect answer key is worse than a missing one, because students trust it.
 LABEL_RE = re.compile(r"^\s*(\d{1,2})\s*(\([a-z]\))?\s*(\((?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\))?")
 
 
-def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
+def _client() -> genai.Client:
+    return genai.Client(api_key=settings.google_api_key or None)
 
 
-def extract_page(page: RenderedPage, *, client: anthropic.Anthropic | None = None) -> ExtractedPage:
+def extract_page(page: RenderedPage, *, client: genai.Client | None = None) -> ExtractedPage:
     """Extract the questions on a single rendered page."""
     client = client or _client()
 
-    content: list[dict] = [page.as_image_block()]
+    content: list = [page.as_image_part()]
     if page.has_text_layer:
         content.append(
-            {
-                "type": "text",
-                "text": (
-                    f"Text layer for page {page.page_number} "
-                    f"(page is {page.width_pt:.0f}x{page.height_pt:.0f} pt):\n\n"
-                    f"{page.text}"
-                ),
-            }
+            f"Text layer for page {page.page_number} "
+            f"(page is {page.width_pt:.0f}x{page.height_pt:.0f} pt):\n\n"
+            f"{page.text}"
         )
     else:
         content.append(
-            {
-                "type": "text",
-                "text": (
-                    f"Page {page.page_number} has no text layer (scanned). "
-                    f"Page is {page.width_pt:.0f}x{page.height_pt:.0f} pt."
-                ),
-            }
+            f"Page {page.page_number} has no text layer (scanned). "
+            f"Page is {page.width_pt:.0f}x{page.height_pt:.0f} pt."
         )
 
-    response = client.messages.parse(
+    response = client.models.generate_content(
         model=settings.extraction_model,
-        max_tokens=16000,
-        system=[
-            {
-                "type": "text",
-                "text": EXTRACTION_SYSTEM,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        thinking={"type": "adaptive"},
-        messages=[{"role": "user", "content": content}],
-        output_format=ExtractedPage,
+        contents=content,
+        config=types.GenerateContentConfig(
+            system_instruction=EXTRACTION_SYSTEM,
+            response_mime_type="application/json",
+            response_schema=ExtractedPage,
+            max_output_tokens=16000,
+            # This is the step the "wrong place to economise" comment on
+            # extraction_model is about — full thinking, not the default.
+            thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
+        ),
     )
 
-    result = response.parsed_output
+    result = response.parsed
     result.page_number = page.page_number       # never trust the model for this
     return result
 
 
 def extract_mcq_answers(
-    pages: list[RenderedPage], *, client: anthropic.Anthropic | None = None
+    pages: list[RenderedPage], *, client: genai.Client | None = None
 ) -> dict[str, str]:
     """Read the answer grid out of an MCQ mark scheme.
 
@@ -123,25 +115,17 @@ def extract_mcq_answers(
     answers: dict[str, str] = {}
 
     for page in pages:
-        response = client.messages.parse(
+        response = client.models.generate_content(
             model=settings.extraction_model,
-            max_tokens=8000,
-            system=[
-                {"type": "text", "text": MCQ_MS_SYSTEM, "cache_control": {"type": "ephemeral"}}
-            ],
-            thinking={"type": "adaptive"},
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        page.as_image_block(),
-                        {"type": "text", "text": page.text if page.has_text_layer else ""},
-                    ],
-                }
-            ],
-            output_format=MarkSchemeGrid,
+            contents=[page.as_image_part(), page.text if page.has_text_layer else ""],
+            config=types.GenerateContentConfig(
+                system_instruction=MCQ_MS_SYSTEM,
+                response_mime_type="application/json",
+                response_schema=MarkSchemeGrid,
+                max_output_tokens=8000,
+            ),
         )
-        for number, option in response.parsed_output.answers.items():
+        for number, option in response.parsed.answers.items():
             key = number.strip()
             if key in answers and answers[key] != option:
                 log.warning(

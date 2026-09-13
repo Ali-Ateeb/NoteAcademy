@@ -54,12 +54,12 @@ def test_ignores_comments_and_blank_lines(tmp_path, monkeypatch):
 
 
 def test_strips_quotes_around_values(tmp_path, monkeypatch):
-    write_env(tmp_path, 'ANTHROPIC_API_KEY="sk-quoted"\n')
+    write_env(tmp_path, 'GOOGLE_API_KEY="sk-quoted"\n')
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     _load_dotenv()
-    assert Settings.from_env().anthropic_api_key == "sk-quoted"
+    assert Settings.from_env().google_api_key == "sk-quoted"
 
 
 def test_missing_file_is_not_an_error(tmp_path, monkeypatch):

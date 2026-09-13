@@ -19,7 +19,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from .config import settings
 from .schemas import TopicTagging
@@ -65,7 +66,7 @@ def tag_question(
     topics: list[TopicOption],
     *,
     mark_scheme: str | None = None,
-    client: anthropic.Anthropic | None = None,
+    client: genai.Client | None = None,
 ) -> TopicTagging:
     """Assign a question to syllabus topics.
 
@@ -74,32 +75,33 @@ def tag_question(
     question that reads like recall but whose mark scheme awards marks for a
     derivation belongs under the derivation's topic.
     """
-    client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
+    client = client or genai.Client(api_key=settings.google_api_key or None)
 
-    # The syllabus is identical for every question in a subject, so it sits in
-    # the cached prefix and is billed once per subject rather than once per
-    # question. Across a full backfill that is the majority of the input tokens.
-    syllabus_block = {
-        "type": "text",
-        "text": f"Syllabus topics:\n\n{render_syllabus(topics)}",
-        "cache_control": {"type": "ephemeral"},
-    }
-
-    question_block = {"type": "text", "text": f"Question:\n\n{question_text}"}
-    blocks = [syllabus_block, question_block]
+    # The syllabus is identical for every question in a subject. Unlike the
+    # provider this replaced, Gemini prompt caching is an explicit CachedContent
+    # object with its own minimum-token threshold and TTL rather than a per-block
+    # flag — worth adding here if a full-subject backfill's cost ever demands it,
+    # since this block really is repeated once per question in a subject.
+    blocks = [
+        f"Syllabus topics:\n\n{render_syllabus(topics)}",
+        f"Question:\n\n{question_text}",
+    ]
     if mark_scheme:
-        blocks.append({"type": "text", "text": f"Mark scheme:\n\n{mark_scheme}"})
+        blocks.append(f"Mark scheme:\n\n{mark_scheme}")
 
-    response = client.messages.parse(
+    response = client.models.generate_content(
         model=settings.extraction_model,
-        max_tokens=4000,
-        system=TAGGING_SYSTEM,
-        thinking={"type": "adaptive"},
-        messages=[{"role": "user", "content": blocks}],
-        output_format=TopicTagging,
+        contents=blocks,
+        config=types.GenerateContentConfig(
+            system_instruction=TAGGING_SYSTEM,
+            response_mime_type="application/json",
+            response_schema=TopicTagging,
+            max_output_tokens=4000,
+            thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
+        ),
     )
 
-    tagging = response.parsed_output
+    tagging = response.parsed
     valid = {topic.code for topic in topics}
 
     if tagging.primary.topic_code not in valid:

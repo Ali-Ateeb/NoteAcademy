@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Past-paper ingestion: render, extract, segment, match, tag, embed, load."
 requires-python = ">=3.11"
 dependencies = [
-  "anthropic>=0.40",
+  "google-genai>=1.0",
   "pymupdf>=1.24",
   "pillow>=10",
   "pydantic>=2.7",

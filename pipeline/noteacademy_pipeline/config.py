@@ -43,7 +43,7 @@ _load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     database_url: str = ""
-    anthropic_api_key: str = ""
+    google_api_key: str = ""
     voyage_api_key: str = ""
 
     # Supabase Storage. The service role key is the only credential needed, and
@@ -57,7 +57,12 @@ class Settings:
     # written to the database once and then silently degrades every feature
     # built on top of it, so this is the wrong place to economise — the saving
     # is a few hundred dollars, the cost is a question bank nobody trusts.
-    extraction_model: str = "claude-opus-5"
+    #
+    # gemini-3-pro-preview is Google's evergreen alias for their current
+    # top-tier reasoning+vision model — it moved to point at 3.1 without
+    # anyone here changing this string, which is the point of using it over a
+    # pinned version.
+    extraction_model: str = "gemini-3-pro-preview"
     embedding_model: str = "voyage-3"
 
     # 200 DPI is the floor at which CAIE's smaller subscripts and circuit
@@ -74,7 +79,7 @@ class Settings:
     def from_env(cls) -> Settings:
         return cls(
             database_url=os.environ.get("DATABASE_URL", ""),
-            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            google_api_key=os.environ.get("GOOGLE_API_KEY", ""),
             voyage_api_key=os.environ.get("VOYAGE_API_KEY", ""),
             supabase_url=os.environ.get("SUPABASE_URL", ""),
             supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),

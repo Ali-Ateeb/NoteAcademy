@@ -15,14 +15,16 @@
  * something already decided the day's limit for them.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
 import { serverSupabase } from "@/lib/supabase/serverClient";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SOLVER_MODEL = process.env.SOLVER_MODEL || "claude-opus-5";
+// Google's evergreen alias for its current top-tier reasoning model — see the
+// same choice and reasoning on extraction_model in pipeline/config.py.
+const SOLVER_MODEL = process.env.SOLVER_MODEL || "gemini-3-pro-preview";
 
 // Free-tier ceiling until a real plan_tier lookup replaces the flat number.
 // Named here rather than buried in the call below so it is the one line to
@@ -87,9 +89,9 @@ function buildPrompt(question: QuestionRow, options: OptionRow[]): string {
 }
 
 export async function POST(request: Request) {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY ?? "";
+  const googleApiKey = process.env.GOOGLE_API_KEY ?? "";
   const service = serviceClient();
-  if (!anthropicKey || !service) {
+  if (!googleApiKey || !service) {
     return NextResponse.json(
       { error: "The solver isn't configured for this app instance." },
       { status: 503 },
@@ -155,18 +157,14 @@ export async function POST(request: Request) {
     options = (data as OptionRow[] | null) ?? [];
   }
 
-  const anthropic = new Anthropic({ apiKey: anthropicKey });
-  const response = await anthropic.messages.create({
+  const genai = new GoogleGenAI({ apiKey: googleApiKey });
+  const response = await genai.models.generateContent({
     model: SOLVER_MODEL,
-    max_tokens: 2000,
-    messages: [{ role: "user", content: buildPrompt(question, options) }],
+    contents: buildPrompt(question, options),
+    config: { maxOutputTokens: 2000 },
   });
 
-  const solution = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
+  const solution = (response.text ?? "").trim();
 
   if (!solution) {
     return NextResponse.json({ error: "The solver returned nothing usable." }, { status: 502 });

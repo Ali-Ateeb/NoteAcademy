@@ -9,11 +9,11 @@ to vision alone with a flag set.
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
+from google.genai import types
 
 from .config import settings
 
@@ -30,13 +30,9 @@ class RenderedPage:
     def has_text_layer(self) -> bool:
         return len(self.text.strip()) > 40
 
-    def as_image_block(self) -> dict:
-        """The page as an API image content block."""
-        data = base64.standard_b64encode(self.png_path.read_bytes()).decode("utf-8")
-        return {
-            "type": "image",
-            "source": {"type": "base64", "media_type": "image/png", "data": data},
-        }
+    def as_image_part(self) -> types.Part:
+        """The page as a Gemini API content part."""
+        return types.Part.from_bytes(data=self.png_path.read_bytes(), mime_type="image/png")
 
 
 def render_pdf(pdf_path: Path, out_dir: Path, dpi: int | None = None) -> list[RenderedPage]:
