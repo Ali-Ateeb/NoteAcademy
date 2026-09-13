@@ -309,6 +309,61 @@ def load_mcq(
     )
 
 
+@app.command(name="mcq-options")
+def mcq_options(
+    qp_pdf: Path = typer.Argument(..., exists=True, help="Multiple-choice question paper, already loaded."),
+    dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
+) -> None:
+    """Backfill question and option text for an already-loaded MCQ paper.
+
+    `load-mcq` files a question from geometry alone — a crop, a number, an
+    answer — because CAIE's reading order is scrambled and some options are
+    diagrams. This calls the vision pass on the same paper and writes what it
+    finds onto the existing rows. Costs one API call per page; run it on a
+    paper or two first and read the report before backfilling the corpus.
+    """
+    from .load import connect
+    from .mcq_options import backfill_paper_options
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        try:
+            report = backfill_paper_options(conn, qp_pdf, dry_run=dry_run)
+        except LookupError as error:
+            console.print(f"[red]{error}[/red]")
+            raise typer.Exit(code=2) from error
+
+        if dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    table = Table("", "", title=report.paper_slug)
+    table.add_row("questions matched", str(report.matched))
+    table.add_row("options written", str(report.written))
+    console.print(table)
+
+    if report.unmatched_labels:
+        console.print(
+            f"[red]{len(report.unmatched_labels)} label(s) had no matching question: "
+            f"{report.unmatched_labels}[/red]"
+        )
+    if report.figure_options:
+        console.print(
+            f"[yellow]{len(report.figure_options)} question(s) have at least one "
+            f"figure option, described rather than transcribed: {report.figure_options}[/yellow]"
+        )
+    if report.flagged_pages:
+        console.print(
+            f"[yellow]{len(report.flagged_pages)} page(s) failed cross-check, "
+            f"worth a manual look: {report.flagged_pages}[/yellow]"
+        )
+
+
 @app.command(name="load-structured")
 def load_structured(
     qp_pdf: Path = typer.Argument(..., exists=True, help="Structured (Paper 2) question paper."),
