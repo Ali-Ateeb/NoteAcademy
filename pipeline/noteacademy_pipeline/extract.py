@@ -125,8 +125,8 @@ def extract_mcq_answers(
                 max_output_tokens=8000,
             ),
         )
-        for number, option in response.parsed.answers.items():
-            key = number.strip()
+        for entry in response.parsed.answers:
+            key, option = entry.question.strip(), entry.option
             if key in answers and answers[key] != option:
                 log.warning(
                     "conflicting answer for question %s: %s vs %s — flagged for review",

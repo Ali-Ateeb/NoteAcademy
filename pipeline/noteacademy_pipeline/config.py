@@ -58,11 +58,15 @@ class Settings:
     # built on top of it, so this is the wrong place to economise — the saving
     # is a few hundred dollars, the cost is a question bank nobody trusts.
     #
-    # gemini-3-pro-preview is Google's evergreen alias for their current
-    # top-tier reasoning+vision model — it moved to point at 3.1 without
-    # anyone here changing this string, which is the point of using it over a
-    # pinned version.
-    extraction_model: str = "gemini-3-pro-preview"
+    # That principle assumes a paid setup; it does not have one yet. The Pro
+    # tier (gemini-3.1-pro-preview) returns a 429 with a hard 0 free-tier quota
+    # on this key — Pro is not available on Google AI Studio's free tier at
+    # all, not merely rate-limited — so this is Flash until billing is turned
+    # on. Verified against a real paper: 40/40 questions matched, cross-check
+    # flags on 8/20 pages that turned out to be the regex heuristic's own false
+    # positives (a real question number only appearing embedded in a longer
+    # figure like "9.0 N"), not missed or hallucinated questions.
+    extraction_model: str = "gemini-3.6-flash"
     embedding_model: str = "voyage-3"
 
     # 200 DPI is the floor at which CAIE's smaller subscripts and circuit

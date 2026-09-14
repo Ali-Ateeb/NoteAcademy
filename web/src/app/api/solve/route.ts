@@ -22,9 +22,8 @@ import { NextResponse } from "next/server";
 import { serverSupabase } from "@/lib/supabase/serverClient";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-// Google's evergreen alias for its current top-tier reasoning model — see the
-// same choice and reasoning on extraction_model in pipeline/config.py.
-const SOLVER_MODEL = process.env.SOLVER_MODEL || "gemini-3-pro-preview";
+// Pinned, not an alias — see extraction_model in pipeline/config.py for why.
+const SOLVER_MODEL = process.env.SOLVER_MODEL || "gemini-3.6-flash";
 
 // Free-tier ceiling until a real plan_tier lookup replaces the flat number.
 // Named here rather than buried in the call below so it is the one line to

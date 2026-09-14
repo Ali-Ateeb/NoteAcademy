@@ -101,7 +101,7 @@ def backfill_paper_options(
         for question in extracted.questions:
             if question.question_type != "mcq" or not question.options:
                 continue
-            options = {k: v for k, v in question.options.items() if v and v.strip()}
+            options = {e.letter: e.text for e in question.options if e.text and e.text.strip()}
             if len(options) < 2:
                 continue
 

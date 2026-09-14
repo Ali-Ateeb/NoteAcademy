@@ -28,6 +28,19 @@ class BoundingBox(BaseModel):
         return (self.x0, self.y0, self.x1, self.y1)
 
 
+class McqOptionEntry(BaseModel):
+    """One option, as a list entry rather than a dict value.
+
+    The Gemini Developer API's structured-output schema rejects a dict-valued
+    field (it compiles to JSON Schema's `additionalProperties`, which that API
+    refuses outright) — a list of these is the wire shape; call sites convert
+    it to the {'A': 'text', ...} shape they actually want to work with.
+    """
+
+    letter: McqOption
+    text: str
+
+
 class ExtractedQuestion(BaseModel):
     display_label: str = Field(
         description="Full question label exactly as printed, e.g. '1', '3(b)', '7(a)(ii)'."
@@ -56,9 +69,9 @@ class ExtractedQuestion(BaseModel):
         default=False,
         description="True if this question started on the previous page.",
     )
-    options: dict[str, str] | None = Field(
+    options: list[McqOptionEntry] | None = Field(
         default=None,
-        description="For MCQs only: {'A': 'text', 'B': ...}. Null for other types.",
+        description="For MCQs only: one entry per option. Null for other types.",
     )
 
 
@@ -85,13 +98,21 @@ class MarkSchemeEntry(BaseModel):
     )
 
 
+class AnswerEntry(BaseModel):
+    """One answer-grid row. See McqOptionEntry for why this is a list entry
+    rather than a dict value."""
+
+    question: str = Field(description="Question number, e.g. '1'.")
+    option: McqOption
+
+
 class MarkSchemeGrid(BaseModel):
     """MCQ mark schemes are an answer grid, not prose. Parsing them is trivial and
     exact, which is why the MCQ arena can ship long before structured papers are
     segmented reliably."""
 
-    answers: dict[str, McqOption] = Field(
-        description="Question number to correct option, e.g. {'1': 'C', '2': 'A'}."
+    answers: list[AnswerEntry] = Field(
+        description="One entry per question number, e.g. [{'question': '1', 'option': 'C'}, ...]."
     )
 
 
