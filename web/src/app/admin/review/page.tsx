@@ -5,6 +5,7 @@ import {
   getDecidedQuestions,
   getReviewQueue,
   getReviewTopicOptions,
+  getSubjects,
   isBackedByDatabase,
 } from "@/lib/data/catalog";
 
@@ -20,11 +21,25 @@ export const metadata: Metadata = {
 };
 
 export default async function ReviewPage() {
-  const [items, topicOptions, decided] = await Promise.all([
+  const [items, subjects, decided] = await Promise.all([
     getReviewQueue(),
-    getReviewTopicOptions(),
+    getSubjects(),
     getDecidedQuestions(),
   ]);
+
+  // The queue mixes every subject in one list, but getReviewTopicOptions
+  // defaults to physics-5054 — passing one flat list here used to put
+  // Physics topics in a Biology or Chemistry question's "Change to" dropdown,
+  // the one control a reviewer has for fixing a wrong tag. Grouped by
+  // subject instead, so the dropdown can only ever offer topics that
+  // actually belong to the question on screen.
+  const topicGroups = await Promise.all(
+    subjects.map(async (subject) => ({
+      subjectSlug: subject.slug,
+      subjectTitle: subject.title,
+      topics: await getReviewTopicOptions(subject.slug),
+    })),
+  );
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-12">
@@ -40,7 +55,7 @@ export default async function ReviewPage() {
           not happened, and the difference has to be visible. */}
       <ReviewQueue
         items={items}
-        topicOptions={topicOptions}
+        topicGroups={topicGroups}
         decided={decided}
         persist={isBackedByDatabase()}
         // Whether the *server* is configured to accept writes at all. Without

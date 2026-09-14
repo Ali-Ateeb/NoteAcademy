@@ -41,9 +41,32 @@ function pageLabel(crops: ReviewCrop[]): string {
   return min === max ? `page ${min}` : `pages ${min}–${max}`;
 }
 
+export interface TopicGroup {
+  subjectSlug: string;
+  subjectTitle: string;
+  topics: { code: string; title: string }[];
+}
+
+/** The queue mixes every subject in one list, and a paper's slug is always
+ *  `${subjectSlug}-${year}-${season}-p...` — the only link back to a
+ *  subject a `ReviewItem` carries. Used to scope the "Change to" dropdown to
+ *  the question's own subject; falling back to every topic, grouped, is
+ *  safer than guessing wrong when a slug format ever changes. */
+function matchingTopicGroups(groups: TopicGroup[], paperSlug: string): TopicGroup[] {
+  const match = groups.find((g) => paperSlug.startsWith(`${g.subjectSlug}-`));
+  return match ? [match] : groups;
+}
+
+function topicsForPaperSlug(
+  groups: TopicGroup[],
+  paperSlug: string,
+): { code: string; title: string }[] {
+  return matchingTopicGroups(groups, paperSlug).flatMap((g) => g.topics);
+}
+
 interface Props {
   items: ReviewItem[];
-  topicOptions: { code: string; title: string }[];
+  topicGroups: TopicGroup[];
   /** Questions already approved or rejected, newest first — how a reviewer
    *  finds one again once it has left the queue above. */
   decided: DecidedItem[];
@@ -71,7 +94,7 @@ interface Props {
  */
 export function ReviewQueue({
   items,
-  topicOptions,
+  topicGroups,
   decided,
   persist,
   savingConfigured,
@@ -181,7 +204,7 @@ export function ReviewQueue({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [decide, undo, visible.length, current, topicOptions]);
+  }, [decide, undo, visible.length, current]);
 
   if (decisions === null) {
     return <div className="py-20 text-center text-ink-3">Loading queue…</div>;
@@ -213,7 +236,7 @@ export function ReviewQueue({
       )}
 
       {savesToDatabase && unlocked && (
-        <RetagPanel topicOptions={topicOptions} decided={decided} />
+        <RetagPanel topicGroups={topicGroups} decided={decided} />
       )}
 
       <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -251,7 +274,7 @@ export function ReviewQueue({
         <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_260px]">
           <ReviewCard
             item={current}
-            topicOptions={topicOptions}
+            topicOptions={topicsForPaperSlug(topicGroups, current.paperSlug)}
             override={overrides[current.id] ?? null}
             decision={decisions.get(current.id) ?? null}
             onOverride={(code) =>
@@ -615,20 +638,26 @@ function ReviewCard({
  *  how the queue is filtered — so this looks it up separately, either typed
  *  in directly or picked from the list of what was recently decided. */
 function RetagPanel({
-  topicOptions,
+  topicGroups,
   decided,
 }: {
-  topicOptions: { code: string; title: string }[];
+  topicGroups: TopicGroup[];
   decided: DecidedItem[];
 }) {
   const [open, setOpen] = useState(false);
   const [paperSlug, setPaperSlug] = useState("");
   const [displayLabel, setDisplayLabel] = useState("");
-  const [topicCode, setTopicCode] = useState(topicOptions[0]?.code ?? "");
+  const [topicCode, setTopicCode] = useState(topicGroups[0]?.topics[0]?.code ?? "");
   const [filter, setFilter] = useState("");
   const [status, setStatus] = useState<
     { kind: "saving" } | { kind: "done" } | { kind: "error"; message: string } | null
   >(null);
+
+  // Narrows to the paper's own subject once the slug matches one — typed
+  // freehand or filled in by pick() below — and shows every subject,
+  // grouped, until then. Never a case where the wrong subject's topics are
+  // the only ones on offer.
+  const visibleGroups = matchingTopicGroups(topicGroups, paperSlug);
 
   const needle = filter.trim().toLowerCase();
   const filtered = needle
@@ -644,7 +673,11 @@ function RetagPanel({
   function pick(item: DecidedItem) {
     setPaperSlug(item.paperSlug);
     setDisplayLabel(item.displayLabel);
-    setTopicCode(item.primaryTopic?.code ?? topicOptions[0]?.code ?? "");
+    setTopicCode(
+      item.primaryTopic?.code
+        ?? matchingTopicGroups(topicGroups, item.paperSlug)[0]?.topics[0]?.code
+        ?? "",
+    );
     setStatus(null);
   }
 
@@ -708,10 +741,14 @@ function RetagPanel({
               onChange={(event) => setTopicCode(event.target.value)}
               className="max-w-xs rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink"
             >
-              {topicOptions.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {option.code} · {option.title}
-                </option>
+              {visibleGroups.map((group) => (
+                <optgroup key={group.subjectSlug} label={group.subjectTitle}>
+                  {group.topics.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {option.code} · {option.title}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </label>
