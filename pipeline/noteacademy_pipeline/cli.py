@@ -1008,5 +1008,62 @@ def fix_crops(
             console.print(f"[red]{label}:[/red] {keys[:10]}" + (" ..." if len(keys) > 10 else ""))
 
 
+@app.command(name="fix-spurious-crops")
+def fix_spurious_crops(
+    min_height_pt: float = typer.Option(
+        30.0, help="Below this, a trailing page-crop is treated as a page header, not content."
+    ),
+    dry_run: bool = typer.Option(False, help="Report what would be removed, but remove nothing."),
+) -> None:
+    """Remove a structured question's trailing crop when it shows the next
+    question instead of anything of its own.
+
+    The segmenter sometimes marks a question as continuing onto a page it
+    does not actually reach, and grabs that page's header/barcode strip as
+    the "continuation" — a bbox a handful of points tall, the same height
+    regardless of subject or paper, which is what makes this detectable at
+    all. There is no correct crop to render here, only a row that should not
+    exist: the content it points at belongs to a different question.
+    """
+    from .load import connect
+    from .segmentation_fixes import find_spurious_continuation_crops, remove_spurious_crops
+    from .storage import SupabaseStorage
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    storage = SupabaseStorage.from_settings(settings)
+    if storage is None:
+        console.print("[red]Supabase Storage is not configured.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        with console.status("auditing structured questions..."):
+            crops = find_spurious_continuation_crops(conn, min_height_pt=min_height_pt)
+
+        if not crops:
+            console.print("[green]Nothing found.[/green]")
+            return
+
+        by_subject: dict[str, int] = {}
+        for c in crops:
+            subject = c.paper_slug.rsplit("-", 4)[0]
+            by_subject[subject] = by_subject.get(subject, 0) + 1
+        console.print(f"[yellow]{len(crops)} spurious trailing crop(s) found:[/yellow] {by_subject}")
+        for c in crops[:10]:
+            console.print(f"  {c.paper_slug} Q{c.display_label} page {c.page_number} ({c.height_pt:.1f}pt)")
+        if len(crops) > 10:
+            console.print(f"  ... and {len(crops) - 10} more")
+
+        removed = remove_spurious_crops(conn, storage, crops, dry_run=dry_run)
+        if dry_run:
+            conn.rollback()
+            console.print(f"[yellow]dry run: would remove {removed}, rolled back[/yellow]")
+        else:
+            conn.commit()
+            console.print(f"[green]removed {removed}[/green]")
+
+
 if __name__ == "__main__":
     app()

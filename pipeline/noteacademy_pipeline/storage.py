@@ -81,6 +81,21 @@ class SupabaseStorage:
             headers={"Content-Type": content_type, "x-upsert": "true"},
         )
 
+    def remove(self, keys: list[str]) -> None:
+        """Delete objects outright — for a crop attached to the wrong question
+        entirely, where there is no correct bbox to re-render, only a
+        database row that should not exist."""
+        if not keys:
+            return
+        import json
+
+        self._request(
+            "DELETE",
+            f"object/{self.bucket}",
+            data=json.dumps({"prefixes": keys}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
 
 def upload_crops(storage: SupabaseStorage, pairs: list[tuple[str, Path]]) -> int:
     """Upload (storage_key, local file) pairs. Returns how many were sent.
