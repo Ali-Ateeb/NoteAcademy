@@ -1065,5 +1065,85 @@ def fix_spurious_crops(
             console.print(f"[green]removed {removed}[/green]")
 
 
+@app.command(name="marks-export")
+def marks_export(
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    out: Path = typer.Option(None, help="Where to write the worksheet JSON."),
+    limit: int = typer.Option(None, help="Stop after this many parent questions."),
+) -> None:
+    """Export structured leaves whose max_marks never landed, with their
+    parent's crop re-rendered locally to read.
+
+    No model, no API key: the crop comes from the source PDF via the bbox
+    already recorded, exactly like `fix-crops`. Read each parent's crop(s),
+    find the mark bracket for each listed leaf, and feed the answers back
+    with `marks-apply`.
+    """
+    from .load import connect
+    from .marks_recovery import build_marks_worksheet, write_worksheet
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        with console.status("rendering crops..."):
+            parents = build_marks_worksheet(
+                conn, papers_dir=papers, work_dir=settings.work_dir, limit=limit
+            )
+
+    out = out or settings.work_dir / "marks-worksheet.json"
+    write_worksheet(parents, out)
+
+    total_leaves = sum(len(p.leaves) for p in parents)
+    no_crops = sum(1 for p in parents if not p.crop_paths)
+    table = Table("", "", title="Marks worksheet")
+    table.add_row("parent questions", str(len(parents)))
+    table.add_row("leaves to read", str(total_leaves))
+    if no_crops:
+        table.add_row(
+            "[red]no crop rendered[/red]", f"{no_crops} — see log: no source PDF, or no crops at all"
+        )
+    console.print(table)
+    console.print(f"-> {out}")
+
+
+@app.command(name="marks-apply")
+def marks_apply(
+    decisions: Path = typer.Argument(..., exists=True, help="JSON list of {leaf_id, max_marks}."),
+    dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
+) -> None:
+    """Write recovered max_marks values back to their leaves."""
+    import json
+
+    from .load import connect
+    from .marks_recovery import apply_marks_decisions
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    payload = json.loads(decisions.read_text(encoding="utf-8"))
+    entries = payload["decisions"] if isinstance(payload, dict) else payload
+
+    with connect(settings.database_url) as conn:
+        report = apply_marks_decisions(conn, entries)
+        if dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    table = Table("", "", title="Marks written")
+    table.add_row("updated", str(report.updated))
+    if report.unknown_leaf_ids:
+        table.add_row("[red]unknown or already-set leaf ids[/red]", str(len(report.unknown_leaf_ids)))
+    if report.invalid_marks:
+        table.add_row("[red]invalid marks value[/red]", str(len(report.invalid_marks)))
+    console.print(table)
+    if report.unknown_leaf_ids:
+        console.print(f"[red]{report.unknown_leaf_ids[:10]}[/red]")
+
+
 if __name__ == "__main__":
     app()
