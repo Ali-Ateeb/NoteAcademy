@@ -92,7 +92,12 @@ def find_missing_crops(conn: psycopg.Connection, storage: SupabaseStorage) -> tu
               join papers p on p.id = q.paper_id
               join subjects s on s.id = p.subject_id
               join exam_sessions es on es.id = p.exam_session_id
-             where q.extraction_status = 'approved'
+             -- Not 'rejected': a dead question is never shown to anyone again,
+             -- so a missing crop there costs nothing to leave alone. Everything
+             -- else is either live to students or sitting in front of a
+             -- reviewer right now, and a reviewer cannot approve what they
+             -- cannot see.
+             where q.extraction_status in ('approved', 'needs_review', 'extracted')
         """)
         rows = cur.fetchall()
 

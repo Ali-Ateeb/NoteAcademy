@@ -945,12 +945,13 @@ def fix_crops(
     dpi: int = typer.Option(150, help="Crop resolution — matches load-mcq/load-structured's default."),
     dry_run: bool = typer.Option(False, help="Audit and re-crop, but do not upload."),
 ) -> None:
-    """Re-render and re-upload any approved question's crop the bucket is missing.
+    """Re-render and re-upload any live or reviewable question's crop the bucket is missing.
 
     question_assets.bbox exists precisely so this is possible without
     re-running extraction: the database already knows where the crop is on
-    the page, so a missing file is a re-render, not a re-ingestion. Audits
-    every approved question's crop against the bucket first, then fixes
+    the page, so a missing file is a re-render, not a re-ingestion. Covers
+    approved, needs_review and extracted questions — not rejected, which
+    nobody is ever shown again. Audits against the bucket first, then fixes
     only what is actually gone.
     """
     from .crops import find_missing_crops, fix_missing_crops
