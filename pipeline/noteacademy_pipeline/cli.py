@@ -939,5 +939,73 @@ def estimate(
     )
 
 
+@app.command(name="fix-crops")
+def fix_crops(
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    dpi: int = typer.Option(150, help="Crop resolution — matches load-mcq/load-structured's default."),
+    dry_run: bool = typer.Option(False, help="Audit and re-crop, but do not upload."),
+) -> None:
+    """Re-render and re-upload any approved question's crop the bucket is missing.
+
+    question_assets.bbox exists precisely so this is possible without
+    re-running extraction: the database already knows where the crop is on
+    the page, so a missing file is a re-render, not a re-ingestion. Audits
+    every approved question's crop against the bucket first, then fixes
+    only what is actually gone.
+    """
+    from .crops import find_missing_crops, fix_missing_crops
+    from .load import connect
+    from .storage import SupabaseStorage
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    storage = SupabaseStorage.from_settings(settings)
+    if storage is None:
+        console.print("[red]Supabase Storage is not configured.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        with console.status("auditing crops against storage..."):
+            missing, checked_folders = find_missing_crops(conn, storage)
+
+    console.print(f"checked {checked_folders} paper folders")
+    if not missing:
+        console.print("[green]Nothing missing.[/green]")
+        return
+
+    by_subject: dict[str, int] = {}
+    for item in missing:
+        by_subject[item.subject_slug] = by_subject.get(item.subject_slug, 0) + 1
+    console.print(f"[yellow]{len(missing)} crop(s) missing from storage:[/yellow] {by_subject}")
+
+    with console.status(f"re-rendering{' (dry run)' if dry_run else ''}..."):
+        report = fix_missing_crops(
+            missing,
+            papers_dir=papers,
+            storage=storage,
+            work_dir=settings.work_dir,
+            dpi=dpi,
+            dry_run=dry_run,
+        )
+
+    table = Table("", "", title="Crop recovery" + (" (dry run)" if dry_run else ""))
+    table.add_row("found missing", str(report.found_missing))
+    table.add_row("fixed", str(report.fixed))
+    table.add_row("no source PDF", str(len(report.no_source_pdf)))
+    table.add_row("crop failed", str(len(report.crop_failed)))
+    table.add_row("upload failed", str(len(report.upload_failed)))
+    console.print(table)
+
+    for label, keys in [
+        ("no source PDF", report.no_source_pdf),
+        ("crop failed", report.crop_failed),
+        ("upload failed", report.upload_failed),
+    ]:
+        if keys:
+            console.print(f"[red]{label}:[/red] {keys[:10]}" + (" ..." if len(keys) > 10 else ""))
+
+
 if __name__ == "__main__":
     app()
