@@ -154,6 +154,8 @@ interface StructuredRow {
   paper_slug: string;
   display_label: string;
   question_text: string | null;
+  mark_scheme: string | null;
+  max_marks: number | null;
   crops: StructuredCropRow[];
   parts: StructuredPartRow[];
 }
@@ -231,6 +233,8 @@ const toStructured = (row: StructuredRow): StructuredQuestion => ({
   paperSlug: row.paper_slug,
   displayLabel: row.display_label,
   questionText: row.question_text ?? "",
+  markScheme: row.mark_scheme,
+  maxMarks: row.max_marks,
   crops: row.crops
     .map((crop) => ({ pageNumber: crop.pageNumber, cropUrl: assetUrl(crop.storageKey) }))
     .sort((a, b) => a.pageNumber - b.pageNumber),
@@ -254,7 +258,8 @@ const PAPER_COLUMNS =
 // the literal text of the column list, and `"a," + "b"` widens to `string`.
 const MCQ_COLUMNS =
   "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key,also_in";
-const STRUCTURED_COLUMNS = "id,paper_slug,display_label,question_text,crops,parts";
+const STRUCTURED_COLUMNS =
+  "id,paper_slug,display_label,question_text,mark_scheme,max_marks,crops,parts";
 
 /* ---------------------------------------------------------------------------
    Catalogue

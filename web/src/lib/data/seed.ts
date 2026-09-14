@@ -411,6 +411,8 @@ export const structuredQuestions: StructuredQuestion[] = [
     displayLabel: "1",
     questionText:
       "A trolley of mass 2.0 kg is pulled from rest along a horizontal track by a string. Fig. 1.1 shows the arrangement.",
+    markScheme: null,
+    maxMarks: null,
     crops: [{ pageNumber: 2, cropUrl: null }],
     parts: [
       {
@@ -437,6 +439,8 @@ export const structuredQuestions: StructuredQuestion[] = [
     displayLabel: "2",
     questionText:
       "Fig. 2.1 shows a fixed mass of gas trapped in a sealed syringe at room temperature.",
+    markScheme: null,
+    maxMarks: null,
     crops: [{ pageNumber: 4, cropUrl: null }],
     parts: [
       {

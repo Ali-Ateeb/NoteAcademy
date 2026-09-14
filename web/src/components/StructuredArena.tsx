@@ -17,6 +17,25 @@ import {
 } from "@/lib/attempts";
 import type { StructuredPart, StructuredQuestion } from "@/lib/data/types";
 
+/** A structured question with no lettered sub-parts is still one question
+ *  with its own marks and mark scheme — segmentation found nothing to
+ *  split, not nothing to mark. `parts` is `[]` in that case, not null, so
+ *  treating it as "no parts to render" left six approved questions with a
+ *  real mark scheme showing nothing at all. Synthesized as a single part
+ *  under the question's own label so every part-based control (marking,
+ *  scoring, "N parts marked") treats it exactly like a real one. */
+function effectiveParts(question: StructuredQuestion): StructuredPart[] {
+  if (question.parts.length > 0) return question.parts;
+  if (question.markScheme == null && question.maxMarks == null) return [];
+  return [
+    {
+      displayLabel: question.displayLabel,
+      maxMarks: question.maxMarks,
+      markSchemeText: question.markScheme,
+    },
+  ];
+}
+
 interface Props {
   /** Identifies the saved session — a paper slug, the same as the mcq arena. */
   sessionKey: string;
@@ -119,7 +138,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
   // scheme never matched (see the review queue's unmatched_mark_scheme) has
   // no maxMarks to self-mark out of, and is shown as a caveat instead.
   const markable = useCallback(
-    (question: StructuredQuestion) => question.parts.filter((p) => p.maxMarks != null),
+    (question: StructuredQuestion) => effectiveParts(question).filter((p) => p.maxMarks != null),
     [],
   );
 
@@ -293,7 +312,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
               </div>
 
               <div className="space-y-4">
-                {current.parts.map((part) => (
+                {effectiveParts(current).map((part) => (
                   <PartMarker
                     key={part.displayLabel}
                     part={part}

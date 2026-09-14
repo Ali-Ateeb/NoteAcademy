@@ -118,6 +118,13 @@ export interface StructuredQuestion {
    *  Can still be empty — a question that opens straight into "(a)" with no
    *  introductory text of its own. */
   questionText: string;
+  /** This question's own mark scheme and marks — set only when `parts` is
+   *  empty. Segmentation splits a question into lettered sub-parts when it
+   *  finds any; when it genuinely has none (some CAIE questions are printed
+   *  as one flat ask), the marks and scheme live here instead, on the
+   *  question itself. Null whenever `parts` is non-empty. */
+  markScheme: string | null;
+  maxMarks: number | null;
   crops: StructuredQuestionCrop[];
   parts: StructuredPart[];
 }

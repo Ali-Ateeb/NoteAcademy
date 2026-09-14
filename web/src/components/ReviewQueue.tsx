@@ -485,13 +485,20 @@ function ReviewCard({
         )}
       </div>
 
-      {item.parts ? (
+      {item.parts && item.parts.length > 0 ? (
         /* A structured question's marks and mark scheme text live on its
            leaves, not on the top-level row this card is for — "9" itself is
            never short an answer key, because it was never meant to have one.
            One row per leaf, in paper order, is what a reviewer actually
            checks the crop against: does 9(a)(ii) on the page match what is
-           printed here for 9(a)(ii). */
+           printed here for 9(a)(ii).
+
+           `item.parts` is `[]`, not null, for a structured question
+           segmentation found no lettered sub-parts for — genuinely one flat
+           question, not a broken split. `[]` is truthy, so this used to
+           render the (empty) parts branch instead of falling through to the
+           question's own mark scheme below, which six approved questions
+           actually have. */
         <div className="mt-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
             Mark scheme · {item.parts.length} part{item.parts.length === 1 ? "" : "s"}
