@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { safeNextPath } from "@/lib/safeRedirect";
 import { serverSupabase } from "@/lib/supabase/serverClient";
 
 /**
@@ -12,7 +13,7 @@ import { serverSupabase } from "@/lib/supabase/serverClient";
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+  const next = safeNextPath(searchParams.get("next"), "/dashboard");
 
   if (code) {
     const supabase = await serverSupabase();

@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { safeNextPath } from "@/lib/safeRedirect";
 
 // useSearchParams() opts the tree under it out of static prerendering unless
 // wrapped in Suspense — without this, `next build` fails prerendering
@@ -43,7 +44,7 @@ function LoginForm() {
       setError(signInError.message);
       return;
     }
-    router.push((searchParams.get("next") ?? "/dashboard") as Route);
+    router.push(safeNextPath(searchParams.get("next"), "/dashboard") as Route);
     router.refresh();
   }
 

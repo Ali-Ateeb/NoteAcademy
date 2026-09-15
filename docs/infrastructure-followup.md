@@ -40,7 +40,7 @@ checksums — no drift between what's on disk and what ran.
 
 ---
 
-## 2. New finding: open redirect on `/auth/callback` (high)
+## 2. New finding: open redirect on `/auth/callback` (high) — fixed 2026-09-15
 
 `web/src/app/auth/callback/route.ts` builds the post-login redirect as:
 
@@ -96,9 +96,15 @@ same fix for consistency, not just paranoia.
 **Confirmed `next` is never meant to be anything but a small, app-controlled
 set of values** — `forgot-password/page.tsx` sets it to the literal
 `/reset-password`; nothing in this codebase ever needs it to be a full URL.
-The fix is a same-origin check (`next.startsWith("/") && !next.startsWith("//")`,
-rejecting a leading backslash too) before either callback route or `/login`
-uses it, falling back to `/dashboard` on anything that fails it.
+
+**Fixed**: `web/src/lib/safeRedirect.ts`'s `safeNextPath()` — same-origin check
+(`startsWith("/")`, rejecting `//` and `/\` scheme-relative variants and any
+raw CR/LF), falling back to `/dashboard` on anything that fails it. Both call
+sites (`/auth/callback` and `/login`) now go through it. Re-verified the exact
+payload from this finding against the fixed function directly: `@evil.com`,
+`//evil.com`, `/\evil.com` and a CRLF-carrying value all now fall back rather
+than pass through; every legitimate value this app actually sends
+(`/dashboard`, `/reset-password`, `/admin/review`) still passes.
 
 ---
 
