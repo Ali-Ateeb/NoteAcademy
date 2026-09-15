@@ -513,7 +513,10 @@ def parse_structured_mark_scheme(
                 or (i + 1 == len(tokens) and bare_number_could_be_a_root)
                 or (
                     i + 1 < len(tokens)
-                    and (_PART_TOKEN_RE.match(tokens[i + 1]) or _SUBPART_TOKEN_RE.match(tokens[i + 1]))
+                    and (
+                        _PART_TOKEN_RE.match(tokens[i + 1])
+                        or _SUBPART_TOKEN_RE.match(tokens[i + 1])
+                    )
                 )
             )
             # A number alone on its own line is also exactly the shape of a

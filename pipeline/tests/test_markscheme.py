@@ -207,7 +207,14 @@ class TestParseStructuredMarkScheme:
         # digit split off the label stays part of the content, the same as
         # an already-unglued enumerated point does.
         entries = parse_structured_mark_scheme(
-            [_page("10(a)", "x", "B1", "10(b)(i)", "y", "B1", "10(b)(ii)1", "first point", "B1", "10(b)(ii)2", "second point", "B1")],
+            [
+                _page(
+                    "10(a)", "x", "B1",
+                    "10(b)(i)", "y", "B1",
+                    "10(b)(ii)1", "first point", "B1",
+                    "10(b)(ii)2", "second point", "B1",
+                )
+            ],
             known_questions={"10"},
         )
         by_label = {e.display_label: e for e in entries}

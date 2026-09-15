@@ -311,7 +311,9 @@ def load_mcq(
 
 @app.command(name="mcq-options")
 def mcq_options(
-    qp_pdf: Path = typer.Argument(..., exists=True, help="Multiple-choice question paper, already loaded."),
+    qp_pdf: Path = typer.Argument(
+        ..., exists=True, help="Multiple-choice question paper, already loaded."
+    ),
     dry_run: bool = typer.Option(False, help="Do the work, then roll it back."),
 ) -> None:
     """Backfill question and option text for an already-loaded MCQ paper.
@@ -942,7 +944,9 @@ def estimate(
 @app.command(name="fix-crops")
 def fix_crops(
     papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
-    dpi: int = typer.Option(150, help="Crop resolution — matches load-mcq/load-structured's default."),
+    dpi: int = typer.Option(
+        150, help="Crop resolution — matches load-mcq/load-structured's default."
+    ),
     dry_run: bool = typer.Option(False, help="Audit and re-crop, but do not upload."),
 ) -> None:
     """Re-render and re-upload any live or reviewable question's crop the bucket is missing.
@@ -1050,9 +1054,13 @@ def fix_spurious_crops(
         for c in crops:
             subject = c.paper_slug.rsplit("-", 4)[0]
             by_subject[subject] = by_subject.get(subject, 0) + 1
-        console.print(f"[yellow]{len(crops)} spurious trailing crop(s) found:[/yellow] {by_subject}")
+        console.print(
+            f"[yellow]{len(crops)} spurious trailing crop(s) found:[/yellow] {by_subject}"
+        )
         for c in crops[:10]:
-            console.print(f"  {c.paper_slug} Q{c.display_label} page {c.page_number} ({c.height_pt:.1f}pt)")
+            console.print(
+                f"  {c.paper_slug} Q{c.display_label} page {c.page_number} ({c.height_pt:.1f}pt)"
+            )
         if len(crops) > 10:
             console.print(f"  ... and {len(crops) - 10} more")
 
@@ -1102,7 +1110,8 @@ def marks_export(
     table.add_row("leaves to read", str(total_leaves))
     if no_crops:
         table.add_row(
-            "[red]no crop rendered[/red]", f"{no_crops} — see log: no source PDF, or no crops at all"
+            "[red]no crop rendered[/red]",
+            f"{no_crops} — see log: no source PDF, or no crops at all",
         )
     console.print(table)
     console.print(f"-> {out}")
@@ -1137,7 +1146,9 @@ def marks_apply(
     table = Table("", "", title="Marks written")
     table.add_row("updated", str(report.updated))
     if report.unknown_leaf_ids:
-        table.add_row("[red]unknown or already-set leaf ids[/red]", str(len(report.unknown_leaf_ids)))
+        table.add_row(
+            "[red]unknown or already-set leaf ids[/red]", str(len(report.unknown_leaf_ids))
+        )
     if report.invalid_marks:
         table.add_row("[red]invalid marks value[/red]", str(len(report.invalid_marks)))
     console.print(table)

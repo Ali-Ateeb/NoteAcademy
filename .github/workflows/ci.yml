@@ -1,0 +1,76 @@
+name: CI
+
+# Runs the checks that already existed in README.md and pipeline/README.md
+# but that nothing enforced: typecheck, lint, build and the browser smoke
+# test for web/; ruff and pytest for pipeline/. Neither job needs a secret —
+# web/ runs against its own seed fixtures (the same "no database, no API
+# keys" path `npm run dev` uses), and pipeline/'s tests are pure unit tests
+# over the deterministic stages (segmentation, naming, config parsing), not
+# integration tests against a live database.
+on:
+  push:
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+
+      # No .env.local: this deliberately builds against the seed fixtures,
+      # the same fallback a fresh clone runs on. e2e/smoke.mjs's paper slug
+      # (physics-5054-2019-may-june-p12) exists in that fixture set, not
+      # necessarily in whatever real database a deployment points at.
+      - run: npm run build
+
+      - name: Install the browser the smoke test drives
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the production server
+        run: npm run start -- -p 3210 &
+
+      - name: Wait for it to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3210 > /dev/null && exit 0
+            sleep 1
+          done
+          echo "server never came up" >&2
+          exit 1
+
+      - name: Browser smoke test
+        run: npm run e2e
+        env:
+          BASE_URL: http://localhost:3210
+
+  pipeline:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+      - run: pytest

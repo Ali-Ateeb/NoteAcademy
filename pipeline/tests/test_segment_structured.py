@@ -503,7 +503,9 @@ class TestShapeOverPositionForLabels:
         page.insert_text((PART_X, 160.0), "1", fontsize=11, fontname="Helvetica-Bold")
         page.insert_text((PART_X + 7, 160.0), ". first reason", fontsize=11, fontname="Helvetica")
         page.insert_text((PART_X, 190.0), "2", fontsize=11, fontname="Helvetica-Bold")
-        page.insert_text((PART_X + 7, 190.0), ". second reason [2]", fontsize=11, fontname="Helvetica")
+        page.insert_text(
+            (PART_X + 7, 190.0), ". second reason [2]", fontsize=11, fontname="Helvetica"
+        )
         out = tmp_path / "enumerated-list.pdf"
         doc.save(out)
         doc.close()

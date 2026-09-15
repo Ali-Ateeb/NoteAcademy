@@ -20,7 +20,6 @@ from pathlib import Path
 
 import psycopg
 
-from .config import settings
 from .naming import caie_filename
 from .render import crop
 from .storage import SupabaseStorage
@@ -78,7 +77,9 @@ class FixReport:
     upload_failed: list[str] = field(default_factory=list)
 
 
-def find_missing_crops(conn: psycopg.Connection, storage: SupabaseStorage) -> tuple[list[MissingCrop], int]:
+def find_missing_crops(
+    conn: psycopg.Connection, storage: SupabaseStorage
+) -> tuple[list[MissingCrop], int]:
     """Every approved question's crop the database names, cross-checked
     against what the bucket actually holds. Grouped by folder so a paper's
     worth of crops costs one list call, not one per crop."""

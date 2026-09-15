@@ -19,13 +19,13 @@ where one part ends and the next begins does not need either.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
 
 from .boldness import BoldChecker, build_bold_checker
-from .segment import BODY_BOTTOM, BODY_TOP, CROP_LEFT, CROP_RIGHT, content_bottom, is_footer
+from .segment import BODY_BOTTOM, BODY_TOP, CROP_LEFT, CROP_RIGHT, content_bottom
 from .worksheet import question_text as extract_text
 
 # Indent bands, in points, for each level of the hierarchy: question number,
@@ -358,7 +358,9 @@ def _fill_missing_roots(
         return markers
 
     recovered: list[Marker] = []
-    for previous, following in zip(roots, roots[1:]):
+    # roots[1:] is one shorter than roots by construction — this is a sliding
+    # pairwise window, not two sequences that are supposed to match up.
+    for previous, following in zip(roots, roots[1:], strict=False):
         try:
             previous_n, following_n = int(previous.label), int(following.label)
         except ValueError:
