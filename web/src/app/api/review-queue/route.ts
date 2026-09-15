@@ -8,19 +8,19 @@
  * instead of a full page navigation, so the keyboard-only reviewing flow
  * ReviewQueue.tsx is built around never has to stop for a page load.
  *
- * Gated the same way the page is: the `na-admin-token` cookie, checked
- * before anything is fetched. Unlike `/api/review`, there is nothing to
- * write here, but the *read* is exactly what that cookie exists to protect
- * — an unapproved question's text, mark scheme, correct option and crop —
- * so it gets the same gate, not a weaker one just because this route is new.
+ * Gated the same way the page is: a signed-in account with `is_reviewer =
+ * true` (`currentReviewer()`, checked against the caller's own session
+ * cookie). Unlike `/api/review`, there is nothing to write here, but the
+ * *read* is exactly what that check exists to protect — an unapproved
+ * question's text, mark scheme, correct option and crop — so it gets the
+ * same gate, not a weaker one just because this route is new.
  */
 
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { getReviewQueue, REVIEW_PAGE_SIZE } from "@/lib/data/catalog";
 import type { ReviewFlag } from "@/lib/data/types";
-import { ADMIN_COOKIE, tokenMatches } from "@/lib/reviewAuth";
+import { currentReviewer } from "@/lib/reviewerAuth";
 
 const VALID_FLAGS = new Set<ReviewFlag>([
   "low_tag_confidence",
@@ -32,11 +32,10 @@ const VALID_FLAGS = new Set<ReviewFlag>([
 ]);
 
 export async function GET(request: Request) {
-  const cookieStore = await cookies();
-  if (!tokenMatches(cookieStore.get(ADMIN_COOKIE)?.value)) {
+  if (!(await currentReviewer())) {
     // Indistinguishable from any other failure: this is the same data
-    // /admin/review itself refuses to fetch without the cookie, so it gets
-    // the same non-committal refusal rather than a more specific one.
+    // /admin/review itself refuses to fetch without a reviewer session, so
+    // it gets the same non-committal refusal rather than a more specific one.
     return NextResponse.json({ error: "Not authorised." }, { status: 401 });
   }
 

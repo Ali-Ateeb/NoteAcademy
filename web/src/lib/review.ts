@@ -96,72 +96,26 @@ export function clearDecisions(): void {
    The server side
    --------------------------------------------------------------------------- */
 
-/** The shared secret /api/review requires.
- *
- *  Kept in the browser rather than embedded in the page: a token printed into
- *  the HTML is available to everyone who can load the page, which is precisely
- *  the set of people it is supposed to exclude. Entered once, per browser. */
-const TOKEN_KEY = "na-review-token";
-
-export function reviewToken(): string {
-  try {
-    return localStorage.getItem(TOKEN_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-export function setReviewToken(token: string): void {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    // A browser refusing storage cannot hold the token; writes stay local.
-  }
-}
-
-/** Ask the server whether a token is accepted, before trusting it.
- *
- *  Without this, "unlocked" meant no more than "a non-empty string was typed":
- *  a wrong token hid the unlock box and then failed every save, with nothing in
- *  the UI to re-enter it through. */
-export async function verifyToken(token: string): Promise<SyncResult> {
-  if (!token) return { ok: false, message: "Enter the token first." };
-  try {
-    const response = await fetch("/api/review", {
-      method: "GET",
-      headers: { "x-review-token": token },
-    });
-    if (response.ok) return { ok: true };
-    if (response.status === 401) {
-      return { ok: false, message: "That token was not accepted." };
-    }
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    return { ok: false, message: body.error ?? `Check failed (${response.status}).` };
-  } catch (error) {
-    return { ok: false, message: `Check failed: ${(error as Error).message}` };
-  }
-}
-
 export interface SyncResult {
   ok: boolean;
   /** Shown to the reviewer verbatim. A decision that did not reach the database
    *  has not happened, and saying so beats a queue that looks saved. */
   message?: string;
-  /** The server rejected the token itself, not this particular decision. The
-   *  caller should drop it and ask for it again rather than retrying. */
+  /** The server rejected the *request*, not this particular decision — the
+   *  reviewer's session expired, or their account lost is_reviewer, since
+   *  reaching this page at all already meant both were true a moment ago. */
   unauthorised?: boolean;
 }
 
+/** No token to attach: a same-origin fetch already carries the browser's own
+ *  Supabase session cookie, which is what `/api/review` actually checks
+ *  (`currentReviewer()`, against `profiles.is_reviewer`) — see
+ *  0029_reviewer_accounts.sql. Writing here either works because the account
+ *  reading this page is a reviewer, or it does not, and either way there is
+ *  nothing this function could do differently by holding a secret of its own. */
 async function send(input: RequestInfo, init: RequestInit): Promise<SyncResult> {
-  const token = reviewToken();
-  if (!token) return { ok: false, message: "Not unlocked — decisions are local only." };
-
   try {
-    const response = await fetch(input, {
-      ...init,
-      headers: { ...init.headers, "x-review-token": token },
-    });
+    const response = await fetch(input, init);
     if (response.ok) return { ok: true };
 
     const body = (await response.json().catch(() => ({}))) as { error?: string };
@@ -169,7 +123,7 @@ async function send(input: RequestInfo, init: RequestInit): Promise<SyncResult> 
       return {
         ok: false,
         unauthorised: true,
-        message: "That review token was not accepted.",
+        message: "Not authorised — sign in again as a reviewer and retry.",
       };
     }
     return { ok: false, message: body.error ?? `Save failed (${response.status}).` };

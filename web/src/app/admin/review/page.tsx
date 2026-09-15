@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
+import Link from "next/link";
 
-import { AdminGate } from "@/components/AdminGate";
 import { ReviewQueue } from "@/components/ReviewQueue";
 import {
   getDecidedQuestions,
@@ -10,7 +9,7 @@ import {
   getSubjects,
   isBackedByDatabase,
 } from "@/lib/data/catalog";
-import { ADMIN_COOKIE, reviewTokenConfigured, tokenMatches } from "@/lib/reviewAuth";
+import { reviewerStatus } from "@/lib/reviewerAuth";
 
 /** Rendered per request, not at build time. The queue changes as papers are
  *  ingested, and its crops are signed URLs that expire — a prerendered page
@@ -27,26 +26,16 @@ export default async function ReviewPage() {
   // With no database there is nothing unapproved to protect — this is the
   // fixtures scaffold the README promises runs with no keys at all — so the
   // gate below applies only once there is a real bank behind the page.
+  let reviewerEmail: string | null = null;
   if (isBackedByDatabase()) {
-    if (!reviewTokenConfigured()) {
-      return (
-        <div className="mx-auto max-w-sm px-5 py-16">
-          <h1 className="font-serif text-3xl tracking-tight text-ink">Review queue</h1>
-          <p className="mt-3 text-sm leading-relaxed text-incorrect">
-            REVIEW_TOKEN is not set. The queue holds unapproved, unpublished
-            questions, so it refuses to render at all rather than serve them
-            with nothing protecting them.
-          </p>
-        </div>
-      );
-    }
-
-    const cookieStore = await cookies();
-    const authorized = tokenMatches(cookieStore.get(ADMIN_COOKIE)?.value);
+    const status = await reviewerStatus();
     // The gate on purpose: nothing below this line runs — no crop, mark
     // scheme or correct option is even fetched — until the request itself
-    // carries proof it is allowed to see them.
-    if (!authorized) return <AdminGate />;
+    // carries proof (a signed-in, is_reviewer account) that it may see them.
+    if (status.kind !== "reviewer") {
+      return <NotAReviewer status={status} />;
+    }
+    reviewerEmail = status.reviewer.email;
   }
 
   const [firstPage, subjects, decided] = await Promise.all([
@@ -88,11 +77,45 @@ export default async function ReviewPage() {
         topicGroups={topicGroups}
         decided={decided}
         persist={isBackedByDatabase()}
-        // Whether the *server* is configured to accept writes at all. Without
-        // this the page cannot tell "you have not unlocked this browser yet"
-        // from "saving is switched off", and says the wrong one half the time.
-        savingConfigured={Boolean(process.env.REVIEW_TOKEN)}
+        reviewerEmail={reviewerEmail}
       />
+    </div>
+  );
+}
+
+/** What a visitor without review access sees — distinguishing "sign in
+ *  first" from "your account is not a reviewer" rather than one generic
+ *  refusal, since the fix for each is different (and the second one is not
+ *  a fix this page can offer at all: is_reviewer is set from outside the
+ *  app, by whoever operates the database). */
+function NotAReviewer({ status }: { status: { kind: "signed-out" | "not-a-reviewer"; email?: string | null } }) {
+  return (
+    <div className="mx-auto max-w-sm px-5 py-16">
+      <h1 className="font-serif text-3xl tracking-tight text-ink">Review queue</h1>
+      <p className="mt-3 text-sm leading-relaxed text-ink-2">
+        This page holds unapproved questions — crops, mark schemes, correct
+        options — none of which is meant to be public yet.
+      </p>
+      {status.kind === "signed-out" ? (
+        <>
+          <p className="mt-4 text-sm leading-relaxed text-ink-2">
+            Sign in with a reviewer account to continue.
+          </p>
+          <Link
+            href="/login?next=/admin/review"
+            className="mt-4 inline-block rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+          >
+            Sign in
+          </Link>
+        </>
+      ) : (
+        <p className="mt-4 text-sm leading-relaxed text-incorrect">
+          {status.email ?? "This account"} is signed in but is not a reviewer.
+          Access is granted from the database (
+          <span className="font-mono">profiles.is_reviewer</span>), not from
+          this page.
+        </p>
+      )}
     </div>
   );
 }

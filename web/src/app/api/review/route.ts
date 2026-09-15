@@ -5,18 +5,17 @@
  * decides what students see: approving a question publishes it. So it is worth
  * being explicit about what protects it.
  *
- * There is no authentication in this app yet. Until there is, a write endpoint
- * reachable from the internet is a write endpoint anyone can use, so this one
- * requires a shared secret in `REVIEW_TOKEN` and refuses outright when that is
- * not set. Deploying without configuring it leaves the route disabled rather
- * than open — the failure mode of forgetting is a queue that will not save,
- * which someone notices, instead of a bank strangers can publish into, which
- * nobody notices.
- *
- * The token is a stopgap for a single operator, not a substitute for auth. It
- * is never embedded in the page: the reviewer enters it once and the browser
- * keeps it. Before /admin is served publicly it needs real accounts, and
- * `reviewed_by` needs to record which of them made the call.
+ * Every request here has to be a signed-in account with `profiles.is_reviewer
+ * = true` (`currentReviewer()`, checked against the caller's own session
+ * cookie — see `@/lib/reviewerAuth`). That authorization check runs under the
+ * caller's own identity, subject to RLS the same as any other session; the
+ * write itself still needs the service role, because RLS grants
+ * `authenticated` no UPDATE on `questions` or `question_topics` at all — but
+ * the *decision* to allow the write is made first, as the real account making
+ * the request, and that account's id is what lands in `reviewed_by`. This
+ * replaced a shared REVIEW_TOKEN secret (see 0029_reviewer_accounts.sql):
+ * every decision now has an attributable identity behind it instead of "the
+ * one string, known to whoever has it."
  *
  * Every decision here also revalidates the static pages it affects
  * (`revalidatePath`, see `revalidateForQuestion` below) — approving a
@@ -33,7 +32,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 
 import type { ReviewDecision } from "@/lib/data/types";
-import { tokenMatches } from "@/lib/reviewAuth";
+import { currentReviewer, type Reviewer } from "@/lib/reviewerAuth";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
@@ -48,6 +47,21 @@ function serviceClient(): SupabaseClient | null {
   return createClient(SUPABASE_URL, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+/** Every handler below starts with this: prove the caller is a reviewer
+ *  before doing anything else. Indistinguishable from "no such question" or
+ *  any other refusal on purpose — whether a question is merely awaiting
+ *  review is not something to leak to a request that never proved it was
+ *  allowed to ask. */
+async function requireReviewer(): Promise<
+  { reviewer: Reviewer; refusal: null } | { reviewer: null; refusal: NextResponse }
+> {
+  const reviewer = await currentReviewer();
+  if (!reviewer) {
+    return { reviewer: null, refusal: NextResponse.json({ error: "Not authorised." }, { status: 401 }) };
+  }
+  return { reviewer, refusal: null };
 }
 
 /** One row in the group a decision applies to, with just enough of it to
@@ -174,28 +188,6 @@ async function revalidateForQuestion(
   }
 }
 
-function guard(request: Request): NextResponse | null {
-  if (!process.env.REVIEW_TOKEN) {
-    return NextResponse.json(
-      { error: "Review writes are disabled: REVIEW_TOKEN is not set." },
-      { status: 503 },
-    );
-  }
-  if (!tokenMatches(request.headers.get("x-review-token"))) {
-    return NextResponse.json({ error: "Not authorised." }, { status: 401 });
-  }
-  return null;
-}
-
-/** Is this token the right one? Used by the unlock box, so entering a wrong
- *  token fails there — where it can be corrected — instead of silently, later,
- *  on every decision the reviewer makes. */
-export async function GET(request: Request) {
-  const refusal = guard(request);
-  if (refusal) return refusal;
-  return NextResponse.json({ ok: true });
-}
-
 interface DecisionBody {
   questionId?: unknown;
   decision?: unknown;
@@ -203,8 +195,8 @@ interface DecisionBody {
 }
 
 export async function POST(request: Request) {
-  const refusal = guard(request);
-  if (refusal) return refusal;
+  const auth = await requireReviewer();
+  if (auth.refusal) return auth.refusal;
 
   const client = serviceClient();
   if (!client) {
@@ -238,7 +230,11 @@ export async function POST(request: Request) {
   // reaches every row the crop actually covers, not just the top-level one.
   const { data, error } = await client
     .from("questions")
-    .update({ extraction_status: decision, reviewed_at: new Date().toISOString() })
+    .update({
+      extraction_status: decision,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: auth.reviewer.id,
+    })
     .in("id", group.map((row) => row.id))
     .in("extraction_status", UNDECIDED)
     .select("id");
@@ -387,8 +383,8 @@ interface RetagBody {
  *  resolving them here means the review UI does not need to keep the id of
  *  something it already approved and stopped tracking. */
 export async function PATCH(request: Request) {
-  const refusal = guard(request);
-  if (refusal) return refusal;
+  const auth = await requireReviewer();
+  if (auth.refusal) return auth.refusal;
 
   const client = serviceClient();
   if (!client) {
@@ -453,8 +449,8 @@ export async function PATCH(request: Request) {
  *  when it had not, so undoing returns the queue to its previous shape rather
  *  than flattening the distinction the reviewer sorts by. */
 export async function DELETE(request: Request) {
-  const refusal = guard(request);
-  if (refusal) return refusal;
+  const auth = await requireReviewer();
+  if (auth.refusal) return auth.refusal;
 
   const client = serviceClient();
   if (!client) {
@@ -485,14 +481,14 @@ export async function DELETE(request: Request) {
     withFlags.length
       ? client
           .from("questions")
-          .update({ extraction_status: "needs_review", reviewed_at: null })
+          .update({ extraction_status: "needs_review", reviewed_at: null, reviewed_by: null })
           .in("id", withFlags)
           .in("extraction_status", decided)
       : Promise.resolve({ error: null }),
     withoutFlags.length
       ? client
           .from("questions")
-          .update({ extraction_status: "extracted", reviewed_at: null })
+          .update({ extraction_status: "extracted", reviewed_at: null, reviewed_by: null })
           .in("id", withoutFlags)
           .in("extraction_status", decided)
       : Promise.resolve({ error: null }),

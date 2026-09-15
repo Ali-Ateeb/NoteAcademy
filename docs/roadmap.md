@@ -94,10 +94,10 @@ enforced through `consume_quota()`.
 
 - The split viewer still renders placeholder panes: question crops are served,
   the source PDFs are not uploaded yet.
-- No authentication. `/admin/review` is reachable by anyone who can reach the
-  app, and its write endpoint is protected only by `REVIEW_TOKEN` — a stopgap
-  for a single operator. Real accounts are needed before /admin is public, and
-  `reviewed_by` should record which one made the call.
+- ~~No authentication on `/admin/review`.~~ Fixed: gated by a real Supabase
+  Auth account with `profiles.is_reviewer = true`
+  (`db/migrations/0029_reviewer_accounts.sql`), not a shared `REVIEW_TOKEN`.
+  `questions.reviewed_by` now records which account made each call.
 - Structured (non-MCQ) questions have no arena — by design, since their
   segmentation is the part that needs the review queue first.
 - No auth. The app is single-user-per-browser.

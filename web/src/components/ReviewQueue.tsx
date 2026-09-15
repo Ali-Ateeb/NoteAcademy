@@ -5,13 +5,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   currentDecisions,
   recordDecision,
-  reviewToken,
-  setReviewToken,
   syncDecision,
   syncRetag,
   syncUndo,
   undoLastDecision,
-  verifyToken,
 } from "@/lib/review";
 import {
   REVIEW_FLAG_HINTS,
@@ -92,9 +89,12 @@ interface Props {
    *  it to count. Without one, the queue is a scaffold on fixtures and the
    *  browser is the only place a decision was ever going to live. */
   persist: boolean;
-  /** Is REVIEW_TOKEN set on the server? Distinguishes a browser that has not
-   *  been unlocked from a server that will refuse every write regardless. */
-  savingConfigured: boolean;
+  /** The signed-in reviewer, for display only — reaching this component at
+   *  all already means the server-side gate in page.tsx (`reviewerStatus()`)
+   *  passed, so there is nothing left to unlock here. Null in fixtures mode,
+   *  where `persist` is false and nothing is written anywhere but this
+   *  browser regardless of who is signed in. */
+  reviewerEmail: string | null;
 }
 
 /**
@@ -123,13 +123,12 @@ export function ReviewQueue({
   topicGroups,
   decided,
   persist,
-  savingConfigured,
+  reviewerEmail,
 }: Props) {
   const [decisions, setDecisions] = useState<Map<string, ReviewDecision> | null>(null);
   const [index, setIndex] = useState(0);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [showAll, setShowAll] = useState(false);
-  const [unlocked, setUnlocked] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // items/total start from the server-rendered first page and grow (or get
@@ -143,7 +142,6 @@ export function ReviewQueue({
   useEffect(() => {
     const stored = currentDecisions();
     setDecisions(new Map([...stored].map(([id, r]) => [id, r.decision])));
-    setUnlocked(Boolean(reviewToken()));
   }, []);
 
   // Nothing to save to, so nothing to warn about or roll back.
@@ -236,12 +234,6 @@ export function ReviewQueue({
       void syncDecision(questionId, decision, topicCode).then((result) => {
         if (result.ok) return;
         setSaveError(result.message ?? "Save failed.");
-        if (result.unauthorised) {
-          // Otherwise the bar stays hidden and every later decision fails the
-          // same way, with nothing on screen to re-enter the token through.
-          setReviewToken("");
-          setUnlocked(false);
-        }
         undoLastDecision();
         setDecisions((prev) => {
           const next = new Map(prev);
@@ -266,10 +258,6 @@ export function ReviewQueue({
     void syncUndo(last.questionId).then((result) => {
       if (result.ok) return;
       setSaveError(result.message ?? "Undo failed.");
-      if (result.unauthorised) {
-        setReviewToken("");
-        setUnlocked(false);
-      }
     });
   }, [savesToDatabase]);
 
@@ -306,18 +294,14 @@ export function ReviewQueue({
 
   return (
     <>
-      {/* Whether decisions are reaching the database, stated rather than
-          implied. A queue that looks saved and is not is the worst outcome
-          here: the work is gone and nobody knows to redo it. */}
-      {savesToDatabase && !unlocked && (
-        <UnlockBar
-          configured={savingConfigured}
-          onUnlock={(token) => {
-            setReviewToken(token);
-            setUnlocked(true);
-            setSaveError(null);
-          }}
-        />
+      {/* Reaching this component at all already means the server-side gate
+          in page.tsx passed — reviewerEmail is who that gate found, not
+          something still to unlock. Shown so a decision is never made
+          without knowing which account it will be attributed to. */}
+      {savesToDatabase && reviewerEmail && (
+        <p className="mt-4 text-sm text-ink-3">
+          Reviewing as <span className="font-medium text-ink-2">{reviewerEmail}</span>.
+        </p>
       )}
 
       {saveError && (
@@ -326,9 +310,7 @@ export function ReviewQueue({
         </p>
       )}
 
-      {savesToDatabase && unlocked && (
-        <RetagPanel topicGroups={topicGroups} decided={decided} />
-      )}
+      {savesToDatabase && <RetagPanel topicGroups={topicGroups} decided={decided} />}
 
       {/* Scopes the whole queue below to one subject and/or one flag —
           the difference between paging through a ten-subject backlog and
@@ -956,82 +938,6 @@ function RetagPanel({
         </div>
       </div>
     </details>
-  );
-}
-
-function UnlockBar({
-  configured,
-  onUnlock,
-}: {
-  configured: boolean;
-  onUnlock: (token: string) => void;
-}) {
-  const [value, setValue] = useState("");
-  const [checking, setChecking] = useState(false);
-  const [rejected, setRejected] = useState<string | null>(null);
-
-  // Two different problems that used to share one message. "Enter the review
-  // token (REVIEW_TOKEN in web/.env.local)" reads, to someone who has already
-  // put it there, as a claim that it is missing — when what is actually being
-  // asked is that this browser be given a copy.
-  if (!configured) {
-    return (
-      <p className="mt-6 rounded-xl border border-incorrect/40 bg-incorrect/5 px-4 py-3 text-sm text-incorrect">
-        Saving is switched off: <span className="font-mono">REVIEW_TOKEN</span> is
-        not set in <span className="font-mono">web/.env.local</span>. Set it and
-        restart the server — approvals made now stay in this browser only.
-      </p>
-    );
-  }
-
-  return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        const token = value.trim();
-        setRejected(null);
-        setChecking(true);
-        // Checked against the server before the box goes away. "Unlocked" used
-        // to mean only "something was typed", so a wrong token hid this form
-        // and then failed every save with no way back to it.
-        void verifyToken(token).then((result) => {
-          setChecking(false);
-          if (result.ok) onUnlock(token);
-          else setRejected(result.message ?? "That token was not accepted.");
-        });
-      }}
-      className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
-    >
-      <div className="min-w-[16rem] flex-1">
-        <p className="text-sm text-ink">Unlock this browser to save decisions.</p>
-        <p className="mt-0.5 text-xs leading-relaxed text-ink-3">
-          The server has the token; this page deliberately does not contain it,
-          because anything rendered into the page is readable by everyone who can
-          open the page. Paste it once and this browser will remember it — it is{" "}
-          <span className="font-mono">REVIEW_TOKEN</span> in{" "}
-          <span className="font-mono">web/.env.local</span>. Until then, approvals
-          are remembered here and nowhere else.
-        </p>
-        {rejected && (
-          <p className="mt-1.5 text-xs text-incorrect">{rejected}</p>
-        )}
-      </div>
-      <input
-        type="password"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        placeholder="Review token"
-        aria-label="Review token"
-        className="rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-sm text-ink"
-      />
-      <button
-        type="submit"
-        disabled={checking}
-        className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
-      >
-        {checking ? "Checking…" : "Unlock"}
-      </button>
-    </form>
   );
 }
 
