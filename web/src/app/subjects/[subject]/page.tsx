@@ -13,6 +13,12 @@ import { paperName, SEASON_LABELS, type Topic } from "@/lib/data/types";
 
 type Params = { params: Promise<{ subject: string }> };
 
+// ISR fallback for approvals that bypass the web app entirely (pipeline
+// bulk-approve, writing straight to Postgres) — see papers/[paper]/page.tsx
+// for the full reasoning. The primary path, /api/review's revalidatePath
+// calls, updates this page immediately; this is what still catches the rest.
+export const revalidate = 900;
+
 /** Every subject page is statically generated. The paper index is the entire
  *  organic acquisition channel, so it has to be crawlable and instant. */
 export async function generateStaticParams() {

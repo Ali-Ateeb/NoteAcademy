@@ -7,6 +7,12 @@ import { getQuestionTopicsForSubject, getSubject, getSubjects, getTopics } from 
 
 type Params = { params: Promise<{ subject: string }> };
 
+// ISR fallback for approvals that bypass the web app entirely (pipeline
+// bulk-approve, writing straight to Postgres) — see papers/[paper]/page.tsx
+// for the full reasoning. The primary path, /api/review's revalidatePath
+// calls, updates this page immediately; this is what still catches the rest.
+export const revalidate = 900;
+
 export async function generateStaticParams() {
   const subjects = await getSubjects();
   return subjects.filter((s) => s.isPublished).map((s) => ({ subject: s.slug }));

@@ -17,9 +17,19 @@
  * is never embedded in the page: the reviewer enters it once and the browser
  * keeps it. Before /admin is served publicly it needs real accounts, and
  * `reviewed_by` needs to record which of them made the call.
+ *
+ * Every decision here also revalidates the static pages it affects
+ * (`revalidatePath`, see `revalidateForQuestion` below) — approving a
+ * question through this route is meant to be visible the same request, not
+ * after whatever timed ISR window the page itself declares (`revalidate =
+ * 900` in papers/[paper]/page.tsx and its five siblings). That timed
+ * fallback still exists for the path this route cannot reach: `noteacademy
+ * bulk-approve` writes straight to Postgres with psycopg, outside the
+ * Next.js runtime entirely, so there is no request here to revalidate from.
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 
 import type { ReviewDecision } from "@/lib/data/types";
@@ -95,6 +105,73 @@ async function resolveGroup(
       reviewFlags: (row as { id: string; review_flags: string[] }).review_flags ?? [],
     })),
   ];
+}
+
+/** Every static page a decision on `questionId` could change, revalidated
+ *  immediately rather than left to `CONTENT_REVALIDATE_SECONDS`.
+ *
+ *  Reads the question's *current* state — called after whatever write
+ *  already happened, so a topic reassignment is reflected correctly without
+ *  this needing to know what changed, only what the result is now.
+ *  `extraTopicSlugs` is for the one thing a fresh read cannot see: a topic a
+ *  retag just moved the question *off* of, whose drill page has to lose the
+ *  question exactly as immediately as the new one gains it. */
+async function revalidateForQuestion(
+  client: SupabaseClient,
+  questionId: string,
+  extraTopicSlugs: string[] = [],
+): Promise<void> {
+  const { data: question } = await client
+    .from("questions")
+    .select("paper_id")
+    .eq("id", questionId)
+    .maybeSingle();
+  if (!question) return;
+
+  const { data: paper } = await client
+    .from("papers")
+    .select("slug,subject_id")
+    .eq("id", (question as { paper_id: string }).paper_id)
+    .maybeSingle();
+  if (!paper) return;
+  const { slug: paperSlug, subject_id: subjectId } = paper as {
+    slug: string;
+    subject_id: string;
+  };
+
+  revalidatePath(`/papers/${paperSlug}`);
+  revalidatePath(`/practice/${paperSlug}`);
+
+  const { data: subject } = await client
+    .from("subjects")
+    .select("slug")
+    .eq("id", subjectId)
+    .maybeSingle();
+  const subjectSlug = subject ? (subject as { slug: string }).slug : null;
+  if (!subjectSlug) return;
+
+  revalidatePath(`/subjects/${subjectSlug}`);
+  revalidatePath(`/dashboard/${subjectSlug}`);
+
+  const { data: topicRows } = await client
+    .from("question_topics")
+    .select("topics(slug)")
+    .eq("question_id", questionId);
+
+  const slugs = new Set(extraTopicSlugs);
+  for (const row of topicRows ?? []) {
+    // question_topics.topic_id is a single not-null FK, so PostgREST embeds
+    // `topics` as one object at runtime (confirmed against the live
+    // database) — supabase-js's un-generated types guess an array instead,
+    // which is what the `unknown` hop below is working around, not a real
+    // runtime ambiguity.
+    const slug = (row as unknown as { topics: { slug: string } | null }).topics?.slug;
+    if (slug) slugs.add(slug);
+  }
+  for (const slug of slugs) {
+    revalidatePath(`/topics/${subjectSlug}/${slug}`);
+    revalidatePath(`/topics/${subjectSlug}/${slug}/practice`);
+  }
 }
 
 function guard(request: Request): NextResponse | null {
@@ -180,12 +257,36 @@ export async function POST(request: Request) {
     );
   }
 
+  let previousTopicSlug: string | null = null;
+  let topicWarning: NextResponse | null = null;
   if (topicCode && decision === "approved") {
     const assigned = await assignTopic(client, questionId, topicCode);
-    if (assigned) return assigned;
+    previousTopicSlug = assigned.previousTopicSlug;
+    topicWarning = assigned.response;
   }
 
+  // Revalidate regardless of `topicWarning`: the approve/reject decision
+  // above already landed even when the topic override failed to save, and
+  // the pages that reflect *that* must not stay stale just because this
+  // request has something else to report.
+  await revalidateForQuestion(
+    client,
+    questionId,
+    previousTopicSlug ? [previousTopicSlug] : [],
+  );
+
+  if (topicWarning) return topicWarning;
   return NextResponse.json({ ok: true, questionId, decision });
+}
+
+/** The result of an `assignTopic` call: a response to return early with, if
+ *  something needs saying, and — regardless of that — the slug of whatever
+ *  topic held `is_primary` before this call, so the caller's revalidation
+ *  can drop the question from a topic page that a fresh read can no longer
+ *  see it belongs to. */
+interface AssignTopicResult {
+  response: NextResponse | null;
+  previousTopicSlug: string | null;
 }
 
 /** Record the reviewer's own topic choice, replacing the classifier's.
@@ -197,7 +298,7 @@ async function assignTopic(
   client: SupabaseClient,
   questionId: string,
   topicCode: string,
-): Promise<NextResponse | null> {
+): Promise<AssignTopicResult> {
   const { data: topic } = await client
     .from("topics")
     .select("id,syllabus_versions!inner(is_current)")
@@ -209,11 +310,28 @@ async function assignTopic(
   if (!topic) {
     // The decision itself already landed; say what did not, rather than
     // reporting a failure that would make the reviewer redo the approval.
-    return NextResponse.json(
-      { ok: true, questionId, warning: `No current topic with code ${topicCode}.` },
-      { status: 200 },
-    );
+    return {
+      response: NextResponse.json(
+        { ok: true, questionId, warning: `No current topic with code ${topicCode}.` },
+        { status: 200 },
+      ),
+      previousTopicSlug: null,
+    };
   }
+
+  // Read before overwriting: once `is_primary` is unset below, this is the
+  // only place the previous topic can still be identified from.
+  const { data: previous } = await client
+    .from("question_topics")
+    .select("topics(slug)")
+    .eq("question_id", questionId)
+    .eq("is_primary", true)
+    .maybeSingle();
+  // Same array-vs-object type mismatch as revalidateForQuestion's identical
+  // embed, for the same reason: a single not-null FK, typed as a list only
+  // because supabase-js has no generated schema to know better.
+  const previousTopicSlug =
+    (previous as unknown as { topics: { slug: string } | null } | null)?.topics?.slug ?? null;
 
   // One primary per question is a unique index, so the old one has to go first.
   await client
@@ -233,12 +351,15 @@ async function assignTopic(
   );
 
   if (error) {
-    return NextResponse.json(
-      { ok: true, questionId, warning: `Topic not saved: ${error.message}` },
-      { status: 200 },
-    );
+    return {
+      response: NextResponse.json(
+        { ok: true, questionId, warning: `Topic not saved: ${error.message}` },
+        { status: 200 },
+      ),
+      previousTopicSlug,
+    };
   }
-  return null;
+  return { response: null, previousTopicSlug };
 }
 
 interface RetagBody {
@@ -317,7 +438,12 @@ export async function PATCH(request: Request) {
 
   const questionId = (question as { id: string }).id;
   const assigned = await assignTopic(client, questionId, topicCode);
-  if (assigned) return assigned;
+  await revalidateForQuestion(
+    client,
+    questionId,
+    assigned.previousTopicSlug ? [assigned.previousTopicSlug] : [],
+  );
+  if (assigned.response) return assigned.response;
   return NextResponse.json({ ok: true, questionId, topicCode });
 }
 
@@ -376,5 +502,8 @@ export async function DELETE(request: Request) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  await revalidateForQuestion(client, questionId);
+
   return NextResponse.json({ ok: true, questionId });
 }

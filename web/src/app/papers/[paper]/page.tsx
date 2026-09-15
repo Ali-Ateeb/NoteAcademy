@@ -8,6 +8,27 @@ import { paperName, sessionName } from "@/lib/data/types";
 
 type Params = { params: Promise<{ paper: string }> };
 
+/** ISR, not pure static: this and the five other content pages that carry
+ *  this same value (practice, subjects, topics, topics/practice, dashboard —
+ *  `next build`'s own segment-config check requires the literal in each
+ *  file, not an imported constant) regenerate at most this often.
+ *
+ *  It is the backstop, not the primary mechanism: approving a question
+ *  through `/admin/review` calls `revalidatePath` immediately (see
+ *  `/api/review/route.ts`), so the common case updates within the same
+ *  request. This number is what covers the path that cannot reach —
+ *  `noteacademy bulk-approve` and friends write straight to Postgres with
+ *  psycopg, outside the Next.js runtime entirely, so there is no request in
+ *  which to call `revalidatePath`. Without this, a pipeline-driven approval
+ *  would need a full rebuild and redeploy before a single student could see
+ *  it — exactly the coupling this exists to break.
+ *
+ *  15 minutes: short enough that a backfill's questions surface the same
+ *  session they were approved in, long enough that a paper of even a few
+ *  hundred students hitting the same page mostly reads from cache rather
+ *  than each regenerating it themselves. */
+export const revalidate = 900;
+
 /** Statically generated, one page per paper. "5054 may june 2019 paper 12" is a
  *  real search query — tens of thousands of indexable pages is the marketing
  *  budget for a product like this. */
