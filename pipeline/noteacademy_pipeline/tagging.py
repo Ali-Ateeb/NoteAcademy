@@ -61,12 +61,54 @@ def render_syllabus(topics: list[TopicOption]) -> str:
     return "\n".join(topic.render() for topic in topics)
 
 
+def create_topic_cache(
+    topics: list[TopicOption],
+    *,
+    client: genai.Client | None = None,
+    ttl_seconds: int = 3600,
+) -> str | None:
+    """Cache the syllabus block once per subject rather than once per question.
+
+    The syllabus is identical for every question `tag_question` is called on
+    within a subject — this is the block that comment used to say was "worth
+    adding here if a full-subject backfill's cost ever demands it". Gemini
+    prompt caching is an explicit `CachedContent` resource rather than a
+    per-block flag, and it has its own minimum-token floor: a subject with few
+    topics or short learning objectives can render a syllabus block too small
+    to be worth caching, and the API refuses to create one for it rather than
+    silently caching nothing. That refusal is not this function's problem to
+    solve — returning `None` lets `tag_question` fall back to sending the
+    syllabus inline, which is correct either way, just not the cheaper path.
+
+    Call once per subject, pass the result to every `tag_question` call for
+    that subject's questions, and let it expire — `ttl_seconds` should outlast
+    one subject's backfill, not survive between separate runs.
+    """
+    client = client or genai.Client(api_key=settings.google_api_key or None)
+
+    try:
+        cache = client.caches.create(
+            model=settings.extraction_model,
+            config=types.CreateCachedContentConfig(
+                system_instruction=TAGGING_SYSTEM,
+                contents=[f"Syllabus topics:\n\n{render_syllabus(topics)}"],
+                ttl=f"{ttl_seconds}s",
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - caching is an optimisation, never a requirement
+        log.info("not caching the syllabus block (%s); tagging inline instead", exc)
+        return None
+
+    return cache.name
+
+
 def tag_question(
     question_text: str,
     topics: list[TopicOption],
     *,
     mark_scheme: str | None = None,
     client: genai.Client | None = None,
+    cached_content: str | None = None,
 ) -> TopicTagging:
     """Assign a question to syllabus topics.
 
@@ -74,31 +116,35 @@ def tag_question(
     testing is often clearer from what earns the marks than from the prompt. A
     question that reads like recall but whose mark scheme awards marks for a
     derivation belongs under the derivation's topic.
+
+    Pass `cached_content` (from `create_topic_cache`) to skip resending the
+    syllabus block on every call — the system instruction travels with the
+    cache too, since a cached-content request may not also set its own. With
+    no cache, this sends the full syllabus inline every time, exactly as
+    before.
     """
     client = client or genai.Client(api_key=settings.google_api_key or None)
 
-    # The syllabus is identical for every question in a subject. Unlike the
-    # provider this replaced, Gemini prompt caching is an explicit CachedContent
-    # object with its own minimum-token threshold and TTL rather than a per-block
-    # flag — worth adding here if a full-subject backfill's cost ever demands it,
-    # since this block really is repeated once per question in a subject.
-    blocks = [
-        f"Syllabus topics:\n\n{render_syllabus(topics)}",
-        f"Question:\n\n{question_text}",
-    ]
+    blocks = [f"Question:\n\n{question_text}"]
     if mark_scheme:
         blocks.append(f"Mark scheme:\n\n{mark_scheme}")
+
+    config_kwargs: dict = {
+        "response_mime_type": "application/json",
+        "response_schema": TopicTagging,
+        "max_output_tokens": 4000,
+        "thinking_config": types.ThinkingConfig(thinking_level="HIGH"),
+    }
+    if cached_content is not None:
+        config_kwargs["cached_content"] = cached_content
+    else:
+        config_kwargs["system_instruction"] = TAGGING_SYSTEM
+        blocks.insert(0, f"Syllabus topics:\n\n{render_syllabus(topics)}")
 
     response = client.models.generate_content(
         model=settings.extraction_model,
         contents=blocks,
-        config=types.GenerateContentConfig(
-            system_instruction=TAGGING_SYSTEM,
-            response_mime_type="application/json",
-            response_schema=TopicTagging,
-            max_output_tokens=4000,
-            thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
-        ),
+        config=types.GenerateContentConfig(**config_kwargs),
     )
 
     tagging = response.parsed

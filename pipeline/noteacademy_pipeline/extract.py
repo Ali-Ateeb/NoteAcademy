@@ -61,13 +61,83 @@ incorrect answer key is worse than a missing one, because students trust it.
 # Question labels as CAIE prints them: 1, 1(a), 1(a)(ii), 1(b)(iii).
 LABEL_RE = re.compile(r"^\s*(\d{1,2})\s*(\([a-z]\))?\s*(\((?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\))?")
 
+# Any one of these, anywhere on the page, is proof of real question content —
+# every scored item on a CAIE paper carries a marks bracket (see
+# ExtractedQuestion.max_marks's own description), a leading number, or an MCQ
+# option letter starting its line. Their absence is necessary but not
+# sufficient for skipping a page; see _looks_like_non_content.
+#
+# The negative lookahead exists because a cover's duration line ("1 hour",
+# "1 hour 30 minutes") is itself a number starting a line, and appears on
+# nearly every real cover — without excluding it specifically, a cover page
+# would almost never match on the one page type this is most useful for.
+_MARK_BRACKET_RE = re.compile(r"\[\s*\d{1,2}\s*\]")
+_QUESTION_NUMBER_LINE_RE = re.compile(
+    r"(?im)^\s*\d{1,2}(?:\s+(?!hours?\b|minutes?\b)\S|[.()])"
+)
+_MCQ_OPTION_LINE_RE = re.compile(r"(?m)^\s*[A-D][.)\s]")
+
+# CAIE's own stock wording for the page kinds `is_content_page` exists to
+# name: a cover, its instructions, a formula/data sheet, and a literal
+# 'BLANK PAGE' filler. Matched case-insensitively against the whole page.
+_NON_CONTENT_PHRASES = (
+    "blank page",
+    "read these instructions first",
+    "additional materials",
+    "candidate name",
+    "list of formulae",
+    "data sheet",
+    "the following data may be used",
+    "permission to reproduce items",
+    "this document consists of",
+)
+
+
+def _looks_like_non_content(page: RenderedPage) -> bool:
+    """True only for a page confident enough to skip the vision call entirely.
+
+    Deliberately narrow, and fails open: a page is never classified this way
+    just because it lacks a mark bracket, a question number or an MCQ option —
+    that only rules out the shapes real content is known to take. It also has
+    to match one of CAIE's own stock phrases for a cover, its instructions, a
+    formula/data sheet or 'BLANK PAGE' filler before it is skipped. Anything
+    that matches neither test goes to the model, which is the right side to
+    err on — schemas.py's own warning about `is_content_page` is what a wrong
+    skip here would do, silently, to every question on that page.
+
+    Never applies to a scanned page: with no text layer there is nothing here
+    to reason about, and vision is the only way to know what's on it at all.
+    """
+    if not page.has_text_layer:
+        return False
+
+    text = page.text
+    if (
+        _MARK_BRACKET_RE.search(text)
+        or _QUESTION_NUMBER_LINE_RE.search(text)
+        or _MCQ_OPTION_LINE_RE.search(text)
+    ):
+        return False
+
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _NON_CONTENT_PHRASES)
+
 
 def _client() -> genai.Client:
     return genai.Client(api_key=settings.google_api_key or None)
 
 
 def extract_page(page: RenderedPage, *, client: genai.Client | None = None) -> ExtractedPage:
-    """Extract the questions on a single rendered page."""
+    """Extract the questions on a single rendered page.
+
+    A page `_looks_like_non_content` never reaches the model at all — the
+    same result it would have returned, at no cost.
+    """
+    if _looks_like_non_content(page):
+        log.debug("page %s looks like a cover/instructions/formula sheet/blank "
+                   "page — skipping the vision call", page.page_number)
+        return ExtractedPage(page_number=page.page_number, is_content_page=False, questions=[])
+
     client = client or _client()
 
     content: list = [page.as_image_part()]

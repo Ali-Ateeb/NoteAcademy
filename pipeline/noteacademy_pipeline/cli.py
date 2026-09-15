@@ -321,8 +321,14 @@ def mcq_options(
     `load-mcq` files a question from geometry alone — a crop, a number, an
     answer — because CAIE's reading order is scrambled and some options are
     diagrams. This calls the vision pass on the same paper and writes what it
-    finds onto the existing rows. Costs one API call per page; run it on a
-    paper or two first and read the report before backfilling the corpus.
+    finds onto the existing rows.
+
+    Costs at most one API call per page still needing one: a question already
+    backfilled is skipped, a marked duplicate of one is copied for free, and a
+    page whose every question falls into one of those two buckets is never
+    sent to the model. Run a sitting's variants in any order — the second one
+    processed is the cheap one, since it shares most of its MCQs with the
+    first.
     """
     from .load import connect
     from .mcq_options import backfill_paper_options
@@ -347,6 +353,8 @@ def mcq_options(
     table = Table("", "", title=report.paper_slug)
     table.add_row("questions matched", str(report.matched))
     table.add_row("options written", str(report.written))
+    table.add_row("copied from a duplicate (no API call)", str(report.copied_from_duplicate))
+    table.add_row("pages skipped (fully resolved)", str(report.pages_skipped))
     console.print(table)
 
     if report.unmatched_labels:
@@ -890,6 +898,56 @@ def bulk_approve_structured_cmd(
     if dry_run:
         console.print(
             "[yellow]dry run: nothing was written. Re-run with --no-dry-run to approve.[/yellow]"
+        )
+
+
+@app.command()
+def embed(
+    subject: str = typer.Option("physics-5054", help="Subject slug to embed."),
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    dry_run: bool = typer.Option(False, help="Compute and report, write nothing."),
+) -> None:
+    """Embed every approved question in a subject for the retrieval index.
+
+    Only approved questions are embedded — `match_question` never looks at
+    anything else, so a question still in the review queue would be a cost
+    with no possible payoff. Verbatim-duplicate MCQs across paper variants
+    (`canonical_question_id`, from `dedupe`) share one vector rather than
+    paying once per paper, and content is hashed so re-running this after a
+    fresh backfill only pays for questions whose text is new or changed.
+    """
+    from .embed import backfill_embeddings
+    from .load import connect
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+    if not settings.voyage_api_key:
+        console.print("[red]VOYAGE_API_KEY is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        report = backfill_embeddings(conn, subject, papers, dry_run=dry_run)
+        if dry_run:
+            conn.rollback()
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        else:
+            conn.commit()
+
+    table = Table("", "", title=f"{subject} — embeddings")
+    table.add_row("approved questions considered", str(report.candidates))
+    table.add_row("duplicate groups", str(report.groups))
+    table.add_row("Voyage API calls", str(report.api_calls))
+    table.add_row("reused from a duplicate (no API call)", str(report.reused_from_duplicate))
+    table.add_row("already up to date, skipped", str(report.unchanged))
+    table.add_row("rows written", str(report.written))
+    console.print(table)
+
+    if report.missing_text:
+        console.print(
+            f"[yellow]{len(report.missing_text)} question(s) had no text to embed "
+            f"(no source PDF on disk, or an all-figure MCQ): "
+            f"{report.missing_text[:10]}[/yellow]"
         )
 
 
