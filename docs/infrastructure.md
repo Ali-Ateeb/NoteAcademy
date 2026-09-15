@@ -10,7 +10,10 @@ marked **measured** was run against the production Supabase project on
 2026-09-15; anything marked **projected** is arithmetic on top of those numbers
 and should be treated as an argument, not a fact.
 
-**Status:** all nine items of §9's fix list have since shipped —
+**Status:** eight of the nine items on §9's fix list have since shipped
+(everything except #7, the `question_options`/embedding backfill — still
+open, still weeks of work, and still the reason the AI solver runs on its
+fallback path rather than `match_question()`) —
 `/admin/review`'s read path is now gated, the `also_in` index is applied,
 `noteacademy audit-mcq-crops` catches the missing-option failure class this
 document argues nothing else can, `.github/workflows/ci.yml` runs the checks
