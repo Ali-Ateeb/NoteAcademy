@@ -1073,6 +1073,58 @@ def fix_spurious_crops(
             console.print(f"[green]removed {removed}[/green]")
 
 
+@app.command(name="audit-mcq-crops")
+def audit_mcq_crops_cmd(
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    subject: list[str] = typer.Option(
+        None, "--subject",
+        help="Restrict to this subject slug. Repeatable; default is every subject.",
+    ),
+) -> None:
+    """Re-derive every approved or pending MCQ's crop region from its source
+    PDF, and report any whose stored bbox hides an option the recomputed one
+    reveals.
+
+    Read-only: this only reports. Eight approved, published crops shipping
+    without their fourth option — one of them the correct answer — is what
+    this exists to catch before it happens again, not to fix silently; a
+    silent auto-fix here is the same shape of risk bulk approval already is.
+    Exits 1 if anything was found, so this can gate a script without a
+    person having to read the table first.
+    """
+    from .crop_audit import audit_mcq_crops
+    from .load import connect
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        with console.status("re-segmenting source PDFs..."):
+            report = audit_mcq_crops(conn, papers, subject_slugs=subject or None)
+
+    console.print(f"checked {report.checked} question(s)")
+    if report.skipped_missing_pdf:
+        console.print(
+            f"[yellow]{len(report.skipped_missing_pdf)} paper(s) had no local PDF to "
+            "check against[/yellow]"
+        )
+
+    if not report.suspects:
+        console.print("[green]Nothing found.[/green]")
+        return
+
+    table = Table("subject", "paper", "Q", "answer", "kind", "detail")
+    for s in report.suspects:
+        table.add_row(
+            s.subject_slug, s.paper_slug, s.display_label, s.correct_option or "?",
+            s.kind, s.detail,
+        )
+    console.print(table)
+    console.print(f"[red]{len(report.suspects)} suspect crop(s) found.[/red]")
+    raise typer.Exit(code=1)
+
+
 @app.command(name="marks-export")
 def marks_export(
     papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
