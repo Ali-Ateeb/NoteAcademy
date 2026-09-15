@@ -171,10 +171,12 @@ Three structural decisions that would be expensive to retrofit, and are correct:
 - **A paper is the sitting; documents hang off it** (`paper_documents`). Putting
   `doc_type` on `papers` would make a question paper and its mark scheme
   unrelated rows — and that join is exactly what the split-screen viewer needs.
-- **`attempts` is append-only**, enforced at the database with rules
-  (`attempts_no_update`, `attempts_no_delete`), ordered by `seq bigserial`.
-  Every analytic is a view over it, so metrics can be recomputed rather than
-  migrated.
+- **`attempts` is append-only**, enforced at the database with triggers
+  (`attempts_append_only_update`, `attempts_append_only_delete`; RULEs until
+  0030, which found they made a profile with any attempts undeletable —
+  cascade deletes rewrite through the same "do instead nothing" a direct
+  write does), ordered by `seq bigserial`. Every analytic is a view over it,
+  so metrics can be recomputed rather than migrated.
 
 Questions self-reference via `parent_question_id`, so `1(a)(ii)` rolls into
 `1(a)` into `1`. This is why a structured "question" and a structured *row* are

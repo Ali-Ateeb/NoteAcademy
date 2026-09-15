@@ -104,29 +104,57 @@ exception when check_violation then
   raise notice 'PASS: withdrawn topic links must have a null target';
 end $$;
 
--- ---------- 4. attempts are append-only ----------
+-- ---------- 4. attempts reject direct UPDATE/DELETE, but still cascade ----------
+-- (0030: RULEs that silently no-op'd direct writes also silently no-op'd the
+-- FK's own cascade delete/set-null, making a profile with any attempts
+-- undeletable. Triggers replace them: reject a direct write, let a write
+-- that arrives nested inside a FK action -- cascade or set-null -- through.)
 insert into attempts (user_id, question_id, selected_option, is_correct, time_spent_ms)
 values ('88888888-8888-8888-8888-888888888888',
         '77777777-7777-7777-7777-777777777777', 'A', false, 21000);
 
-update attempts set is_correct = true
- where user_id = '88888888-8888-8888-8888-888888888888';
 do $$
 begin
-  if exists (select 1 from attempts where is_correct) then
-    raise exception 'FAIL: an attempt row was mutated by UPDATE';
-  end if;
-  raise notice 'PASS: UPDATE on attempts is a no-op';
+  update attempts set is_correct = true
+   where user_id = '88888888-8888-8888-8888-888888888888';
+  raise exception 'FAIL: a direct UPDATE on attempts was allowed';
+exception when restrict_violation then
+  raise notice 'PASS: direct UPDATE on attempts is rejected';
 end $$;
 
-delete from attempts where user_id = '88888888-8888-8888-8888-888888888888';
 do $$
 begin
-  if (select count(*) from attempts) <> 1 then
-    raise exception 'FAIL: an attempt row was removed by DELETE';
-  end if;
-  raise notice 'PASS: DELETE on attempts is a no-op';
+  delete from attempts where user_id = '88888888-8888-8888-8888-888888888888';
+  raise exception 'FAIL: a direct DELETE on attempts was allowed';
+exception when restrict_violation then
+  raise notice 'PASS: direct DELETE on attempts is rejected';
 end $$;
+
+-- A profile with attempts must still be deletable -- the bug this migration
+-- fixes: cascading into an append-only table used to make the parent
+-- undeletable, which blocks every account-deletion path.
+do $$
+begin
+  delete from profiles where id = '88888888-8888-8888-8888-888888888888';
+  if exists (select 1 from attempts
+              where user_id = '88888888-8888-8888-8888-888888888888') then
+    raise exception 'FAIL: deleting the profile did not cascade into attempts';
+  end if;
+  raise notice 'PASS: deleting a profile cascades into its attempts';
+exception when foreign_key_violation then
+  raise exception 'FAIL: a profile with attempts could not be deleted (%)', sqlerrm;
+end $$;
+
+-- Re-seed the profile: only it and its attempts were cascade-deleted above,
+-- so the auth.users row from the fixture (if any) is still there to satisfy
+-- profiles_auth_user_fk. Later checks in this file (RLS, current_answers)
+-- need both the profile and an attempt to exist again.
+insert into profiles (id, display_name)
+values ('88888888-8888-8888-8888-888888888888', 'Test Student');
+
+insert into attempts (user_id, question_id, selected_option, is_correct, time_spent_ms)
+values ('88888888-8888-8888-8888-888888888888',
+        '77777777-7777-7777-7777-777777777777', 'A', false, 21000);
 
 -- ---------- 5. current_answers returns the latest attempt, not the first ----------
 insert into attempts (user_id, question_id, selected_option, is_correct, time_spent_ms)
