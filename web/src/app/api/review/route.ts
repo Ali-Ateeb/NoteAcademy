@@ -23,6 +23,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
 import type { ReviewDecision } from "@/lib/data/types";
+import { tokenMatches } from "@/lib/reviewAuth";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
@@ -37,22 +38,6 @@ function serviceClient(): SupabaseClient | null {
   return createClient(SUPABASE_URL, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-}
-
-/** Constant-time-ish comparison. The token is short and the endpoint is not a
- *  realistic timing-attack target, but there is no reason to make it one. */
-function tokenMatches(supplied: string | null): boolean {
-  // Trimmed on both sides. A .env written on Windows keeps CRLF, and a token
-  // that silently carries a trailing carriage return would reject every
-  // correct paste forever, with no way to tell that from a wrong token.
-  const expected = (process.env.REVIEW_TOKEN ?? "").trim();
-  supplied = supplied?.trim() ?? null;
-  if (!expected || !supplied || supplied.length !== expected.length) return false;
-  let difference = 0;
-  for (let i = 0; i < expected.length; i += 1) {
-    difference |= expected.charCodeAt(i) ^ supplied.charCodeAt(i);
-  }
-  return difference === 0;
 }
 
 /** One row in the group a decision applies to, with just enough of it to
