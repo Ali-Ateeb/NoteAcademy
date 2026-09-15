@@ -19,6 +19,7 @@ import {
   type DecidedItem,
   type ReviewCrop,
   type ReviewDecision,
+  type ReviewFlag,
   type ReviewItem,
 } from "@/lib/data/types";
 
@@ -47,25 +48,42 @@ export interface TopicGroup {
   topics: { code: string; title: string }[];
 }
 
-/** The queue mixes every subject in one list, and a paper's slug is always
- *  `${subjectSlug}-${year}-${season}-p...` — the only link back to a
- *  subject a `ReviewItem` carries. Used to scope the "Change to" dropdown to
- *  the question's own subject; falling back to every topic, grouped, is
- *  safer than guessing wrong when a slug format ever changes. */
+/** The retag panel below only ever has a typed-in paper slug or a
+ *  `DecidedItem` to work from — neither carries a real `subjectSlug` — so it
+ *  still has to guess one from the paper slug's own naming convention
+ *  (`${subjectSlug}-${year}-${season}-p...`). Falling back to every topic,
+ *  grouped, is safer than guessing wrong if that convention ever changes. */
 function matchingTopicGroups(groups: TopicGroup[], paperSlug: string): TopicGroup[] {
   const match = groups.find((g) => paperSlug.startsWith(`${g.subjectSlug}-`));
   return match ? [match] : groups;
 }
 
-function topicsForPaperSlug(
+/** The exact version of the same lookup, for a live `ReviewItem`: it carries
+ *  `subjectSlug` straight from the database (0028), so there is nothing to
+ *  guess. Used to scope the "Change to" dropdown on the card actually being
+ *  reviewed to the question's own subject. */
+function topicsForSubject(
   groups: TopicGroup[],
-  paperSlug: string,
+  subjectSlug: string,
 ): { code: string; title: string }[] {
-  return matchingTopicGroups(groups, paperSlug).flatMap((g) => g.topics);
+  return (groups.find((g) => g.subjectSlug === subjectSlug) ?? { topics: [] }).topics;
+}
+
+export interface QueueFilter {
+  subjectSlug: string | null;
+  flag: ReviewFlag | null;
 }
 
 interface Props {
-  items: ReviewItem[];
+  /** The first page, rendered server-side for a fast first paint. Paging
+   *  and filtering past this happen client-side against /api/review-queue —
+   *  see `fetchPage` below — so the keyboard-driven reviewing flow this
+   *  component is built around never stalls on a full page navigation. */
+  initialItems: ReviewItem[];
+  /** Rows matching no filter, across the whole queue — what "N pending" and
+   *  "is there more to load" are computed against, not `initialItems.length`. */
+  initialTotal: number;
+  subjects: { slug: string; title: string }[];
   topicGroups: TopicGroup[];
   /** Questions already approved or rejected, newest first — how a reviewer
    *  finds one again once it has left the queue above. */
@@ -91,9 +109,17 @@ interface Props {
  *
  * The queue is ordered worst-confidence first, so attention goes where the
  * pipeline is least sure rather than in page order.
+ *
+ * Only the first page loads up front; the subject and flag filters and the
+ * automatic "load more" once the loaded buffer runs low (see `fetchPage`)
+ * are what let a ten-subject backlog stay pageable instead of shipping the
+ * whole queue — thousands of rows, every one of them crop-signed — on
+ * first paint (see 0028_review_queue_pagination.sql).
  */
 export function ReviewQueue({
-  items,
+  initialItems,
+  initialTotal,
+  subjects,
   topicGroups,
   decided,
   persist,
@@ -106,6 +132,14 @@ export function ReviewQueue({
   const [unlocked, setUnlocked] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // items/total start from the server-rendered first page and grow (or get
+  // replaced, on a filter change) from /api/review-queue — see fetchPage.
+  const [items, setItems] = useState<ReviewItem[]>(initialItems);
+  const [total, setTotal] = useState(initialTotal);
+  const [filter, setFilter] = useState<QueueFilter>({ subjectSlug: null, flag: null });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
     const stored = currentDecisions();
     setDecisions(new Map([...stored].map(([id, r]) => [id, r.decision])));
@@ -115,10 +149,67 @@ export function ReviewQueue({
   // Nothing to save to, so nothing to warn about or roll back.
   const savesToDatabase = persist;
 
+  /** One page of /api/review-queue under the given filter. `append` grows
+   *  `items` (the "load more" path); its absence replaces them (a fresh
+   *  filter, or the very first load already covered by `initialItems`). */
+  const fetchPage = useCallback(
+    async (nextFilter: QueueFilter, offset: number, append: boolean) => {
+      setLoadingMore(true);
+      setLoadError(null);
+      try {
+        const params = new URLSearchParams({ offset: String(offset) });
+        if (nextFilter.subjectSlug) params.set("subject", nextFilter.subjectSlug);
+        if (nextFilter.flag) params.set("flag", nextFilter.flag);
+
+        const response = await fetch(`/api/review-queue?${params}`);
+        if (!response.ok) {
+          const body = (await response.json().catch(() => ({}))) as { error?: string };
+          setLoadError(body.error ?? `Loading more of the queue failed (${response.status}).`);
+          return;
+        }
+        const page = (await response.json()) as { items: ReviewItem[]; total: number };
+        setItems((prev) => (append ? [...prev, ...page.items] : page.items));
+        setTotal(page.total);
+      } catch (error) {
+        setLoadError(`Loading more of the queue failed: ${(error as Error).message}`);
+      } finally {
+        setLoadingMore(false);
+      }
+    },
+    [],
+  );
+
+  function applyFilter(next: QueueFilter) {
+    setFilter(next);
+    setIndex(0);
+    void fetchPage(next, 0, false);
+  }
+
   const pending = useMemo(
     () => (decisions ? items.filter((item) => !decisions.has(item.id)) : []),
     [items, decisions],
   );
+
+  // Not items.length: most of a large, filtered queue is never loaded at
+  // once (that is the entire point — see 0028 and getReviewQueue's own
+  // docstring), so the "N pending" stat is computed against the server's
+  // count instead, adjusted for whatever this session has already decided
+  // among the rows it *has* loaded.
+  const pendingCount = decisions
+    ? total - items.filter((item) => decisions.has(item.id)).length
+    : total;
+
+  // The buffer of loaded-but-undecided questions is what the keyboard flow
+  // actually consumes; once it runs low and the server says more exist under
+  // the current filter, fetch the next page automatically. This is what
+  // keeps "the reviewer never touches the mouse" true past the first
+  // REVIEW_PAGE_SIZE questions instead of stopping there.
+  useEffect(() => {
+    if (showAll || loadingMore) return;
+    if (pending.length > 3) return;
+    if (items.length >= total) return;
+    void fetchPage(filter, items.length, true);
+  }, [showAll, loadingMore, pending.length, items.length, total, filter, fetchPage]);
 
   const visible = showAll ? items : pending;
   const current = visible[Math.min(index, Math.max(visible.length - 1, 0))];
@@ -239,8 +330,53 @@ export function ReviewQueue({
         <RetagPanel topicGroups={topicGroups} decided={decided} />
       )}
 
-      <div className="mt-8 flex flex-wrap items-center gap-3">
-        <Stat label="Pending" value={String(pending.length)} />
+      {/* Scopes the whole queue below to one subject and/or one flag —
+          the difference between paging through a ten-subject backlog and
+          paging through the few hundred rows one subject actually has. Both
+          go through fetchPage, the same client-side path "load more" uses,
+          so switching filters never costs a full page navigation. */}
+      <div className="mt-6 flex flex-wrap items-center gap-2">
+        <select
+          value={filter.subjectSlug ?? ""}
+          onChange={(e) =>
+            applyFilter({ ...filter, subjectSlug: e.target.value || null })
+          }
+          className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink-2"
+        >
+          <option value="">All subjects</option>
+          {subjects.map((s) => (
+            <option key={s.slug} value={s.slug}>
+              {s.title}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filter.flag ?? ""}
+          onChange={(e) =>
+            applyFilter({ ...filter, flag: (e.target.value || null) as ReviewFlag | null })
+          }
+          className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink-2"
+        >
+          <option value="">Any flag</option>
+          {(Object.entries(REVIEW_FLAG_LABELS) as [ReviewFlag, string][]).map(
+            ([flag, label]) => (
+              <option key={flag} value={flag}>
+                {label}
+              </option>
+            ),
+          )}
+        </select>
+        {loadingMore && <span className="text-xs text-ink-3">Loading…</span>}
+      </div>
+
+      {loadError && (
+        <p className="mt-3 rounded-xl border border-incorrect/40 bg-incorrect/5 px-4 py-3 text-sm text-incorrect">
+          {loadError}
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Stat label="Pending" value={String(pendingCount)} />
         <Stat label="Approved" value={String(approved)} tone="correct" />
         <Stat label="Rejected" value={String(rejected)} tone="incorrect" />
         <div className="ml-auto flex items-center gap-2">
@@ -264,17 +400,20 @@ export function ReviewQueue({
 
       {!current ? (
         <div className="mt-8 rounded-2xl border border-dashed border-line p-12 text-center">
-          <p className="font-serif text-2xl text-ink">Queue clear.</p>
+          <p className="font-serif text-2xl text-ink">
+            {filter.subjectSlug || filter.flag ? "Nothing pending for this filter." : "Queue clear."}
+          </p>
           <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-ink-3">
-            Every extracted question has been reviewed. New ones appear here as
-            the pipeline ingests more papers.
+            {filter.subjectSlug || filter.flag
+              ? "Try a broader filter, or check back as the pipeline ingests more papers."
+              : "Every extracted question has been reviewed. New ones appear here as the pipeline ingests more papers."}
           </p>
         </div>
       ) : (
         <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_260px]">
           <ReviewCard
             item={current}
-            topicOptions={topicsForPaperSlug(topicGroups, current.paperSlug)}
+            topicOptions={topicsForSubject(topicGroups, current.subjectSlug)}
             override={overrides[current.id] ?? null}
             decision={decisions.get(current.id) ?? null}
             onOverride={(code) =>

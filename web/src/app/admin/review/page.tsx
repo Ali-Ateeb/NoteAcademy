@@ -49,7 +49,7 @@ export default async function ReviewPage() {
     if (!authorized) return <AdminGate />;
   }
 
-  const [items, subjects, decided] = await Promise.all([
+  const [firstPage, subjects, decided] = await Promise.all([
     getReviewQueue(),
     getSubjects(),
     getDecidedQuestions(),
@@ -82,7 +82,9 @@ export default async function ReviewPage() {
           is the whole intent. With one, a decision that does not reach it has
           not happened, and the difference has to be visible. */}
       <ReviewQueue
-        items={items}
+        initialItems={firstPage.items}
+        initialTotal={firstPage.total}
+        subjects={subjects.map((s) => ({ slug: s.slug, title: s.title }))}
         topicGroups={topicGroups}
         decided={decided}
         persist={isBackedByDatabase()}

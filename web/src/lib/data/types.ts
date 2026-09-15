@@ -240,6 +240,10 @@ export interface ReviewPart {
 
 export interface ReviewItem {
   id: string;
+  /** Which subject's queue this belongs to — the exact fact `paperSlug`'s
+   *  naming convention (`${subjectSlug}-${year}-${season}-p...`) previously
+   *  had to be guessed at (see `matchingTopicGroups` in ReviewQueue.tsx). */
+  subjectSlug: string;
   paperSlug: string;
   paperTitle: string;
   displayLabel: string;

@@ -19,6 +19,7 @@ const PAPER_TITLE = "Physics 5054 · May / June 2019 · Paper 12";
 export const reviewItems: ReviewItem[] = [
   {
     id: "r1",
+    subjectSlug: "physics-5054",
     paperSlug: PAPER,
     paperTitle: PAPER_TITLE,
     displayLabel: "13",
@@ -50,6 +51,7 @@ export const reviewItems: ReviewItem[] = [
   },
   {
     id: "r2",
+    subjectSlug: "physics-5054",
     paperSlug: PAPER,
     paperTitle: PAPER_TITLE,
     displayLabel: "27",
@@ -75,6 +77,7 @@ export const reviewItems: ReviewItem[] = [
   },
   {
     id: "r3",
+    subjectSlug: "physics-5054",
     paperSlug: PAPER,
     paperTitle: PAPER_TITLE,
     displayLabel: "31",
@@ -106,6 +109,7 @@ export const reviewItems: ReviewItem[] = [
   },
   {
     id: "r4",
+    subjectSlug: "physics-5054",
     paperSlug: PAPER,
     paperTitle: PAPER_TITLE,
     displayLabel: "34",
@@ -131,6 +135,7 @@ export const reviewItems: ReviewItem[] = [
   },
   {
     id: "r5",
+    subjectSlug: "physics-5054",
     paperSlug: PAPER,
     paperTitle: PAPER_TITLE,
     displayLabel: "38",
@@ -156,6 +161,7 @@ export const reviewItems: ReviewItem[] = [
   },
   {
     id: "r6",
+    subjectSlug: "physics-5054",
     paperSlug: "physics-5054-2015-may-june-p21",
     paperTitle: "Physics 5054 · May / June 2015 · Paper 21",
     displayLabel: "9",

@@ -533,15 +533,23 @@ export async function getPlayablePapers(subjectSlug: string): Promise<Paper[]> {
    Review queue
    --------------------------------------------------------------------------- */
 
-/** PostgREST's own per-response cap. Asking for more in one call silently
- *  returns 1000 rows and no indication that it truncated. */
-const REVIEW_PAGE = 1000;
+/** One page's worth of the queue. Small enough that even the "flagged and
+ *  least confident first" rows — the ones a reviewer is most likely to sit
+ *  with for a while — render and sign instantly; large enough that paging
+ *  through even a ten-subject backlog is a handful of loads, not hundreds. */
+export const REVIEW_PAGE_SIZE = 200;
 
-/** A ceiling on how much of the queue one page will hold in memory. The whole
- *  queue is rendered at once today, which is fine for a few thousand and will
- *  not be for a backfill — at that point this needs paging in the UI, not a
- *  bigger number here. */
-const REVIEW_QUEUE_MAX = 5000;
+export interface ReviewQueueFilter {
+  subjectSlug?: string;
+  flag?: ReviewFlag;
+}
+
+export interface ReviewQueuePage {
+  items: ReviewItem[];
+  /** Rows matching the filter across the *whole* queue, not just this page —
+   *  what "N pending" and "load more" are both computed from. */
+  total: number;
+}
 
 interface ReviewCropRow {
   storageKey: string;
@@ -557,6 +565,7 @@ interface ReviewPartRow {
 
 interface ReviewRow {
   id: string;
+  subject_slug: string;
   paper_slug: string;
   paper_title: string;
   display_label: string;
@@ -572,78 +581,76 @@ interface ReviewRow {
   proposed_topics: { code: string; title: string; confidence: number }[];
 }
 
-/** Questions the pipeline extracted but would not publish on its own.
+function filterFixtureItems(filter: ReviewQueueFilter): ReviewItem[] {
+  return [...reviewItems]
+    .sort((a, b) => (a.proposedTopics[0]?.confidence ?? 0) - (b.proposedTopics[0]?.confidence ?? 0))
+    .filter((item) => !filter.subjectSlug || item.paperSlug.startsWith(`${filter.subjectSlug}-`))
+    .filter((item) => !filter.flag || item.flags.includes(filter.flag as ReviewFlag));
+}
+
+/** One page of questions the pipeline extracted but would not publish on its
+ *  own, optionally scoped to one subject or one review flag.
  *
- *  Flagged questions first, then worst confidence: the queue is the reviewer's
- *  whole working day, so the questions most likely to be wrong have to be the
- *  ones at the top of it.
+ *  Flagged questions first, then worst topic confidence: the queue is the
+ *  reviewer's whole working day, so the questions most likely to be wrong
+ *  have to be the ones at the top of it. Both are columns on `v_review_queue`
+ *  itself (0028) precisely so this ordering — and the paging below — is a
+ *  plain `ORDER BY ... LIMIT ... OFFSET`, not "fetch everything and sort in
+ *  JavaScript". The old approach capped out at 5000 rows and silently
+ *  truncated past it; this has no such ceiling, because no request ever
+ *  asks for more than `limit` rows at a time.
  *
  *  This is the one read row level security cannot serve — every row in it is
  *  unapproved by definition — so it needs the service role. Without that key
  *  the page shows the fixtures, clearly labelled, rather than an empty queue
  *  that would read as "nothing left to review". */
-export async function getReviewQueue(): Promise<ReviewItem[]> {
+export async function getReviewQueue(
+  filter: ReviewQueueFilter = {},
+  offset = 0,
+  limit: number = REVIEW_PAGE_SIZE,
+): Promise<ReviewQueuePage> {
   const client = serviceDb();
   if (!client) {
-    // Same order as the database path, or the fixtures demonstrate a queue
-    // that behaves differently from the real one.
-    return [...reviewItems].sort(
-      (a, b) =>
-        (a.proposedTopics[0]?.confidence ?? 0) -
-        (b.proposedTopics[0]?.confidence ?? 0),
-    );
+    const items = filterFixtureItems(filter);
+    return { items: items.slice(offset, offset + limit), total: items.length };
   }
 
-  // Paged, because PostgREST caps a response at 1000 rows and says nothing
-  // about it. Unpaged, a queue of 1240 reported "1000 pending" and the last 240
-  // questions were unreachable — invisible, un-reviewable, and therefore never
-  // publishable, with nothing on screen to suggest they existed.
-  const result: ReviewRow[] = [];
-  for (let from = 0; from < REVIEW_QUEUE_MAX; from += REVIEW_PAGE) {
-    const page = await rows<ReviewRow>(
-      "the review queue",
-      client
-        .from("v_review_queue")
-        .select("*")
-        // needs_review sorts before extracted alphabetically by luck rather
-        // than by design, so the order is spelled out below instead.
-        .order("extraction_confidence", { nullsFirst: true })
-        .order("id")
-        .range(from, from + REVIEW_PAGE - 1),
-    );
-    result.push(...page);
-    if (page.length < REVIEW_PAGE) break;
-  }
+  let query = client
+    .from("v_review_queue")
+    .select("*", { count: "exact" })
+    .order("is_flagged", { ascending: false })
+    // Least confident first. Not extraction_confidence, which is 1.0 on every
+    // multiple-choice question the geometric segmenter accepted — the
+    // segmenter either matches the template or the paper is refused, so
+    // there is no middle, and sorting by a constant is not sorting it. The
+    // number that varies, and the only one a reviewer can act on, is how
+    // sure the classifier was about the topic.
+    .order("primary_topic_confidence", { ascending: true, nullsFirst: true })
+    .order("id")
+    .range(offset, offset + limit - 1);
 
-  // Flagged first, then least-confident topic first.
-  //
-  // The tie-break used to be extraction_confidence, which is 1.0 on every
-  // multiple-choice question the geometric segmenter accepted — the segmenter
-  // either matches the template or the paper is refused, so there is no middle.
-  // Sorting a queue by a constant is not sorting it, and the badge built on the
-  // same number read "100% confident" on all 1238 questions, including the ones
-  // flagged as unsure. The number that varies is how sure the classifier was
-  // about the topic, and that is also the only one a reviewer can act on.
-  const topicConfidence = (row: ReviewRow) =>
-    row.proposed_topics[0]?.confidence ?? 0;
+  if (filter.subjectSlug) query = query.eq("subject_slug", filter.subjectSlug);
+  if (filter.flag) query = query.contains("review_flags", [filter.flag]);
 
-  const flaggedFirst = [...result].sort((a, b) => {
-    const flagged = Number(b.extraction_status === "needs_review") -
-      Number(a.extraction_status === "needs_review");
-    return flagged || topicConfidence(a) - topicConfidence(b);
-  });
+  const { data, error, count } = await query;
+  if (error) throw new Error(`reading the review queue from the database failed: ${error.message}`);
+  const result = (data ?? []) as unknown as ReviewRow[];
 
   // Signed here rather than through /api/asset: every row in this queue is
   // unapproved, which is exactly what that route refuses. One request for the
   // whole page — a hundred crops signed one at a time is a hundred round trips
   // before anything renders. A structured question can carry several of its
   // own, so this flattens every row's crops rather than just the first.
+  // Only this page's crops, not the whole filtered queue — the other thing
+  // paging fixes: the old code signed URLs for every unapproved question in
+  // the database on every single page load, whether or not it was ever shown.
   const urls = await signedUrls(
-    flaggedFirst.flatMap((row) => row.crops.map((crop) => crop.storageKey)),
+    result.flatMap((row) => row.crops.map((crop) => crop.storageKey)),
   );
 
-  return flaggedFirst.map((row) => ({
+  const items: ReviewItem[] = result.map((row) => ({
     id: row.id,
+    subjectSlug: row.subject_slug,
     paperSlug: row.paper_slug,
     paperTitle: row.paper_title,
     displayLabel: row.display_label,
@@ -673,6 +680,8 @@ export async function getReviewQueue(): Promise<ReviewItem[]> {
       reasoning: "",
     })),
   }));
+
+  return { items, total: count ?? 0 };
 }
 
 /** How many decided questions the admin lookup shows. A reviewer looking for
