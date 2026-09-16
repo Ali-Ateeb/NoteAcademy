@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from google import genai
 from google.genai import types
 
 from .config import settings
-from .schemas import TopicTagging
+from .schemas import TopicAssignment, TopicTagging
 
 log = logging.getLogger(__name__)
 
@@ -217,3 +218,57 @@ def _validated(tagging: TopicTagging, topics: list[TopicOption]) -> TopicTagging
 
 def needs_review(tagging: TopicTagging) -> bool:
     return tagging.primary.confidence < settings.tag_confidence_floor
+
+
+VERIFY_FROM_CROP_SYSTEM = """You are shown a Cambridge (CAIE) exam question exactly as it was
+printed -- the image is what a student sees, options included -- and the syllabus topics for
+its subject.
+
+Choose the ONE topic whose learning objectives this question principally tests. Use only topic
+codes from the supplied list. If nothing fits, choose the closest and give it a low confidence;
+never invent a code."""
+
+_VERIFY_JSON_SHAPE = (
+    "Respond with ONLY a JSON object of this exact shape, no other text, "
+    "no markdown fence:\n"
+    '{"topic_code": "...", "confidence": 0.0-1.0, "reasoning": "..."}'
+)
+
+
+def tag_from_crop(crop_path: Path, topics: list[TopicOption]) -> TopicAssignment:
+    """A second, independent read of one question from its printed crop
+    rather than its extracted text — the automated counterpart to the manual
+    second pass `verify.py`'s contact sheets exist for.
+
+    This is the point a text-only second opinion (`tag_question` again,
+    against the same PDF-text-layer extraction the first pass already used)
+    would miss: a crop is a genuinely different signal, not a second
+    classifier reading the same scrambled words. ModelScope/Qwen-only —
+    there is no Gemini path here, because the existing human/Claude-session
+    workflow (`tag-verify-export`/`tag-verify-apply`) already covers that
+    case at zero API cost. This exists for when a model is doing the
+    looking instead of a person.
+    """
+    from .modelscope import chat_json, image_content_block, text_content_block
+
+    raw = chat_json(
+        model=settings.modelscope_vision_model,
+        system=VERIFY_FROM_CROP_SYSTEM,
+        max_tokens=1024,
+        user_content=[
+            image_content_block(crop_path.read_bytes()),
+            text_content_block(
+                f"Syllabus topics:\n\n{render_syllabus(topics)}\n\n{_VERIFY_JSON_SHAPE}"
+            ),
+        ],
+    )
+    assignment = TopicAssignment.model_validate_json(raw)
+
+    if assignment.topic_code not in {t.code for t in topics}:
+        log.warning(
+            "model returned unknown topic code %r; forcing to review",
+            assignment.topic_code,
+        )
+        assignment.confidence = 0.0
+
+    return assignment

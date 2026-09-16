@@ -56,12 +56,14 @@ class Settings:
     modelscope_api_key: str = ""
     tagging_provider: str = "gemini"
     extraction_provider: str = "gemini"
-    # Qwen has no vision-capable member of most non-VL model families, so
-    # this is deliberately a separate setting from the text model rather than
-    # one "modelscope model" — extract.py always needs vision, tagging.py
-    # never does.
-    modelscope_text_model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"
-    modelscope_vision_model: str = "Qwen/Qwen2.5-VL-72B-Instruct"
+    # Separate settings for text vs. vision in principle — extract.py always
+    # needs a vision-capable model, tagging.py never does — but both default
+    # to the same model here because the only models this account currently
+    # has access to (a "Qwen-Ambassador" pre-release program, confirmed
+    # against ModelScope's own sample code) are all Image-Text-to-Text: a VLM
+    # answers a text-only prompt fine, it just doesn't need to.
+    modelscope_text_model: str = "Qwen-Ambassador/Qwen3.8-Max"
+    modelscope_vision_model: str = "Qwen-Ambassador/Qwen3.8-Max"
 
     # Supabase Storage. The service role key is the only credential needed, and
     # it is the same one the web app uses server-side — never shipped to a

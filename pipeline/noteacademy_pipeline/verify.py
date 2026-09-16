@@ -28,6 +28,7 @@ first pass — and applies whatever they decide.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -39,6 +40,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .naming import caie_filename
 from .worksheet import question_text
+
+log = logging.getLogger(__name__)
 
 # Below this many normalised characters, two questions are not compared for
 # being duplicates: short stems ("Which is a vector?") recur by coincidence
@@ -396,6 +399,14 @@ class VerifyReport:
     skipped_no_decision: int = 0
     skipped_approved: int = 0
     unknown_codes: list[str] = field(default_factory=list)
+    # A question the model call itself failed on (a malformed reply the
+    # trailing-comma fix couldn't rescue, a network error past modelscope.py's
+    # own retries) — distinct from unknown_codes, which is a well-formed
+    # response naming a code outside the syllabus. Only ever populated by
+    # verify_mcqs_with_model; the manual tag-verify-apply path has no
+    # equivalent failure mode since a person's decision either exists or the
+    # position was left blank.
+    failed_calls: list[str] = field(default_factory=list)
 
 
 def apply_verification(
@@ -540,6 +551,122 @@ def _apply_one(
 
         if approved:
             report.skipped_approved += 1
+
+
+def verify_mcqs_with_model(
+    subject_slug: str,
+    papers_dir: Path,
+    *,
+    confidence_floor: float,
+    dry_run: bool = False,
+) -> VerifyReport:
+    """The automated counterpart to `tag-verify-export`/`tag-verify-apply`:
+    a vision-capable model reads each canonical MCQ's own crop and chooses a
+    topic, compared against the first pass exactly the way a person's
+    decision from a contact sheet already is.
+
+    Reuses `group_duplicates` and `_apply_one` rather than reimplementing the
+    comparison, so a duplicate MCQ is verified once and the outcome (raised
+    confidence on agreement, a flagged secondary topic on disagreement) is
+    identical in shape to the manual path's. The crop is re-rendered from
+    the source PDF via the recorded bbox — the same on-demand approach
+    `fix-crops`/`crop_audit` use — rather than read from a previous
+    `load-mcq --crops` run, since a subject verified from a different
+    checkout than the one that first ingested it would otherwise have no
+    local crop file to read at all.
+
+    Connects twice rather than taking one connection for the whole call:
+    a subject's worth of MCQs is up to a few hundred sequential model calls,
+    each with its own retry/backoff on a flaky endpoint, and holding a single
+    connection open across all of that is exactly what got a real run killed
+    — Supabase's pooler reclaimed it as idle mid-batch, with no query having
+    run on it in minutes. Nothing here touches the database while a model
+    call is in flight: every crop is read and classified first with no
+    connection open at all, and only the fast final pass of writes opens
+    one, manages its own commit/rollback for `dry_run`, and closes.
+    """
+    from .config import settings
+    from .load import connect
+    from .render import crop as render_crop
+    from .tagging import TopicOption, tag_from_crop
+    from .worksheet import revisable_topics
+
+    with connect(settings.database_url) as conn:
+        _, topic_rows = revisable_topics(conn, subject_slug)
+        questions = load_tagged_questions(conn, subject_slug)
+
+    topics = [TopicOption(**row) for row in topic_rows]
+    canonical, groups = group_duplicates(questions, papers_dir)
+    report = VerifyReport()
+
+    crop_dir = Path("pipeline/work") / f"{subject_slug}-verify-crops"
+    crop_dir.mkdir(parents=True, exist_ok=True)
+
+    # Phase 1: every model call. No database connection open at all.
+    decisions: dict[str, str] = {}  # canonical question id -> topic_code
+
+    for question in canonical:
+        members = groups[question.id]
+
+        if not question.bbox or not question.page_number:
+            report.skipped_no_decision += len(members)
+            continue
+
+        name = caie_filename(
+            question.syllabus_code, question.year, question.season, "qp",
+            question.component, question.variant,
+        )
+        pdf_path = papers_dir / question.syllabus_code / name
+        if not pdf_path.is_file():
+            report.skipped_no_decision += len(members)
+            continue
+
+        crop_path = crop_dir / f"{question.paper_slug}-{question.display_label}.png"
+        if not crop_path.is_file():
+            render_crop(pdf_path, question.page_number, question.bbox, crop_path)
+
+        try:
+            assignment = tag_from_crop(crop_path, topics)
+        except Exception as exc:  # noqa: BLE001 - one bad reply must not lose the rest
+            log.warning(
+                "verifying %s %s failed: %s", question.paper_slug, question.display_label, exc
+            )
+            report.failed_calls.append(f"{question.paper_slug} {question.display_label}")
+            continue
+
+        if assignment.confidence == 0.0:
+            report.unknown_codes.append(assignment.topic_code)
+            continue
+
+        decisions[question.id] = assignment.topic_code
+
+    # Phase 2: every write, in one connection's worth of fast queries with no
+    # model call — and therefore no multi-second gap — between any two of
+    # them.
+    with connect(settings.database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select t.code, t.id
+                  from topics t
+                  join syllabus_versions sv on sv.id = t.syllabus_version_id
+                  join subjects s on s.id = sv.subject_id
+                 where s.slug = %s and sv.is_current
+                """,
+                (subject_slug,),
+            )
+            topic_ids = {row["code"]: row["id"] for row in cur.fetchall()}
+
+        for canonical_id, topic_code in decisions.items():
+            for question_id in groups[canonical_id]:
+                _apply_one(conn, question_id, topic_code, topic_ids, confidence_floor, report)
+
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+
+    return report
 
 
 @dataclass

@@ -217,6 +217,7 @@ def _extract_page_modelscope(page: RenderedPage) -> ExtractedPage:
     raw = chat_json(
         model=settings.modelscope_vision_model,
         system=EXTRACTION_SYSTEM,
+        max_tokens=16000,
         user_content=[
             image_content_block(page.png_path.read_bytes()),
             text_content_block(f"{page_note}\n\n{_EXTRACTION_JSON_SHAPE}"),

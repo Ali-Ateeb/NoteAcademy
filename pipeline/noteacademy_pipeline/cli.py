@@ -777,6 +777,65 @@ def tag_verify_apply(
         )
 
 
+@app.command(name="tag-verify-auto")
+def tag_verify_auto(
+    subject: str = typer.Option("physics-5054", help="Subject to verify."),
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    floor: float = typer.Option(settings.tag_confidence_floor,
+                                help="Below this confidence, hold the question back."),
+    dry_run: bool = typer.Option(True, help="Report what would happen, without writing it."),
+) -> None:
+    """The automated counterpart to tag-verify-export/tag-verify-apply: a
+    vision-capable model reads each MCQ's own printed crop and chooses a
+    topic, compared against the first pass exactly like a person's decision
+    from a contact sheet already is. ModelScope/Qwen only.
+
+    Reads the crop, not the extracted text the first pass used — a text-only
+    second opinion would be a second classifier reading the same scrambled
+    words, not independent evidence. Defaults to a dry run: this can move a
+    question's tag confidence and review status across the whole subject in
+    one call.
+    """
+    from .verify import verify_mcqs_with_model
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+    if not settings.modelscope_api_key:
+        console.print("[red]MODELSCOPE_API_KEY is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    with console.status(f"verifying {subject} against {settings.modelscope_vision_model}..."):
+        report = verify_mcqs_with_model(subject, papers, confidence_floor=floor, dry_run=dry_run)
+    if dry_run:
+        console.print("[yellow]dry run: rolled back[/yellow]")
+
+    table = Table(
+        "", "", title=f"{subject} — automated second pass" + (" (dry run)" if dry_run else "")
+    )
+    table.add_row("agreed (confidence raised)", str(report.agreed))
+    table.add_row("disagreed (sent to review)", str(report.disagreed))
+    table.add_row("already approved, left alone", str(report.skipped_approved))
+    table.add_row("no crop available, skipped", str(report.skipped_no_decision))
+    table.add_row("call failed, skipped", str(len(report.failed_calls)))
+    console.print(table)
+
+    if report.unknown_codes:
+        console.print(
+            f"[red]{len(report.unknown_codes)} response(s) returned an unknown/invalid "
+            f"topic code: {sorted(set(report.unknown_codes))[:5]}[/red]"
+        )
+    if report.failed_calls:
+        console.print(
+            f"[yellow]{len(report.failed_calls)} question(s) the model call itself failed "
+            f"on, worth a re-run: {report.failed_calls[:5]}[/yellow]"
+        )
+    if dry_run:
+        console.print(
+            "[yellow]dry run: nothing was written. Re-run with --no-dry-run to apply.[/yellow]"
+        )
+
+
 @app.command()
 def dedupe(
     subject: str = typer.Option("physics-5054", help="Subject slug to deduplicate."),
