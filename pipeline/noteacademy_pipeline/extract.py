@@ -138,6 +138,18 @@ def extract_page(page: RenderedPage, *, client: genai.Client | None = None) -> E
                    "page — skipping the vision call", page.page_number)
         return ExtractedPage(page_number=page.page_number, is_content_page=False, questions=[])
 
+    if settings.extraction_provider == "modelscope":
+        result = _extract_page_modelscope(page)
+    else:
+        result = _extract_page_gemini(page, client=client)
+
+    result.page_number = page.page_number       # never trust the model for this
+    return result
+
+
+def _extract_page_gemini(
+    page: RenderedPage, *, client: genai.Client | None = None
+) -> ExtractedPage:
     client = client or _client()
 
     content: list = [page.as_image_part()]
@@ -167,9 +179,50 @@ def extract_page(page: RenderedPage, *, client: genai.Client | None = None) -> E
         ),
     )
 
-    result = response.parsed
-    result.page_number = page.page_number       # never trust the model for this
-    return result
+    return response.parsed
+
+
+# The exact shape _extract_page_modelscope asks Qwen-VL for — spelled out in
+# the prompt because response_format on this endpoint asks for JSON, it
+# doesn't constrain decoding to a schema the way Gemini's response_schema
+# does. page_number is asked for only so every field ExtractedPage requires
+# is present; extract_page overwrites it from the RenderedPage regardless of
+# what either provider returns, so what the model puts there doesn't matter.
+_EXTRACTION_JSON_SHAPE = (
+    "Respond with ONLY a JSON object of this exact shape, no other text, "
+    "no markdown fence:\n"
+    '{"page_number": int, "is_content_page": bool, "questions": ['
+    '{"display_label": str, '
+    '"question_type": "mcq"|"structured"|"essay"|"practical", '
+    '"max_marks": int or null, '
+    '"question_text": str, '
+    '"bbox": {"x0": float, "y0": float, "x1": float, "y1": float}, '
+    '"continues_on_next_page": bool, "is_continuation": bool, '
+    '"options": [{"letter": "A"|"B"|"C"|"D"|"E", "text": str}] or null'
+    "}]}"
+)
+
+
+def _extract_page_modelscope(page: RenderedPage) -> ExtractedPage:
+    from .modelscope import chat_json, image_content_block, text_content_block
+
+    page_note = (
+        f"Text layer for page {page.page_number} "
+        f"(page is {page.width_pt:.0f}x{page.height_pt:.0f} pt):\n\n{page.text}"
+        if page.has_text_layer
+        else f"Page {page.page_number} has no text layer (scanned). "
+        f"Page is {page.width_pt:.0f}x{page.height_pt:.0f} pt."
+    )
+
+    raw = chat_json(
+        model=settings.modelscope_vision_model,
+        system=EXTRACTION_SYSTEM,
+        user_content=[
+            image_content_block(page.png_path.read_bytes()),
+            text_content_block(f"{page_note}\n\n{_EXTRACTION_JSON_SHAPE}"),
+        ],
+    )
+    return ExtractedPage.model_validate_json(raw)
 
 
 def extract_mcq_answers(

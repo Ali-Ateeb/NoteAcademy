@@ -121,8 +121,24 @@ def tag_question(
     syllabus block on every call — the system instruction travels with the
     cache too, since a cached-content request may not also set its own. With
     no cache, this sends the full syllabus inline every time, exactly as
-    before.
+    before. `cached_content` is Gemini-only and ignored under
+    `settings.tagging_provider == "modelscope"`, which has no equivalent.
     """
+    if settings.tagging_provider == "modelscope":
+        return _tag_question_modelscope(question_text, topics, mark_scheme=mark_scheme)
+    return _tag_question_gemini(
+        question_text, topics, mark_scheme=mark_scheme, client=client, cached_content=cached_content
+    )
+
+
+def _tag_question_gemini(
+    question_text: str,
+    topics: list[TopicOption],
+    *,
+    mark_scheme: str | None = None,
+    client: genai.Client | None = None,
+    cached_content: str | None = None,
+) -> TopicTagging:
     client = client or genai.Client(api_key=settings.google_api_key or None)
 
     blocks = [f"Question:\n\n{question_text}"]
@@ -147,7 +163,45 @@ def tag_question(
         config=types.GenerateContentConfig(**config_kwargs),
     )
 
-    tagging = response.parsed
+    return _validated(response.parsed, topics)
+
+
+# The exact shape _tag_question_modelscope asks Qwen for — spelled out in the
+# prompt because, unlike Gemini's response_schema, response_format on this
+# endpoint doesn't constrain decoding, only asks for it.
+_TAGGING_JSON_SHAPE = (
+    'Respond with ONLY a JSON object of this exact shape, no other text, '
+    "no markdown fence:\n"
+    '{"primary": {"topic_code": "...", "confidence": 0.0-1.0, "reasoning": "..."}, '
+    '"secondary": [{"topic_code": "...", "confidence": 0.0-1.0, "reasoning": "..."}]}'
+)
+
+
+def _tag_question_modelscope(
+    question_text: str,
+    topics: list[TopicOption],
+    *,
+    mark_scheme: str | None = None,
+) -> TopicTagging:
+    from .modelscope import chat_json
+
+    blocks = [
+        f"Syllabus topics:\n\n{render_syllabus(topics)}",
+        f"Question:\n\n{question_text}",
+    ]
+    if mark_scheme:
+        blocks.append(f"Mark scheme:\n\n{mark_scheme}")
+    blocks.append(_TAGGING_JSON_SHAPE)
+
+    raw = chat_json(
+        model=settings.modelscope_text_model,
+        system=TAGGING_SYSTEM,
+        user_content="\n\n".join(blocks),
+    )
+    return _validated(TopicTagging.model_validate_json(raw), topics)
+
+
+def _validated(tagging: TopicTagging, topics: list[TopicOption]) -> TopicTagging:
     valid = {topic.code for topic in topics}
 
     if tagging.primary.topic_code not in valid:

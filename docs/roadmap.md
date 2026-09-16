@@ -77,6 +77,15 @@ is what topic tagging and the topical browser are tagged against.
   non-conforming or scanned papers and for the `mcq-options` backfill. It
   skips the model call outright for a page it can confidently tell is a
   cover, instructions, a formula sheet, or blank filler.
+- Both `extract.py` (vision) and `tagging.py` (direct-API tagging, still
+  otherwise unused — see below) can now run against Qwen via ModelScope's
+  API-Inference endpoint instead of Gemini, switched independently per stage
+  by `NOTEACADEMY_EXTRACTION_PROVIDER` / `NOTEACADEMY_TAGGING_PROVIDER`.
+  Added after Gemini's persistent `503` this session, with real ModelScope
+  credits sitting unused. Not yet run for real — needs `MODELSCOPE_API_KEY`,
+  which isn't in `.env` yet. The endpoint itself is confirmed live and
+  reachable (a deliberately-invalid token gets a clean 401, not a connection
+  or routing failure).
 - `mcq-options` (vision backfill of MCQ question/option text) and `embed`
   (retrieval embeddings) are both duplicate- and idempotency-aware: a
   question already backfilled, or a verbatim duplicate of one that is,
@@ -134,9 +143,11 @@ Concrete and verified this session, not carried forward from an old list:
 3. **Get a real `VOYAGE_API_KEY` into `.env`, then run `embed` for
    physics-5054.** Nothing else is blocking this one — it's ready to run the
    moment a key exists.
-4. **Retry `mcq-options` for physics-5054.** Blocked this session by a
-   persistent Gemini `503` ("high demand"), not a bug — worth a fresh
-   attempt.
+4. **Get a real `MODELSCOPE_API_KEY` into `.env`, confirm the two Qwen model
+   IDs against ModelScope's current catalog, then retry `mcq-options` for
+   physics-5054 with `NOTEACADEMY_EXTRACTION_PROVIDER=modelscope`.** This is
+   the same item #7 work as #3, just the vision half — routed off Gemini
+   specifically because that's the half that hit the `503`.
 5. **Provision at least one reviewer account** (`update profiles set
    is_reviewer = true where email = '...'`). Costs nothing and unblocks the
    review queue, which currently has no one who can sign into it.
@@ -148,6 +159,10 @@ Concrete and verified this session, not carried forward from an old list:
    a token-cost problem, since the verification machinery (`tag-verify-export`
    / `tag-verify-apply`) already exists and was run once at zero API cost. It
    costs review time, and 80% of the tagged corpus is currently unverified.
+   `tag_question` now running on Qwen (see #4) is a real option here too —
+   it's a genuine second, independent classifier, which is exactly what a
+   verification pass needs, and it's text-only so it doesn't need the
+   vision-capable model or wait on Gemini at all.
 8. **Upload the source PDFs and finish the split viewer.** Unlocks the
    `SplitViewer`'s real panes instead of placeholders.
 9. **Payments**, once there's a live audience to charge.
