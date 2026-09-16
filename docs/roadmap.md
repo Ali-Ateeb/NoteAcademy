@@ -77,20 +77,27 @@ is what topic tagging and the topical browser are tagged against.
   non-conforming or scanned papers and for the `mcq-options` backfill. It
   skips the model call outright for a page it can confidently tell is a
   cover, instructions, a formula sheet, or blank filler.
-- Both `extract.py` (vision) and `tagging.py` (direct-API tagging, still
-  otherwise unused — see below) can now run against Qwen via ModelScope's
-  API-Inference endpoint instead of Gemini, switched independently per stage
-  by `NOTEACADEMY_EXTRACTION_PROVIDER` / `NOTEACADEMY_TAGGING_PROVIDER`.
-  Added after Gemini's persistent `503` this session, with real ModelScope
-  credits sitting unused. Not yet run for real — needs `MODELSCOPE_API_KEY`,
-  which isn't in `.env` yet. The endpoint itself is confirmed live and
-  reachable (a deliberately-invalid token gets a clean 401, not a connection
-  or routing failure).
-- `mcq-options` (vision backfill of MCQ question/option text) and `embed`
-  (retrieval embeddings) are both duplicate- and idempotency-aware: a
-  question already backfilled, or a verbatim duplicate of one that is,
-  costs nothing to re-run or skip. Neither has been run at scale yet — see
-  Known gaps.
+- Both `extract.py` (vision) and `tagging.py` (direct-API tagging, plus a
+  new `tag_from_crop` built specifically for automated verification — see
+  below) can run against Qwen via ModelScope's API-Inference endpoint
+  instead of Gemini, switched independently per stage by
+  `NOTEACADEMY_EXTRACTION_PROVIDER` / `NOTEACADEMY_TAGGING_PROVIDER`. Tried
+  for real this session with a live `MODELSCOPE_API_KEY` and found
+  **unreliable enough not to depend on**: `Qwen-Ambassador/Qwen3.8-Max`
+  gave persistent `504`s on every vision call across multiple attempts;
+  `Qwen-Ambassador/Qwen3.7-Max` answers text instantly but returns a clean
+  `500 "No choices in OpenAI response"` on every vision call specifically.
+  Text-only calls work fine on both. Current decision: moving off ModelScope
+  back toward Gemini (now with real billing, unlocking Gemini 3 Pro, which
+  was previously hard-blocked at 0 free-tier quota) or the real Anthropic
+  API for the vision-dependent work — not yet implemented for either.
+- `mcq-options` (vision backfill of MCQ question/option text): 144
+  `question_options` rows written (one paper, physics-5054's newest sitting,
+  mostly done) before the ModelScope reliability problems above stopped
+  progress. 14 of 15 physics-5054 MCQ papers still untouched.
+- `embed` (retrieval embeddings): built, tested live against real data,
+  **never actually run** — `question_embeddings` is still 0 rows. This
+  fell off after `VOYAGE_API_KEY` was added; nothing is blocking it.
 - 30 migrations, all applied to the live database with matching checksums
   (`db/apply.py --status`), including `0030` fixing the attempts/profiles
   cascade-delete bug.
@@ -104,21 +111,23 @@ Concrete and verified this session, not carried forward from an old list:
 - **Zero reviewer accounts provisioned.** `profiles.is_reviewer = true` has
   never been set on a real account in production. `/admin/review` is gated
   correctly, but nobody can currently pass the gate.
-- **Item #7 is still open, and both attempts to close it this session hit an
-  external blocker, not a code problem:**
-  - `mcq-options` against physics-5054 hit a persistent `503 UNAVAILABLE
-    ("high demand")` from Gemini on `gemini-3.6-flash`, across four attempts
-    over several minutes. Very likely transient upstream capacity, not
-    anything wrong here — worth retrying.
-  - `embed` against physics-5054 can't run at all: `VOYAGE_API_KEY` is
-    present as a key in `.env` but its value is empty. Needs a real key from
-    voyageai.com before this can run for real. (Not blocked on Gemini at
-    all, and not blocked on `mcq-options` either — confirmed live that all
-    594 MCQs and 667 structured questions already resolve non-empty
-    embedding text straight from the PDF text layer, with zero model calls.)
-  - `question_options` and `question_embeddings` are still both 0 rows.
-    Most MCQs display as a crop image with no selectable text, and the AI
-    solver still can't use `match_question()`.
+- **Item #7 is still open.** `question_options`: 144/~5,900 rows (one
+  paper). `question_embeddings`: 0 rows, despite `VOYAGE_API_KEY` being set
+  and the command being fully built and verified — it simply never got run.
+  Most MCQs still display as a crop image with no selectable text, and the
+  AI solver still can't use `match_question()`.
+- **Automated tag verification exists and works, but needs a reliable model
+  behind it.** `noteacademy tag-verify-auto` (new this session) reads each
+  MCQ's own crop — genuinely independent of the first pass's text-based
+  signal — and compares its topic choice to what's on file, same mechanism
+  as the manual `tag-verify-export`/`tag-verify-apply` path. Live-tested
+  against chemistry-5070: correctly caught a real, plausible disagreement
+  (DB said topic `12.4`, the model's independent crop read said `7.3` —
+  salt preparation from an insoluble carbonate) on the very first question
+  it disagreed on. Stalled at ~74/272 chemistry-5070 MCQs, not because the
+  tool is wrong but because ModelScope's vision access proved unreliable
+  (see above) — needs a Gemini or Anthropic vision path added to
+  `tag_from_crop` before it can be trusted to run unattended at scale.
 - **Tagging accuracy has only been independently checked for one-fifth of
   the bank.** Physics 5054's 594 MCQs were verified by a second, independent
   pass (564/600, 94%, agreed). Chemistry 5070, biology 5090, and physics's
@@ -135,34 +144,31 @@ Concrete and verified this session, not carried forward from an old list:
 
 ## Next steps, in priority order
 
-1. ~~**Fix the `/auth/callback` open redirect.**~~ Done — `safeRedirect.ts`,
-   see Live today.
-2. ~~**Commit and push everything outstanding.**~~ Done — the attempts/
-   profiles cascade-delete fix, the pipeline efficiency work, and the
-   open-redirect fix landed as three separate commits and are pushed.
-3. **Get a real `VOYAGE_API_KEY` into `.env`, then run `embed` for
-   physics-5054.** Nothing else is blocking this one — it's ready to run the
-   moment a key exists.
-4. **Get a real `MODELSCOPE_API_KEY` into `.env`, confirm the two Qwen model
-   IDs against ModelScope's current catalog, then retry `mcq-options` for
-   physics-5054 with `NOTEACADEMY_EXTRACTION_PROVIDER=modelscope`.** This is
-   the same item #7 work as #3, just the vision half — routed off Gemini
-   specifically because that's the half that hit the `503`.
-5. **Provision at least one reviewer account** (`update profiles set
+1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
+2. **Commit and push the outstanding pipeline work.** `modelscope.py`'s
+   retry-broadening, the trailing-comma JSON repair, `verify.py`'s two-phase
+   connection restructure (see below), and the Qwen-Ambassador model
+   defaults are all sitting uncommitted right now — the last pushed commit
+   is `88dd5d4`, itself still unpushed too.
+3. **Decide Gemini-with-billing vs. real Anthropic API for the
+   vision-dependent work** (tagging verification, `mcq-options`), then add
+   that provider's path to `tag_from_crop` (currently ModelScope-only) —
+   in progress, cost estimated for both, not yet implemented.
+4. **Run `embed` for physics-5054.** Fully built, tested live, nothing
+   blocking it — it just never got run. This alone would turn on the AI
+   solver's real `match_question()` path instead of its fallback.
+5. **Finish `mcq-options` for the remaining 14 physics-5054 papers**, once
+   a reliable vision provider is wired up.
+6. **Provision at least one reviewer account** (`update profiles set
    is_reviewer = true where email = '...'`). Costs nothing and unblocks the
    review queue, which currently has no one who can sign into it.
-6. **Patch the `/api/solve` quota-refund gap.** Small, self-contained, and
+7. **Patch the `/api/solve` quota-refund gap.** Small, self-contained, and
    the failure mode (silently charging a student for a solve that never
    happened) is the kind of thing that erodes trust quietly.
-7. **Extend tagging verification to chemistry-5070, biology-5090, and
-   physics's own structured bank.** This is the actual accuracy lever — not
-   a token-cost problem, since the verification machinery (`tag-verify-export`
-   / `tag-verify-apply`) already exists and was run once at zero API cost. It
-   costs review time, and 80% of the tagged corpus is currently unverified.
-   `tag_question` now running on Qwen (see #4) is a real option here too —
-   it's a genuine second, independent classifier, which is exactly what a
-   verification pass needs, and it's text-only so it doesn't need the
-   vision-capable model or wait on Gemini at all.
-8. **Upload the source PDFs and finish the split viewer.** Unlocks the
+8. **Run tagging verification at scale for chemistry-5070, biology-5090,
+   and physics's own structured bank**, once #3 lands. The tool works
+   (proven on real data); it just needs a provider it can run unattended
+   against.
+9. **Upload the source PDFs and finish the split viewer.** Unlocks the
    `SplitViewer`'s real panes instead of placeholders.
-9. **Payments**, once there's a live audience to charge.
+10. **Payments**, once there's a live audience to charge.
