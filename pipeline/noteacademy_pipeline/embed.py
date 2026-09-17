@@ -12,6 +12,8 @@ actually changed.
 from __future__ import annotations
 
 import hashlib
+import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,12 +25,63 @@ from .config import settings
 from .naming import caie_filename
 from .worksheet import question_text as crop_text
 
+log = logging.getLogger(__name__)
+
 VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
 BATCH_SIZE = 128
+
+# A free/new-account rate limit hits on roughly the second batch of any real
+# backfill, confirmed live — modelscope.py needed the identical fix for the
+# identical reason, so it gets the identical shape here. Reactive retry alone
+# was not enough: one real run rescued its second batch after four backed-off
+# retries, then exhausted all five on the very next one — the limit here is
+# strict enough that a fixed pace between batches, not just a reaction after
+# the fact, is needed to actually stay under it.
+_MAX_ATTEMPTS = 6
+_RETRY_BASE_DELAY_S = 8.0
+_INTER_BATCH_DELAY_S = 20.0
 
 
 def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _post_with_retry(client: httpx.Client, batch: list[str], input_type: str) -> dict:
+    """One Voyage call, retried on a rate limit or a transient server/network
+    failure. Honours a `Retry-After` header on a 429 when Voyage sends one,
+    since that is a more accurate wait than a guessed backoff; falls back to
+    linear backoff otherwise.
+    """
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            response = client.post(
+                VOYAGE_URL,
+                headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
+                json={"input": batch, "model": settings.embedding_model, "input_type": input_type},
+            )
+            response.raise_for_status()
+            return response.json()
+        except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+            retryable = isinstance(exc, httpx.TransportError) or (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code in (429, 500, 502, 503, 504)
+            )
+            if attempt == _MAX_ATTEMPTS or not retryable:
+                raise
+
+            delay = _RETRY_BASE_DELAY_S * attempt
+            if isinstance(exc, httpx.HTTPStatusError):
+                retry_after = exc.response.headers.get("retry-after")
+                if retry_after and retry_after.isdigit():
+                    delay = float(retry_after)
+
+            log.warning(
+                "voyage call failed (attempt %d/%d): %s — retrying in %.0fs",
+                attempt, _MAX_ATTEMPTS, exc, delay,
+            )
+            time.sleep(delay)
+
+    raise AssertionError("unreachable")  # loop always returns or raises
 
 
 def embed_texts(
@@ -54,19 +107,16 @@ def embed_texts(
     vectors: list[list[float]] = []
 
     try:
-        for start in range(0, len(texts), BATCH_SIZE):
+        starts = range(0, len(texts), BATCH_SIZE)
+        for i, start in enumerate(starts):
+            if i > 0:
+                # Paced, not reactive: waiting only after a 429 already
+                # happened wasn't enough to stay under a strict per-minute
+                # limit (see _MAX_ATTEMPTS's comment) — this keeps every
+                # batch's own retries from starting behind before they begin.
+                time.sleep(_INTER_BATCH_DELAY_S)
             batch = texts[start : start + BATCH_SIZE]
-            response = client.post(
-                VOYAGE_URL,
-                headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
-                json={
-                    "input": batch,
-                    "model": settings.embedding_model,
-                    "input_type": input_type,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+            payload = _post_with_retry(client, batch, input_type)
             # Voyage returns results in request order, but the index is present
             # and authoritative — sort by it rather than trusting position.
             ordered = sorted(payload["data"], key=lambda item: item["index"])
