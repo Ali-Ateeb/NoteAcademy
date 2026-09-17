@@ -95,6 +95,20 @@ export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
         <Stat label="Topics covered" value={`${rows.length} / ${topics.length}`} />
       </div>
 
+      <Link
+        href={`/dashboard/${subjectSlug}/revise` as Route}
+        className="mt-4 flex items-center justify-between rounded-2xl border border-line bg-accent-soft p-5 transition-colors hover:border-line-strong"
+      >
+        <div>
+          <p className="font-medium tracking-tight text-ink">Revise your weakest topics</p>
+          <p className="mt-1 text-sm leading-relaxed text-ink-2">
+            A mixed drill built from the topics you are actually getting wrong — not a full
+            re-drill of every topic below.
+          </p>
+        </div>
+        <span className="ml-4 shrink-0 text-sm font-medium text-accent">Start →</span>
+      </Link>
+
       <div className="mt-8 space-y-2">
         {rows.map(({ topic, stat }) => {
           const percentage = Math.round(stat.accuracy * 100);

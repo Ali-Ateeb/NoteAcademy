@@ -122,6 +122,7 @@ interface TopicRow {
   title: string;
   learning_objectives: string[];
   question_count: number;
+  total_marks: number;
   parent_code: string | null;
   is_revisable: boolean;
 }
@@ -189,6 +190,7 @@ const toTopic = (row: TopicRow): Topic => ({
   title: row.title,
   learningObjectives: row.learning_objectives,
   questionCount: row.question_count,
+  totalMarks: row.total_marks,
   parentCode: row.parent_code,
   isRevisable: row.is_revisable,
 });
@@ -251,7 +253,7 @@ function assetUrl(storageKey: string | null): string | null {
 
 const SUBJECT_COLUMNS = "slug,level_code,syllabus_code,title,description,is_published";
 const TOPIC_COLUMNS =
-  "code,slug,title,learning_objectives,question_count,parent_code,is_revisable";
+  "code,slug,title,learning_objectives,question_count,total_marks,parent_code,is_revisable";
 const PAPER_COLUMNS =
   "slug,subject_slug,year,season,component,variant,question_type,question_count,documents";
 // One string literal, not a concatenation: supabase-js infers the row type from
@@ -466,6 +468,45 @@ export async function getQuestionsByTopic(
       // timed arena) deliberately does not apply this filter, because a
       // paper's own question count has to match what was printed regardless
       // of what another paper's variant shares with it.
+      .is("canonical_question_id", null)
+      .order("paper_slug")
+      .order("ordinal"),
+  );
+  return result.map(toMcq);
+}
+
+/** Every playable MCQ across several topics at once, folded to one query and
+ *  one duplicate-free list — the weak-topic revision queue's own population.
+ *  Built for exactly that caller: `getQuestionsByTopic` (singular) stays as
+ *  it is for the existing one-topic-at-a-time pages rather than becoming a
+ *  one-element call into this, since a single extra array allocation per
+ *  request buys nothing there. */
+export async function getQuestionsByTopics(
+  subjectSlug: string,
+  topicCodes: string[],
+): Promise<McqQuestion[]> {
+  if (topicCodes.length === 0) return [];
+
+  const client = db();
+  if (!client) {
+    const papers = new Set(
+      seed.papers.filter((p) => p.subjectSlug === subjectSlug).map((p) => p.slug),
+    );
+    const codes = new Set(topicCodes);
+    return seed.mcqQuestions.filter(
+      (q) => papers.has(q.paperSlug) && q.topicCodes.some((code) => codes.has(code)),
+    );
+  }
+
+  const result = await rows<McqRow>(
+    "questions across several topics",
+    client
+      .from("v_mcq_questions")
+      .select(MCQ_COLUMNS)
+      .eq("subject_slug", subjectSlug)
+      // Array-overlap (Postgres &&), not .contains: this wants a question
+      // tagged to *any* of the given topics, not all of them.
+      .overlaps("topic_codes", topicCodes)
       .is("canonical_question_id", null)
       .order("paper_slug")
       .order("ordinal"),
