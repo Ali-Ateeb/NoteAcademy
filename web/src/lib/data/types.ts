@@ -30,6 +30,13 @@ export interface Topic {
   title: string;
   learningObjectives: string[];
   questionCount: number;
+  /** Marks this topic has actually accounted for, historically — an MCQ
+   *  counts as 1, a structured question as the sum of its parts' own marks
+   *  (see db/migrations/0031_topic_marks.sql). Two topics with the same
+   *  `questionCount` are not equally worth revising if one is all 1-mark
+   *  MCQs and the other all 6-mark structured parts; this is the number that
+   *  tells them apart. */
+  totalMarks: number;
   /** '4.2.4' hangs off '4.2' hangs off '4'. Null for a top-level section.
    *  Enough to rebuild the tree without a recursive query. */
   parentCode: string | null;
