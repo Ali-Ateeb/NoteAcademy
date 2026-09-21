@@ -146,8 +146,8 @@ export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
 
   if (state.kind === "no-weak-topics") {
     return (
-      <div className="rounded-2xl border border-dashed border-line p-10 text-center">
-        <h1 className="font-serif text-2xl tracking-tight text-ink">Nothing weak to revise yet</h1>
+      <div className="rounded-[2rem] border-2 border-dashed border-line-strong bg-surface/80 p-10 text-center">
+        <h1 className="font-serif text-2xl font-extrabold tracking-tight text-ink">Nothing weak to revise yet</h1>
         <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-ink-3">
           This fills in once you have attempted at least {MIN_ATTEMPTS} questions on a topic and
           scored under {Math.round(WEAK_ACCURACY * 100)}% on it. Sit a paper or run a topic drill
@@ -155,7 +155,7 @@ export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
         </p>
         <Link
           href={`/dashboard/${subject.slug}` as Route}
-          className="mt-5 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+          className="pill pill-solid mt-5 px-5 py-2 text-sm"
         >
           Back to dashboard →
         </Link>
@@ -177,13 +177,13 @@ export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
     return (
       <div>
         {weakList}
-        <div className="rounded-2xl border border-dashed border-line p-10 text-center">
+        <div className="rounded-[2rem] border-2 border-dashed border-line-strong bg-surface/80 p-10 text-center">
           <p className="text-ink-2">
             Every question on these topics is either already correct or unavailable right now.
           </p>
           <Link
             href={`/dashboard/${subject.slug}` as Route}
-            className="mt-5 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+            className="pill pill-solid mt-5 px-5 py-2 text-sm"
           >
             Back to dashboard →
           </Link>
@@ -194,7 +194,7 @@ export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
 
   return (
     <div>
-      <h1 className="mb-1 font-serif text-2xl tracking-tight text-ink">
+      <h1 className="mb-1 font-serif text-3xl font-extrabold tracking-tight text-ink">
         {subject.title} — weak-topic revision
       </h1>
       {weakList}

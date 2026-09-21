@@ -381,7 +381,7 @@ export function ReviewQueue({
       </div>
 
       {!current ? (
-        <div className="mt-8 rounded-2xl border border-dashed border-line p-12 text-center">
+        <div className="mt-8 rounded-2xl border-2 border-dashed border-line-strong bg-surface/70 p-12 text-center">
           <p className="font-serif text-2xl text-ink">
             {filter.subjectSlug || filter.flag ? "Nothing pending for this filter." : "Queue clear."}
           </p>
@@ -486,7 +486,7 @@ function ReviewCard({
   const chosen = override ?? primary?.code ?? null;
 
   return (
-    <div className="rounded-2xl border border-line bg-surface p-6 shadow-card">
+    <div className="rounded-2xl border border-line-strong bg-surface p-6 shadow-card">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-sm text-ink">
           Q{item.displayLabel}
@@ -883,7 +883,7 @@ function RetagPanel({
           <button
             type="submit"
             disabled={status?.kind === "saving"}
-            className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="pill pill-solid px-4 py-2 text-sm disabled:pointer-events-none disabled:opacity-50"
           >
             {status?.kind === "saving" ? "Saving…" : "Save topic"}
           </button>

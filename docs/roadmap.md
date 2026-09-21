@@ -117,11 +117,12 @@ is what topic tagging and the topical browser are tagged against.
 
 ---
 
-## Look and feel — Note Academy redesign (2026-09-21, uncommitted)
+## Look and feel — Note Academy redesign (2026-09-21)
 
 The site is being re-skinned to match the Note Academy brand and the reference
 site (`Ali-Ateeb/nawa`, `toolbar` branch): a student's notebook rather than a
-generic app. Light and dark are both done for the main student flow.
+generic app. Light and dark are both done across the student-facing app;
+committed in `6073199` (core pages) and the follow-up for the remaining pages.
 
 Done:
 - **Brand assets in place.** Cropped, WebP-optimised logos in
@@ -152,11 +153,25 @@ Done:
   toggle overrides the OS setting in both directions (checked). Verified
   visually on landing, subject, topic, arena and results pages.
 
+- **Remaining pages** (2026-09-21): `StructuredArena` (yellow sticky-note
+  "mark yourself" panel, round mark chips, results card with the pencil),
+  `SplitViewer` and the paper page (sticker-outlined viewer, pill tabs,
+  highlighter labels), the revise-weak-topics flow, practice-page headings,
+  and the admin review gate and primary buttons. Dark verified on the
+  dashboard, revise page, split viewer, sign-in at 375px and the admin gate.
+- Fixed a pre-existing contrast bug on the way: `SolutionButton`'s "AI
+  solution" label used `text-accent-ink` on `bg-accent-soft` (white on pale
+  blue in light, dark on navy in dark) — invisible in both.
+
 Not done yet:
-- Dark mode has not been eyeballed on the dashboard, sign-in pages or a phone
-  width; `StructuredArena`, `SplitViewer`, the paper page, and the admin review
-  queue still carry the previous styling on shared tokens (correct colours and
-  fonts, but not the notebook motifs).
+- **`ReviewQueue` itself** (969 lines, reviewer-only) got a light touch — its
+  primary button, cards and empty state — and was not viewed signed in,
+  because no reviewer account exists to sign in with.
+- Dark mode: the white stacked logo is lazy-loaded (it is `display:none` in
+  light), so a dark-mode visitor's first paint of the sign-in/landing logo
+  can lag a moment. No layout shift — the space is reserved. Fixing it means
+  either downloading both colourways for everyone or giving up the manual
+  toggle for a `<picture>` media query.
 - The landing page still claims examiner-report content that does not exist
   in the data (see Known gaps).
 
@@ -241,7 +256,7 @@ Concrete and verified this session, not carried forward from an old list:
 9. **Upload the source PDFs and finish the split viewer.** Unlocks the
    `SplitViewer`'s real panes instead of placeholders.
 10. **Payments**, once there's a live audience to charge.
-11. **Finish the redesign**: the structured arena, split viewer, paper page
-    and admin queue (see Look and feel).
+11. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
+    signed in.
 12. **Speed**: expose `topic_mastery` via an `auth.uid()` view to drop the
     dashboard's ~100 kB payload; reserve crop space from `bbox`.

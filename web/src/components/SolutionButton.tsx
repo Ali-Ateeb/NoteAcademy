@@ -43,8 +43,8 @@ export function SolutionButton({ questionId }: { questionId: string }) {
 
   if (state.kind === "done") {
     return (
-      <div className="mt-3 rounded-xl bg-accent-soft p-4">
-        <p className="text-xs font-semibold uppercase tracking-widest text-accent-ink">
+      <div className="mt-3 rounded-xl border border-accent/30 bg-accent-soft p-4">
+        <p className="text-xs font-bold uppercase tracking-widest text-accent">
           Worked solution
         </p>
         <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-ink">
@@ -60,7 +60,7 @@ export function SolutionButton({ questionId }: { questionId: string }) {
         type="button"
         onClick={fetchSolution}
         disabled={state.kind === "loading"}
-        className="rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink-2 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-60"
+        className="pill pill-plain px-3.5 py-1.5 text-xs disabled:pointer-events-none disabled:opacity-60"
       >
         {state.kind === "loading" ? "Thinking…" : "Get worked solution"}
       </button>

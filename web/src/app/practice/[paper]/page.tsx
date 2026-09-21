@@ -66,7 +66,7 @@ export default async function PracticePage({ params }: Params) {
 
     return (
       <div className="mx-auto max-w-4xl px-5 py-10">
-        <h1 className="mb-1 font-serif text-2xl tracking-tight text-ink">{title}</h1>
+        <h1 className="mb-1 font-serif text-3xl font-extrabold tracking-tight text-ink">{title}</h1>
         <p className="mb-7 text-sm text-ink-2">
           {questions.length} questions · self-marked · progress is saved as you go
         </p>
@@ -86,7 +86,7 @@ export default async function PracticePage({ params }: Params) {
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-10">
-      <h1 className="mb-1 font-serif text-2xl tracking-tight text-ink">{title}</h1>
+      <h1 className="mb-1 font-serif text-3xl font-extrabold tracking-tight text-ink">{title}</h1>
       <p className="mb-7 text-sm text-ink-2">
         {questions.length} questions · answers are saved as you go
       </p>

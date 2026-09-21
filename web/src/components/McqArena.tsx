@@ -230,7 +230,7 @@ export function McqArena({
   return (
     <div>
       {resumed && (
-        <div className="mb-4 rounded-xl border border-line bg-marks-soft px-4 py-2.5 text-sm text-ink-2">
+        <div className="mb-4 rounded-xl border border-note-line bg-note px-4 py-2.5 text-sm text-ink">
           Resumed where you left off — {answeredCount} of {total} answered.
         </div>
       )}

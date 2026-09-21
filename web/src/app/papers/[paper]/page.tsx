@@ -92,7 +92,7 @@ export default async function PaperPage({ params }: Params) {
           <p className="mt-1.5 text-ink-2">
             {sessionName(paper)}
             <span className="mx-2 text-ink-3">·</span>
-            <span className="font-mono text-sm">{subject.syllabusCode}</span>
+            <span className="hl hl-blue font-mono text-sm">{subject.syllabusCode}</span>
             <span className="mx-2 text-ink-3">·</span>
             {paper.questionCount} questions
           </p>
@@ -101,7 +101,7 @@ export default async function PaperPage({ params }: Params) {
         {isPlayable && (
           <Link
             href={`/practice/${paper.slug}`}
-            className="rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+            className="pill pill-solid px-5 py-2.5 text-sm"
           >
             {paper.questionType === "mcq" ? "Sit this paper →" : "Practise this paper →"}
           </Link>

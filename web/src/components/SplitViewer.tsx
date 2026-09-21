@@ -80,18 +80,18 @@ export function SplitViewer({ paperSlug, available }: Props) {
   }, [secondaries]);
 
   return (
-    <div className="rounded-2xl border border-line bg-surface shadow-card">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+    <div className="overflow-hidden rounded-2xl border-2 border-edge bg-surface shadow-[4px_4px_0_var(--pop)]">
+      <div className="flex flex-wrap items-center gap-2 border-b-2 border-line bg-surface-2 px-3 py-2">
         <div className="flex gap-1">
           {secondaries.map((doc) => (
             <button
               key={doc}
               type="button"
               onClick={() => setSecondary(doc)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              className={`rounded-full px-3.5 py-1 text-xs font-bold transition-all duration-150 ${
                 secondary === doc
                   ? "bg-accent text-accent-ink"
-                  : "text-ink-2 hover:bg-surface-2"
+                  : "text-ink-2 hover:bg-hl-blue hover:text-ink"
               }`}
             >
               {DOC_LABELS[doc]}
@@ -168,12 +168,14 @@ function DocumentPane({
   return (
     <div>
       <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="text-sm font-medium text-ink">{label}</h3>
+        <h3 className="text-sm">
+          <span className="hl hl-blue font-bold">{label}</span>
+        </h3>
         <span className="font-mono text-[10px] uppercase text-ink-3">{docType}</span>
       </div>
-      <div className="flex min-h-[300px] items-center justify-center rounded-xl border border-dashed border-line bg-surface-2 p-8 text-center">
+      <div className="flex min-h-[300px] items-center justify-center rounded-xl border-2 border-dashed border-note-line bg-note p-8 text-center">
         <div>
-          <p className="text-sm text-ink-2">
+          <p className="text-sm text-ink">
             {label} for <span className="font-mono text-xs">{paperSlug}</span>
           </p>
           <p className="mt-2 max-w-xs text-xs leading-relaxed text-ink-3">

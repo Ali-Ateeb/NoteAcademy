@@ -60,7 +60,7 @@ export default async function ReviewPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-12">
-      <h1 className="font-serif text-4xl tracking-tight text-ink">Review queue</h1>
+      <h1 className="rule-under font-serif text-4xl font-extrabold tracking-tight text-ink">Review queue</h1>
       <p className="mt-3 max-w-2xl leading-relaxed text-ink-2">
         Questions the pipeline extracted but would not publish on its own. Nothing
         here is visible to students until it is approved — which is what keeps a
@@ -90,8 +90,8 @@ export default async function ReviewPage() {
  *  app, by whoever operates the database). */
 function NotAReviewer({ status }: { status: { kind: "signed-out" | "not-a-reviewer"; email?: string | null } }) {
   return (
-    <div className="mx-auto max-w-sm px-5 py-16">
-      <h1 className="font-serif text-3xl tracking-tight text-ink">Review queue</h1>
+    <div className="mx-4 my-12 max-w-sm min-[420px]:mx-auto rounded-[2rem] border-2 border-edge bg-surface px-7 py-9 shadow-[4px_4px_0_var(--pop)]">
+      <h1 className="font-serif text-3xl font-extrabold tracking-tight text-ink">Review queue</h1>
       <p className="mt-3 text-sm leading-relaxed text-ink-2">
         This page holds unapproved questions — crops, mark schemes, correct
         options — none of which is meant to be public yet.
@@ -103,7 +103,7 @@ function NotAReviewer({ status }: { status: { kind: "signed-out" | "not-a-review
           </p>
           <Link
             href="/login?next=/admin/review"
-            className="mt-4 inline-block rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+            className="pill pill-solid mt-4 px-5 py-2.5 text-sm"
           >
             Sign in
           </Link>

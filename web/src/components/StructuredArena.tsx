@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { PencilMark } from "@/components/Brand";
 import { SolutionButton } from "@/components/SolutionButton";
 import {
   appendStructuredAttempts,
@@ -226,7 +227,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
   return (
     <div>
       {resumed && (
-        <div className="mb-4 rounded-xl border border-line bg-marks-soft px-4 py-2.5 text-sm text-ink-2">
+        <div className="mb-4 rounded-xl border border-note-line bg-note px-4 py-2.5 text-sm text-ink">
           Resumed where you left off — {doneCount} of {total} self-marked.
         </div>
       )}
@@ -236,20 +237,20 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
         <button
           type="button"
           onClick={submit}
-          className="ml-auto rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+          className="pill pill-solid ml-auto px-5 py-2 text-sm"
         >
           Finish
         </button>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_200px]">
-        <div className="rounded-2xl border border-line bg-surface p-6 shadow-card">
+        <div className="rounded-2xl border border-line-strong bg-surface p-6 shadow-card">
           <div className="mb-4 flex items-center justify-between">
-            <span className="font-mono text-sm text-ink-3">
+            <span className="hl hl-blue font-mono text-xs">
               Question {current.displayLabel} · {state.currentIndex + 1} / {total}
             </span>
             {currentParts.length > 0 && (
-              <span className="text-xs text-ink-3">
+              <span className="hl hl-yellow text-xs font-bold">
                 {currentParts.reduce((sum, p) => sum + (p.maxMarks ?? 0), 0)} marks
               </span>
             )}
@@ -285,7 +286,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
           )}
 
           {!isRevealed ? (
-            <div className="mt-6 flex flex-col items-center gap-3 rounded-xl border border-dashed border-line bg-surface-2 p-6 text-center">
+            <div className="mt-6 flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-note-line bg-note p-6 text-center">
               <p className="max-w-sm text-sm leading-relaxed text-ink-2">
                 Work through {current.displayLabel} on paper, then reveal the mark
                 scheme and mark yourself honestly, part by part.
@@ -293,15 +294,15 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
               <button
                 type="button"
                 onClick={reveal}
-                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+                className="pill pill-solid px-5 py-2 text-sm"
               >
                 Show mark scheme
               </button>
             </div>
           ) : (
-            <div className="mt-6 border-t border-line pt-5">
+            <div className="mt-6 rounded-xl border border-note-line bg-note p-5">
               <div className="mb-3 flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
+                <p className="text-xs font-bold uppercase tracking-widest text-ink-2">
                   Mark yourself
                 </p>
                 {currentParts.length > 0 && (
@@ -329,7 +330,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
               type="button"
               onClick={() => goTo(state.currentIndex - 1)}
               disabled={state.currentIndex === 0}
-              className="rounded-lg px-3 py-1.5 text-sm text-ink-2 transition-colors hover:bg-surface-2 disabled:opacity-40"
+              className="pill pill-plain px-4 py-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
             >
               ← Previous
             </button>
@@ -340,7 +341,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
               type="button"
               onClick={() => goTo(state.currentIndex + 1)}
               disabled={state.currentIndex === total - 1}
-              className="rounded-lg px-3 py-1.5 text-sm text-ink-2 transition-colors hover:bg-surface-2 disabled:opacity-40"
+              className="pill pill-plain px-4 py-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
             >
               Next →
             </button>
@@ -348,7 +349,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
         </div>
 
         <aside>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-3">
+          <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-ink-2">
             Questions
           </h2>
           <div className="grid grid-cols-8 gap-1.5 lg:grid-cols-5">
@@ -365,12 +366,12 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
                   type="button"
                   onClick={() => goTo(index)}
                   aria-label={`Question ${question.displayLabel}${done ? ", self-marked" : ""}`}
-                  className={`relative aspect-square rounded-md font-mono text-xs transition-colors ${
+                  className={`relative aspect-square rounded-lg border-2 font-mono text-xs transition-all duration-150 hover:scale-105 ${
                     active
-                      ? "bg-accent text-accent-ink"
+                      ? "border-accent bg-accent text-accent-ink"
                       : done
-                        ? "bg-accent-soft text-ink"
-                        : "bg-surface-2 text-ink-3 hover:text-ink"
+                        ? "border-transparent bg-hl-blue text-ink"
+                        : "border-line bg-surface text-ink-3 hover:border-accent hover:text-ink"
                   }`}
                 >
                   {question.displayLabel}
@@ -427,10 +428,10 @@ function PartMarker({
               role="radio"
               aria-checked={given === value}
               onClick={() => onMark(value)}
-              className={`flex h-7 w-7 items-center justify-center rounded-md font-mono text-xs transition-colors ${
+              className={`flex h-7 w-7 items-center justify-center rounded-full border-2 font-mono text-xs transition-all duration-150 hover:scale-110 ${
                 given === value
-                  ? "bg-accent text-accent-ink"
-                  : "bg-surface-2 text-ink-2 hover:bg-accent-soft"
+                  ? "border-accent bg-accent text-accent-ink"
+                  : "border-line bg-surface text-ink-2 hover:border-accent"
               }`}
             >
               {value}
@@ -490,8 +491,9 @@ function StructuredResults({
 
   return (
     <div>
-      <div className="rounded-2xl border border-line bg-surface p-7 shadow-card">
-        <p className="text-sm text-ink-3">{title}</p>
+      <div className="relative rounded-2xl border-2 border-edge bg-surface p-7 shadow-[4px_4px_0_var(--pop)]">
+        <PencilMark className="absolute -top-5 right-6 h-14 rotate-6" />
+        <p className="hl hl-yellow w-fit font-mono text-xs">{title}</p>
         <div className="mt-3 flex flex-wrap items-end gap-8">
           <div>
             <span className="font-serif text-5xl tabular-nums text-ink">
@@ -512,13 +514,13 @@ function StructuredResults({
             <button
               type="button"
               onClick={onRetake}
-              className="rounded-lg border border-line-strong px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-2"
+              className="pill pill-plain px-4 py-2 text-sm"
             >
               Retake
             </button>
             <Link
               href={backHref}
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+              className="pill pill-solid px-5 py-2 text-sm"
             >
               Done
             </Link>
@@ -533,7 +535,7 @@ function StructuredResults({
         )}
       </div>
 
-      <h2 className="mb-4 mt-10 font-serif text-2xl tracking-tight text-ink">Every question</h2>
+      <h2 className="rule-under mb-5 mt-10 font-serif text-2xl tracking-tight text-ink">Every question</h2>
       <div className="space-y-3">
         {questions.map((question) => {
           const given = marks[question.id] ?? {};
