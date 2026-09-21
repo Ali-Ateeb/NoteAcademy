@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import psycopg
 
@@ -53,6 +54,9 @@ class TagAutoReport:
     failed_calls: list[str] = field(default_factory=list)
     unknown_codes: list[str] = field(default_factory=list)
     by_topic: dict[str, int] = field(default_factory=dict)
+    retagged: int = 0
+    changed_topic: int = 0
+    backup: Path | None = None
 
 
 def load_untagged_mcqs(
@@ -63,6 +67,7 @@ def load_untagged_mcqs(
     year_to: int,
     paper_slug: str | None = None,
     limit: int | None = None,
+    include_tagged: bool = False,
 ) -> list[UntaggedMcq]:
     with conn.cursor() as cur:
         cur.execute(
@@ -75,7 +80,8 @@ def load_untagged_mcqs(
               join exam_sessions es on es.id = p.exam_session_id
              where s.slug = %s and q.question_type = 'mcq'
                and es.year between %s and %s
-               and not exists (select 1 from question_topics qt where qt.question_id = q.id)
+               {"" if include_tagged else
+                "and not exists (select 1 from question_topics qt where qt.question_id = q.id)"}
                {"and p.slug = %s" if paper_slug else ""}
              order by es.year, p.slug, q.ordinal
              {"limit %s" if limit else ""}
@@ -104,6 +110,36 @@ def load_untagged_mcqs(
     ]
 
 
+def _current_tags(conn: psycopg.Connection, question_ids: list[str]) -> dict[str, str]:
+    if not question_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select qt.question_id, t.code
+              from question_topics qt join topics t on t.id = qt.topic_id
+             where qt.is_primary and qt.question_id = any(%s)
+            """,
+            (question_ids,),
+        )
+        return {str(r["question_id"]): r["code"] for r in cur.fetchall()}
+
+
+def _write_backup(
+    paper_slug: str | None, questions: list[UntaggedMcq], old_tags: dict[str, str]
+) -> Path:
+    import csv
+
+    path = settings.work_dir / f"retag-before-{paper_slug}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["question_id", "label", "previous_primary_topic"])
+        for question in questions:
+            writer.writerow([question.id, question.display_label, old_tags.get(question.id, "")])
+    return path
+
+
 def render_question(question: UntaggedMcq) -> str:
     lines = [question.question_text] if question.question_text else []
     lines += [f"{letter}. {text}" for letter, text in sorted(question.options.items())]
@@ -127,16 +163,27 @@ def tag_mcqs_with_model(
     workers: int = 1,
     paper_slug: str | None = None,
     limit: int | None = None,
+    retag: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> TagAutoReport:
+    """`retag` replaces the topic of questions that already have one, and puts
+    every one of them back into review (status `needs_review`, flag
+    `low_tag_confidence`), approved or not: an approved question whose tag was
+    wrong is live under the wrong topic, so it comes off until a person
+    re-approves it. It needs `paper_slug`, so it can only ever be pointed at
+    named papers, and the tags it replaces are written to a CSV first."""
     from .load import connect
+
+    if retag and not paper_slug:
+        raise ValueError("retag needs a paper_slug: it replaces tags that a person approved")
 
     with connect(settings.database_url) as conn:
         _, topic_rows = revisable_topics(conn, subject_slug)
         questions = load_untagged_mcqs(
             conn, subject_slug, year_from=year_from, year_to=year_to,
-            paper_slug=paper_slug, limit=limit,
+            paper_slug=paper_slug, limit=limit, include_tagged=retag,
         )
+        old_tags = _current_tags(conn, [q.id for q in questions]) if retag else {}
 
     topics = [TopicOption(**row) for row in topic_rows]
     report = TagAutoReport(candidates=len(questions))
@@ -169,13 +216,36 @@ def tag_mcqs_with_model(
             "confidence": tagging.primary.confidence,
         })
 
+    if retag and decisions:
+        report.backup = _write_backup(paper_slug, questions, old_tags)
+
     with connect(settings.database_url) as conn:
+        if retag and decisions:
+            ids = [d["id"] for d in decisions]
+            with conn.cursor() as cur:
+                cur.execute("delete from question_topics where question_id = any(%s)", (ids,))
+                cur.execute(
+                    """
+                    update questions
+                       set extraction_status = 'needs_review',
+                           review_flags = (
+                             select array_agg(distinct f)
+                               from unnest(review_flags || 'low_tag_confidence'::review_flag) f)
+                     where id = any(%s)
+                    """,
+                    (ids,),
+                )
+            report.retagged = len(ids)
         applied = apply_worksheet(conn, subject_slug, decisions, confidence_floor=confidence_floor)
         if dry_run:
             conn.rollback()
         else:
             conn.commit()
 
+    if retag:
+        report.changed_topic = sum(
+            1 for d in decisions if old_tags.get(d["id"]) != d["topic_code"]
+        )
     report.tagged = applied.tagged
     report.held_for_review = applied.flagged
     report.unknown_codes = applied.unknown_codes

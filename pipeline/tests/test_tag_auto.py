@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from noteacademy_pipeline import tag_auto
@@ -21,9 +23,27 @@ def mcq(n, text="Which oxide is amphoteric?", options=None, correct="A") -> Unta
                        question_text=text, options=options, correct_option=correct)
 
 
+class _Cursor:
+    def __init__(self, log):
+        self.log = log
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.log.append((" ".join(sql.split()).lower(), params))
+
+
 class _Conn:
     def __init__(self):
         self.committed = self.rolled_back = False
+        self.sql = []
+
+    def cursor(self):
+        return _Cursor(self.sql)
 
     def __enter__(self):
         return self
@@ -142,3 +162,25 @@ def test_one_failed_call_is_reported_and_does_not_lose_the_rest(world, monkeypat
     report = run()
     assert report.failed_calls == ["chem-2016 Q1"]
     assert [d["id"] for d in world["decisions"]] == ["q2"]
+
+
+def test_retag_is_refused_without_a_named_paper(world):
+    with pytest.raises(ValueError, match="paper_slug"):
+        run(retag=True)
+    assert world["conns"] == []  # refused before anything was opened
+
+
+def test_retag_replaces_old_tags_and_returns_the_questions_to_review(world, monkeypatch, tmp_path):
+    world["questions"] = [mcq(1), mcq(2)]
+    monkeypatch.setattr(tag_auto, "_current_tags", lambda conn, ids: {"q1": "8.1", "q2": "9.9"})
+    monkeypatch.setattr(tag_auto, "settings",
+                        dataclasses.replace(tag_auto.settings, work_dir=tmp_path))
+    report = run(retag=True, paper_slug="chem-2016")
+
+    write_conn = world["conns"][-1]
+    statements = [sql for sql, _ in write_conn.sql]
+    assert statements[0].startswith("delete from question_topics")
+    assert "needs_review" in statements[1]
+    assert (report.retagged, report.changed_topic) == (2, 1)   # q1 was already 8.1
+    assert report.backup is not None
+    assert len(report.backup.read_text(encoding="utf-8").splitlines()) == 3  # header + 2 rows

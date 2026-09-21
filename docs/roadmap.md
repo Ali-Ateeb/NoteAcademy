@@ -385,11 +385,16 @@ The route for the 2,960 newly loaded MCQs, run end to end for both subjects.
   2020 Oct/Nov P12 (3/40). The other four approved Chemistry papers match at
   78-92%. In the worst paper the approved tags run in ascending syllabus order
   regardless of content ("rate of reaction" filed under Preparation of salts).
-  These ~158 questions are **approved, so live to students, under the wrong
-  topics**. Cause unknown (not this session's writes: tag-auto only touches
-  untagged questions). Not yet fixed; re-tag and re-review, or take offline.
-  This also means the 153 Chemistry disagreements on approved questions found by
-  the second read were largely real.
+  These 159 questions were approved, so live to students, under the wrong
+  topics. **Fixed 2026-09-21:** `tag-auto --retag --paper <slug>` (refuses to
+  run without a named paper; saves the old tags to
+  `pipeline/work/retag-before-<slug>.csv` first) re-tagged all four papers from
+  text: 139 of 159 topics changed. Every question in them, plus one with no
+  readable text (2020 O/N P11 Q3), is back in `needs_review` with
+  `low_tag_confidence`, so none is live until a person re-approves it.
+  Chemistry approved MCQs went 318 -> 160. This also means the 153 Chemistry
+  disagreements on approved questions found by the second read were largely
+  real.
 
 ---
 
@@ -399,7 +404,8 @@ The route for the 2,960 newly loaded MCQs, run end to end for both subjects.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
 3. **Review and approve the 2,960 newly loaded MCQs.** Tagged and second-read
    (see the section above). Remaining: (a) review the 196 flagged
-   disagreements (Chemistry 123, Physics 73) in the queue; (b) tag the 22
+   disagreements (Chemistry 123, Physics 73) and the 160 retagged Chemistry
+   questions in the queue; (b) tag the 22
    figure-only questions from the crop (`tag_from_crop`) or by hand; (c) re-run
    verification for the 12 failed calls; (d) `bulk-approve` the rest, only
    after a person has looked at a sample. Then run `tag-verify-structured`

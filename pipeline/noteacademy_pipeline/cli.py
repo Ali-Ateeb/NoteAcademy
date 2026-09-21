@@ -789,6 +789,9 @@ def tag_auto(
     paper: str = typer.Option(None, help="Restrict to one paper slug."),
     limit: int = typer.Option(None, help="Stop after this many questions."),
     workers: int = typer.Option(8, help="Model calls in flight at once (1 = one at a time)."),
+    retag: bool = typer.Option(
+        False, help="Replace the topics of questions that already have one, and put them back "
+                    "into review. Needs --paper; the old tags are saved to a CSV first."),
 ) -> None:
     """First-pass topic tags for multiple-choice questions, read from text.
 
@@ -808,7 +811,7 @@ def tag_auto(
         try:
             report = tag_mcqs_with_model(
                 subject, year_from=from_year, year_to=to_year, confidence_floor=floor,
-                dry_run=dry_run, workers=workers, paper_slug=paper, limit=limit,
+                dry_run=dry_run, workers=workers, paper_slug=paper, limit=limit, retag=retag,
                 on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
             )
         except DeepSeekAccountError as error:
@@ -823,6 +826,11 @@ def tag_auto(
     table.add_row("call failed, skipped", str(len(report.failed_calls)))
     console.print(table)
 
+    if retag:
+        console.print(
+            f"retagged {report.retagged}, of which the topic changed {report.changed_topic}; "
+            f"all returned to review. Old tags: {report.backup}"
+        )
     if report.by_topic:
         spread = Table("topic", "questions", title="Spread across the syllabus")
         for code, count in sorted(report.by_topic.items()):
