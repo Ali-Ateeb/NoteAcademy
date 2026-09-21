@@ -778,6 +778,74 @@ def tag_verify_apply(
         )
 
 
+@app.command(name="tag-auto")
+def tag_auto(
+    subject: str = typer.Option("physics-5054", help="Subject to tag."),
+    floor: float = typer.Option(settings.tag_confidence_floor,
+                                help="Below this confidence, hold the question back."),
+    dry_run: bool = typer.Option(True, help="Report what would happen, without writing it."),
+    from_year: int = typer.Option(settings.scope_year_from, help="First sitting year to tag."),
+    to_year: int = typer.Option(settings.scope_year_to, help="Last sitting year to tag."),
+    paper: str = typer.Option(None, help="Restrict to one paper slug."),
+    limit: int = typer.Option(None, help="Stop after this many questions."),
+    workers: int = typer.Option(8, help="Model calls in flight at once (1 = one at a time)."),
+) -> None:
+    """First-pass topic tags for multiple-choice questions, read from text.
+
+    Takes each untagged MCQ's stem, options and keyed answer (put there by
+    `mcq-options`) and asks the text model for a topic from the syllabus's
+    closed list. Nothing is approved: a tag below the confidence floor is
+    held for review, and `tag-verify-auto` then gives every tag an
+    independent second read from the printed crop. Questions whose text has
+    not been read yet are skipped, not guessed at.
+    """
+    from .tag_auto import tag_mcqs_with_model
+
+    _require_verify_setup(from_year, to_year)
+
+    label = f"tagging {subject} {from_year}-{to_year} with {settings.deepseek_text_model}"
+    with console.status(label + "...") as status:
+        try:
+            report = tag_mcqs_with_model(
+                subject, year_from=from_year, year_to=to_year, confidence_floor=floor,
+                dry_run=dry_run, workers=workers, paper_slug=paper, limit=limit,
+                on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
+            )
+        except DeepSeekAccountError as error:
+            console.print(f"[red]{error}. Nothing was written.[/red]")
+            raise typer.Exit(code=2) from error
+
+    table = Table("", "", title=f"{subject} - first-pass tags" + (" (dry run)" if dry_run else ""))
+    table.add_row("untagged questions in range", str(report.candidates))
+    table.add_row("tagged", str(report.tagged))
+    table.add_row(f"  of which held for review (< {floor})", str(report.held_for_review))
+    table.add_row("no text read yet, skipped", str(report.skipped_no_text))
+    table.add_row("call failed, skipped", str(len(report.failed_calls)))
+    console.print(table)
+
+    if report.by_topic:
+        spread = Table("topic", "questions", title="Spread across the syllabus")
+        for code, count in sorted(report.by_topic.items()):
+            spread.add_row(code, str(count))
+        console.print(spread)
+    if report.unknown_codes:
+        console.print(
+            f"[red]{len(report.unknown_codes)} response(s) named a topic outside the "
+            f"syllabus and were dropped: {sorted(set(report.unknown_codes))[:5]}[/red]"
+        )
+    if report.failed_calls:
+        console.print(
+            f"[yellow]{len(report.failed_calls)} call(s) failed, worth a re-run: "
+            f"{report.failed_calls[:5]}[/yellow]"
+        )
+    if report.skipped_no_text:
+        console.print("[yellow]Run `mcq-options` on those papers first.[/yellow]")
+    if dry_run:
+        console.print(
+            "[yellow]dry run: nothing was written. Re-run with --no-dry-run to apply.[/yellow]"
+        )
+
+
 @app.command(name="tag-verify-auto")
 def tag_verify_auto(
     subject: str = typer.Option("physics-5054", help="Subject to verify."),
