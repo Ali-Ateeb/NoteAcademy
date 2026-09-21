@@ -194,6 +194,7 @@ def chat_json(
     system: str,
     user_content: str | list[dict],
     max_tokens: int = 4096,
+    thinking: bool | None = None,
     client: httpx.Client | None = None,
 ) -> str:
     """One chat-completion call in JSON mode, returning the JSON text of the
@@ -204,6 +205,11 @@ def chat_json(
     empty reply) with exponential backoff, honouring `Retry-After`. Anything
     else fails at once, since retrying a request that is wrong only ever
     produces the same wrong answer.
+
+    `thinking` overrides `settings.deepseek_thinking` for this one call: None
+    follows the setting, True or False forces it. A verification run turns it
+    on (it changed two of eight borderline verdicts, both correctly, for about
+    a tenth of a cent a call) without making every other stage pay for it.
     """
     if not settings.deepseek_api_key:
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
@@ -214,7 +220,7 @@ def chat_json(
             "deepseek-flash (NOTEACADEMY_DEEPSEEK_VISION_MODEL)"
         )
 
-    thinking = settings.deepseek_thinking
+    thinking = settings.deepseek_thinking if thinking is None else thinking
     body: dict = {
         "model": model,
         "messages": [

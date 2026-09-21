@@ -31,6 +31,7 @@ import json
 import logging
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +41,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .deepseek import DeepSeekAccountError
 from .naming import caie_filename
+from .parallel import map_concurrently
 from .worksheet import question_text
 
 log = logging.getLogger(__name__)
@@ -458,6 +460,40 @@ def apply_verification(
     return report
 
 
+def confirm_primary(
+    cur: psycopg.Cursor, question_id: str, pass1_confidence: float, *, approved: bool
+) -> None:
+    """A second, independent read agreed with a question's primary tag.
+
+    Not simply "high confidence now" — bounded below by whatever the first
+    pass already believed, so a first pass that was already more confident
+    than a bare confirmation implies is not lowered. Shared by the multiple-
+    choice and the structured verifier so that "agreed" means the same thing
+    in both.
+    """
+    cur.execute(
+        "update question_topics set confidence = %s"
+        " where question_id = %s and is_primary",
+        (max(pass1_confidence, 0.9), question_id),
+    )
+    if not approved:
+        # A question flagged only for this reason is no longer unsure of its
+        # topic; one flagged for something else too stays in the queue, just
+        # without a stale reason attached to it.
+        cur.execute(
+            "update questions set review_flags ="
+            " array_remove(review_flags, 'low_tag_confidence')"
+            " where id = %s",
+            (question_id,),
+        )
+        cur.execute(
+            "update questions set extraction_status = 'extracted'"
+            " where id = %s and extraction_status = 'needs_review'"
+            "   and cardinality(review_flags) = 0",
+            (question_id,),
+        )
+
+
 def _apply_one(
     conn: psycopg.Connection,
     question_id: str,
@@ -487,31 +523,7 @@ def _apply_one(
         approved = row["extraction_status"] == "approved"
 
         if pass1_code == pass2_code:
-            # Not simply "high confidence now" — bounded below by whatever the
-            # first pass already believed, so a first pass that was already
-            # more confident than a bare confirmation implies is not lowered.
-            new_confidence = max(pass1_confidence, 0.9)
-            cur.execute(
-                "update question_topics set confidence = %s"
-                " where question_id = %s and is_primary",
-                (new_confidence, question_id),
-            )
-            if not approved:
-                # A question flagged only for this reason is no longer unsure
-                # of its topic; one flagged for something else too stays in
-                # the queue, just without a stale reason attached to it.
-                cur.execute(
-                    "update questions set review_flags ="
-                    " array_remove(review_flags, 'low_tag_confidence')"
-                    " where id = %s",
-                    (question_id,),
-                )
-                cur.execute(
-                    "update questions set extraction_status = 'extracted'"
-                    " where id = %s and extraction_status = 'needs_review'"
-                    "   and cardinality(review_flags) = 0",
-                    (question_id,),
-                )
+            confirm_primary(cur, question_id, pass1_confidence, approved=approved)
             report.agreed += 1
         else:
             # Below the floor regardless of how confident the first pass was:
@@ -560,6 +572,11 @@ def verify_mcqs_with_model(
     *,
     confidence_floor: float,
     dry_run: bool = False,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    thinking: bool | None = None,
+    workers: int = 1,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> VerifyReport:
     """The automated counterpart to `tag-verify-export`/`tag-verify-apply`:
     a vision-capable model reads each canonical MCQ's own crop and chooses a
@@ -585,6 +602,13 @@ def verify_mcqs_with_model(
     call is in flight: every crop is read and classified first with no
     connection open at all, and only the fast final pass of writes opens
     one, manages its own commit/rollback for `dry_run`, and closes.
+
+    `year_from`/`year_to` restrict the run to a range of sittings (both ends
+    inclusive; None leaves that end open). The range is applied *before*
+    duplicates are grouped, so a question repeated in and out of range is
+    verified once on the in-range copy and the out-of-range copy is left
+    untouched. `workers` runs the model calls concurrently; `thinking`
+    overrides the global DeepSeek thinking setting for this run.
     """
     from .config import settings
     from .load import connect
@@ -596,6 +620,10 @@ def verify_mcqs_with_model(
         _, topic_rows = revisable_topics(conn, subject_slug)
         questions = load_tagged_questions(conn, subject_slug)
 
+    questions = [
+        q for q in questions
+        if (year_from is None or q.year >= year_from) and (year_to is None or q.year <= year_to)
+    ]
     topics = [TopicOption(**row) for row in topic_rows]
     canonical, groups = group_duplicates(questions, papers_dir)
     report = VerifyReport()
@@ -606,6 +634,9 @@ def verify_mcqs_with_model(
     # Phase 1: every model call. No database connection open at all.
     decisions: dict[str, str] = {}  # canonical question id -> topic_code
 
+    # Rendering is local and quick, and PyMuPDF is not something to share
+    # between threads, so every crop is made here, in order, before any call.
+    work: list[tuple[TaggedQuestion, Path]] = []
     for question in canonical:
         members = groups[question.id]
 
@@ -625,18 +656,24 @@ def verify_mcqs_with_model(
         crop_path = crop_dir / f"{question.paper_slug}-{question.display_label}.png"
         if not crop_path.is_file():
             render_crop(pdf_path, question.page_number, question.bbox, crop_path)
+        work.append((question, crop_path))
 
-        try:
-            assignment = tag_from_crop(crop_path, topics)
-        except DeepSeekAccountError:
-            # A wrong key or an empty balance is not one bad question: every
-            # remaining call would fail the same way, so carrying on would
-            # only walk the whole subject into failed_calls, quickly and
-            # silently. Stop while nothing has been written.
-            raise
-        except Exception as exc:  # noqa: BLE001 - one bad reply must not lose the rest
+    # A wrong key or an empty balance is not one bad question: every remaining
+    # call would fail the same way, so `stop_on` ends the whole run while
+    # nothing has been written, instead of walking the subject into
+    # failed_calls, quickly and silently.
+    outcomes = map_concurrently(
+        work,
+        lambda item: tag_from_crop(item[1], topics, thinking=thinking),
+        workers=workers,
+        stop_on=(DeepSeekAccountError,),
+        on_done=on_progress,
+    )
+
+    for (question, _crop_path), assignment, error in outcomes:
+        if error is not None:
             log.warning(
-                "verifying %s %s failed: %s", question.paper_slug, question.display_label, exc
+                "verifying %s %s failed: %s", question.paper_slug, question.display_label, error
             )
             report.failed_calls.append(f"{question.paper_slug} {question.display_label}")
             continue

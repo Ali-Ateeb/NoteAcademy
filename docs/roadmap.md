@@ -125,6 +125,36 @@ is what topic tagging and the topical browser are tagged against.
   (persistent `504`s on vision calls with `Qwen3.8-Max`, `500`s with
   `Qwen3.7-Max`) — that code is in git history (before the DeepSeek switch) if
   ever wanted again.
+- **Structured tag verification** (`tag-verify-structured`, `verify_structured.py`,
+  built 2026-09-21): a vision model reads every page-crop of each structured
+  question (1-4 pages, in order) and picks a primary plus up to two secondary
+  topics; the result is compared with the first pass, which worked from text.
+  Three outcomes, because a structured question usually tests several topics:
+  *agreed* (same primary; confidence raised), *reordered* (different primary
+  but the two reads share a topic; nothing written) and *disagreed* (nothing in
+  common). **Safety rule: a disagreement on an already-approved question only
+  lowers that tag's confidence and appears in the report — it never adds a tag
+  or takes the question off the site**; on an unapproved one it returns it to
+  the review queue as the MCQ verifier does. Every result is written to a
+  triage CSV, disagreements first. Model calls run concurrently (`--workers`,
+  default 8), and `--paper` limits a run to named papers. Dry run by default.
+  Live-tested on 20 chemistry-5070 2020 questions, read-only. **Findings that
+  change how to use it:** (1) thinking mode, which helped on MCQs, *hurts*
+  here — 4x slower, verdicts changed on ~25% of questions between identical
+  runs, and it over-weights the part with the most marks (it called an
+  alcohols question "covalent bonding") — so this command defaults to thinking
+  OFF; (2) even with it off, ~3 of 20 verdicts differ between identical runs,
+  so one read is a flag for a human, not a ruling; (3) the one disagreement
+  that held in all five runs (Chemistry 2020 MJ P22 Q1, filed as ionic bonds,
+  read as identification of ions) is the kind worth a person's time. Measured
+  cost: about $0.0004 a question with 98% of input served from cache, so all
+  1,159 in-range structured questions come to roughly **$0.44 and ~16
+  minutes**.
+- **Year scope** (`NOTEACADEMY_YEAR_FROM/TO`, default 2016-2026;
+  `--from-year/--to-year` per run): both automated verifiers read only that
+  range. Papers outside it (2010-2015, 62 of 229) stay in the database and live
+  on the site; only the model spend is skipped. Other commands (ingest,
+  bulk-approve, embed) are not year-scoped.
 - `mcq-options` (vision backfill of MCQ question/option text): 144
   `question_options` rows written (one paper, physics-5054's newest sitting,
   mostly done) before ModelScope's vision reliability problems stopped
@@ -140,6 +170,41 @@ is what topic tagging and the topical browser are tagged against.
 - 31 migrations, all applied to the live database with matching checksums
   (`db/apply.py --status`), including `0030` fixing the attempts/profiles
   cascade-delete bug.
+
+---
+
+## Paper 1 backfill, Physics and Chemistry 2016-2026 (2026-09-21)
+
+Both subjects now have the complete Paper 1 (multiple-choice) grid for the
+in-scope years: 21 sittings x variants 1 and 2 = **42 papers each**. Before,
+Physics had 2 and Chemistry 8.
+
+- **Source:** `ivyonline.co/past-papers/o-level/<code>`; files are public PDFs on
+  `files.ivyonline.co/O/<code>/` named exactly as Cambridge names them
+  (`5054_w22_qp_11.pdf`), so no renaming. 148 files, 36.9 MB, downloaded at
+  ~2 requests/s, none overwritten, each verified as a real PDF with a matching
+  mark scheme. The same site also serves **examiner reports and grade
+  thresholds** — the two things missing from the data — not yet fetched.
+  The site's terms of use were not reviewed.
+- **Loaded:** 74 papers, **2,960 questions**, every one with its answer key and a
+  crop in storage, except Chemistry 2017 M/J P11 Q25 (mark-scheme row did not
+  match; flagged). Database is now 303 papers / 6,058 top-level questions.
+  **All are unapproved and untagged** — invisible to students until they are
+  tagged and reviewed.
+- **Two segmenter bugs found and fixed** (`segment.py`), each from a real paper
+  that the geometry method refused: a graph's origin label ("0") sitting in the
+  question-number gutter (Physics 2021 O/N P11+P12), and a question opening
+  with a single character so its number merged with it into one span
+  ("37 Z ...", Chemistry 2018 M/J P11). Proven not to change any existing
+  paper: all 104 previously-clean MCQ papers segment byte-for-byte identically,
+  and the 3 failures now yield exactly 40 contiguous questions. Regression tests
+  added; the bug-shaped ones fail on the old code.
+- **Gotcha:** `load-mcq` only uploads crop images when given `--crops <dir>`;
+  without it the database rows exist but storage is empty, which would show
+  students broken images. Ran `fix-crops` (re-renders from the stored boxes)
+  to upload all 2,960; audit is clean. Worth making the upload unconditional.
+- Not done: Biology 5090 (not requested), 2010-2015 (out of scope), and the 8
+  2010 variant-3 papers already on disk.
 
 ---
 
@@ -227,10 +292,16 @@ Concrete and verified this session, not carried forward from an old list:
   needs a real key and one supervised run before it can be trusted to run
   unattended at scale.
 - **Tagging accuracy has only been independently checked for one-fifth of
-  the bank.** Physics 5054's 594 MCQs were verified by a second, independent
-  pass (564/600, 94%, agreed). Chemistry 5070, biology 5090, and physics's
-  own 667 structured questions — 2,396 of 2,990 tagged questions — rest on a
-  single, never-checked first pass.
+  the bank.** Physics 5054's 600 MCQs were verified by a second, independent
+  pass (564 agreed, 26 flagged, 10 human-decided). Chemistry 5070, biology
+  5090, and all 1,858 structured questions — 2,398 of 3,098 tagged questions —
+  rest on a single, never-checked first pass. Both verifiers now exist for
+  the 2016-2026 range (545 distinct chemistry/biology MCQs; 1,159 structured
+  questions) but neither has been run at scale yet.
+- **841 approved structured questions carry a tag below the 0.75 confidence
+  floor**, none still flagged for review (Biology 328, Chemistry 451, Physics
+  62). Cause not investigated. These are the first place to point the
+  structured verifier.
 - **`/api/solve` can burn a quota unit for nothing.** No error handling
   around the model call itself; a transient failure charges the quota with
   no refund and shows a misleading error. Flagged, not yet fixed.
@@ -272,10 +343,18 @@ Concrete and verified this session, not carried forward from an old list:
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Run tagging verification at scale on DeepSeek** — the vision path is
-   proven live. `NOTEACADEMY_DEEPSEEK_THINKING=1 noteacademy tag-verify-auto
-   --subject chemistry-5070` (dry run first) is roughly 320 calls, ~20 minutes,
-   well under $1; then biology-5090 and physics's structured bank. Then finish
+3. **Tag, verify and approve the 2,960 newly loaded MCQs** (Physics 1,600 and
+   Chemistry 1,360 untagged). MCQ crops carry no text, so the designed route is:
+   `mcq-options` (DeepSeek vision reads the question and options, ~cents) ->
+   text tagging with `deepseek-v4-pro` -> `tag-verify-auto` (a *different* model
+   reading the crop, so the two passes are genuinely independent) -> review
+   the disagreements -> `bulk-approve`. Not built as one command yet. Then:
+   **run tagging verification at scale on DeepSeek** (both tools built; dry
+   run first, then review the triage CSV before `--no-dry-run`):
+   `noteacademy tag-verify-auto --subject chemistry-5070` and `biology-5090`
+   (MCQ; thinking on by default; ~545 distinct questions, under $1), and
+   `noteacademy tag-verify-structured --subject <each>` (thinking off by
+   default; ~$0.44 and ~16 minutes for all three subjects). Then finish
    `mcq-options` (text and options only, so the loose boxes do not matter).
 4. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate

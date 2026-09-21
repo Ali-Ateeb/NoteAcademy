@@ -26,6 +26,7 @@ match rather than emitting silently wrong crops.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +73,10 @@ FOOTER_RULE_MIN_WIDTH = 400.0
 FOOTER_RULE_MAX_HEIGHT = 2.0
 
 
+# A question number and the first word of its text, merged into one span.
+_NUMBER_THEN_TEXT = re.compile(r"^(\d{1,2})\s+\S")
+
+
 @dataclass
 class QuestionRegion:
     number: int
@@ -90,6 +95,20 @@ def find_question_starts(page: pymupdf.Page) -> list[tuple[int, float]]:
     gutter, within the body of the page. The gutter test is what excludes the
     running page number, the footer, and every numeral inside a graph's axis
     labels — those are all indented or outside the body.
+
+    Two refinements, each from a real paper that the plain rule failed:
+
+      * No question is numbered 0. A graph's origin label can sit inside the
+        gutter window (Physics 2021 Oct/Nov, both Paper 1 variants), and
+        accepting it makes the numbers run 23, 0, 24 and fails the whole paper.
+
+      * When a question opens with a single character — a chemical symbol, a
+        variable — the PDF can merge the number and that first word into one
+        span ("37 Z is a compound that:", Chemistry 2018 May/June). Question
+        numbers are always set in bold and the question text never is, so a
+        bold gutter span that begins with a number followed by text is that
+        number. Requiring bold is what keeps a stray regular-weight
+        "3 mol ..." line from being read as question 3.
     """
     starts: list[tuple[int, float]] = []
 
@@ -98,8 +117,19 @@ def find_question_starts(page: pymupdf.Page) -> list[tuple[int, float]]:
             for span in line.get("spans", []):
                 text = span["text"].strip()
                 x0, y0 = span["bbox"][0], span["bbox"][1]
-                if text.isdigit() and x0 < GUTTER_MAX_X and BODY_TOP < y0 < BODY_BOTTOM:
-                    starts.append((int(text), y0))
+                if not (x0 < GUTTER_MAX_X and BODY_TOP < y0 < BODY_BOTTOM):
+                    continue
+
+                number: int | None = None
+                if text.isdigit():
+                    number = int(text)
+                elif "bold" in span["font"].lower():
+                    merged = _NUMBER_THEN_TEXT.match(text)
+                    if merged:
+                        number = int(merged.group(1))
+
+                if number is not None and number >= 1:
+                    starts.append((number, y0))
 
     starts.sort(key=lambda item: item[1])
     return starts

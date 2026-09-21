@@ -237,7 +237,9 @@ _VERIFY_JSON_SHAPE = (
 )
 
 
-def tag_from_crop(crop_path: Path, topics: list[TopicOption]) -> TopicAssignment:
+def tag_from_crop(
+    crop_path: Path, topics: list[TopicOption], *, thinking: bool | None = None
+) -> TopicAssignment:
     """A second, independent read of one question from its printed crop
     rather than its extracted text — the automated counterpart to the manual
     second pass `verify.py`'s contact sheets exist for.
@@ -257,6 +259,7 @@ def tag_from_crop(crop_path: Path, topics: list[TopicOption]) -> TopicAssignment
         model=settings.deepseek_vision_model,
         system=VERIFY_FROM_CROP_SYSTEM,
         max_tokens=1024,
+        thinking=thinking,
         # The syllabus leads and the image follows, on purpose: DeepSeek caches
         # by shared prefix, and the syllabus is identical on every call while
         # the crop never is. Image first would put the one thing that always
@@ -278,3 +281,80 @@ def tag_from_crop(crop_path: Path, topics: list[TopicOption]) -> TopicAssignment
         assignment.confidence = 0.0
 
     return assignment
+
+
+VERIFY_STRUCTURED_SYSTEM = """You are shown a Cambridge (CAIE) structured exam question exactly as
+it was printed: one or more page images, in order, together showing every part of the
+question -- and the syllabus topics for its subject.
+
+A structured question usually has several parts, and different parts often test different
+topics. Choose:
+
+  * the ONE primary topic: the topic whose learning objectives the question principally tests --
+    the same standard every question in the bank is tagged by. For a multi-part question that is
+    the subject the question as a whole is about, the topic a student would say it is "on". Use
+    the marks as evidence of that, but do not let one calculation or practical part outweigh a
+    theme that runs through the rest of the question;
+  * at most TWO secondary topics, and only where a substantial part of the question genuinely
+    tests them. Leave the list empty rather than padding it -- a question tagged with five
+    topics is useless for revision.
+
+Use only topic codes from the supplied list. If nothing fits, choose the closest and give it a
+low confidence; never invent a code."""
+
+# How many page images one structured question may carry into a single call.
+# Real questions have one to four; more than this is a segmentation fault worth
+# a person's attention, not something to spend a long, expensive call on.
+MAX_STRUCTURED_PAGES = 6
+
+
+def tag_structured_from_crops(
+    crop_paths: list[Path], topics: list[TopicOption], *, thinking: bool | None = None
+) -> TopicTagging:
+    """A second, independent read of one structured question from its printed
+    page crops rather than its extracted text — the structured counterpart to
+    `tag_from_crop`.
+
+    A structured question spans one to four page-crops, all shown to the model
+    in order, so it sees every part. Unlike a multiple-choice item it usually
+    tests several topics, so the reply is a primary topic *and* up to two
+    secondary ones, which is what lets the caller tell a real disagreement
+    (two different reads of the question) from a mere difference in which of
+    two genuinely tested topics was listed first.
+
+    The mark scheme is deliberately not shown: the first pass had it, and a
+    second read that also has it is a weaker check than one that works from the
+    printed question alone.
+
+    The syllabus leads and the images follow, on purpose — DeepSeek caches by
+    shared prefix, and the syllabus is identical on every call while the
+    crops never are (see `tag_from_crop`).
+    """
+    from .deepseek import chat_json, image_content_block, text_content_block
+
+    if not crop_paths:
+        raise ValueError("a structured question needs at least one page crop")
+    if len(crop_paths) > MAX_STRUCTURED_PAGES:
+        raise ValueError(
+            f"{len(crop_paths)} page crops is more than the {MAX_STRUCTURED_PAGES} a "
+            "structured question should have — check its segmentation"
+        )
+
+    content = [text_content_block(f"Syllabus topics:\n\n{render_syllabus(topics)}")]
+    for number, path in enumerate(crop_paths, start=1):
+        content.append(text_content_block(f"Page {number} of {len(crop_paths)} of the question:"))
+        content.append(image_content_block(path.read_bytes()))
+    content.append(text_content_block(_TAGGING_JSON_SHAPE))
+
+    raw = chat_json(
+        model=settings.deepseek_vision_model,
+        system=VERIFY_STRUCTURED_SYSTEM,
+        max_tokens=1500,
+        thinking=thinking,
+        user_content=content,
+    )
+    tagging = _validated(TopicTagging.model_validate_json(raw), topics)
+    # A topic offered as both primary and secondary is the primary; listing it
+    # twice would only look like agreement with itself.
+    tagging.secondary = [t for t in tagging.secondary if t.topic_code != tagging.primary.topic_code]
+    return tagging

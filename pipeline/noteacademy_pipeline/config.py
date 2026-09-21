@@ -57,6 +57,19 @@ def _provider(name: str, default: str) -> str:
     return value
 
 
+def _year(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        year = int(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw!r} is not a year") from None
+    if not 1990 <= year <= 2100:
+        raise ValueError(f"{name}={year} is not a plausible exam year")
+    return year
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = ""
@@ -118,6 +131,13 @@ class Settings:
     # Tagging below this confidence goes to a human instead of to students.
     tag_confidence_floor: float = 0.75
 
+    # The sittings the pipeline is working through. Papers outside this range
+    # stay in the database and stay live; the commands that spend model calls
+    # on them (the automated tag verifiers) simply skip them by default, and
+    # take --from-year/--to-year to override for one run.
+    scope_year_from: int = 2016
+    scope_year_to: int = 2026
+
     work_dir: Path = field(default_factory=lambda: Path("pipeline/work"))
 
     @classmethod
@@ -151,8 +171,16 @@ class Settings:
                 "NOTEACADEMY_EMBEDDING_MODEL", cls.embedding_model
             ),
             render_dpi=int(os.environ.get("NOTEACADEMY_RENDER_DPI", cls.render_dpi)),
+            scope_year_from=_year("NOTEACADEMY_YEAR_FROM", cls.scope_year_from),
+            scope_year_to=_year("NOTEACADEMY_YEAR_TO", cls.scope_year_to),
             work_dir=Path(os.environ.get("NOTEACADEMY_WORK_DIR", "pipeline/work")),
         )
+
+    def __post_init__(self) -> None:
+        if self.scope_year_from > self.scope_year_to:
+            raise ValueError(
+                f"year scope is backwards: from {self.scope_year_from} to {self.scope_year_to}"
+            )
 
 
 settings = Settings.from_env()

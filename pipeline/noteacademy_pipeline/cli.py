@@ -785,6 +785,14 @@ def tag_verify_auto(
     floor: float = typer.Option(settings.tag_confidence_floor,
                                 help="Below this confidence, hold the question back."),
     dry_run: bool = typer.Option(True, help="Report what would happen, without writing it."),
+    from_year: int = typer.Option(settings.scope_year_from, help="First sitting year to verify."),
+    to_year: int = typer.Option(settings.scope_year_to, help="Last sitting year to verify."),
+    thinking: bool = typer.Option(
+        True, "--thinking/--no-thinking",
+        help="DeepSeek thinking mode. On by default here: it fixed both borderline cases "
+             "it was tried on, for about a tenth of a cent a question.",
+    ),
+    workers: int = typer.Option(8, help="Model calls in flight at once (1 = one at a time)."),
 ) -> None:
     """The automated counterpart to tag-verify-export/tag-verify-apply: a
     vision-capable model reads each MCQ's own printed crop and chooses a
@@ -796,20 +804,21 @@ def tag_verify_auto(
     words, not independent evidence. Defaults to a dry run: this can move a
     question's tag confidence and review status across the whole subject in
     one call.
+
+    Only sittings from --from-year to --to-year are read (default: the
+    pipeline's current scope, NOTEACADEMY_YEAR_FROM/TO).
     """
     from .verify import verify_mcqs_with_model
 
-    if not settings.database_url:
-        console.print("[red]DATABASE_URL is not set.[/red]")
-        raise typer.Exit(code=2)
-    if not settings.deepseek_api_key:
-        console.print("[red]DEEPSEEK_API_KEY is not set.[/red]")
-        raise typer.Exit(code=2)
+    _require_verify_setup(from_year, to_year)
 
-    with console.status(f"verifying {subject} against {settings.deepseek_vision_model}..."):
+    label = f"verifying {subject} {from_year}-{to_year} against {settings.deepseek_vision_model}"
+    with console.status(label + "...") as status:
         try:
             report = verify_mcqs_with_model(
-                subject, papers, confidence_floor=floor, dry_run=dry_run
+                subject, papers, confidence_floor=floor, dry_run=dry_run,
+                year_from=from_year, year_to=to_year, thinking=thinking, workers=workers,
+                on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
             )
         except DeepSeekAccountError as error:
             console.print(f"[red]{error}. Nothing was written.[/red]")
@@ -826,6 +835,136 @@ def tag_verify_auto(
     table.add_row("no crop available, skipped", str(report.skipped_no_decision))
     table.add_row("call failed, skipped", str(len(report.failed_calls)))
     console.print(table)
+
+    if report.unknown_codes:
+        console.print(
+            f"[red]{len(report.unknown_codes)} response(s) returned an unknown/invalid "
+            f"topic code: {sorted(set(report.unknown_codes))[:5]}[/red]"
+        )
+    if report.failed_calls:
+        console.print(
+            f"[yellow]{len(report.failed_calls)} question(s) the model call itself failed "
+            f"on, worth a re-run: {report.failed_calls[:5]}[/yellow]"
+        )
+    if dry_run:
+        console.print(
+            "[yellow]dry run: nothing was written. Re-run with --no-dry-run to apply.[/yellow]"
+        )
+
+
+def _require_verify_setup(from_year: int, to_year: int) -> None:
+    """The preconditions both automated verifiers share."""
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+    if not settings.deepseek_api_key:
+        console.print("[red]DEEPSEEK_API_KEY is not set.[/red]")
+        raise typer.Exit(code=2)
+    if from_year > to_year:
+        console.print(f"[red]--from-year {from_year} is after --to-year {to_year}.[/red]")
+        raise typer.Exit(code=2)
+
+
+@app.command(name="tag-verify-structured")
+def tag_verify_structured(
+    subject: str = typer.Option("physics-5054", help="Subject to verify."),
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    floor: float = typer.Option(settings.tag_confidence_floor,
+                                help="Below this confidence, hold the question back."),
+    dry_run: bool = typer.Option(True, help="Report what would happen, without writing it."),
+    from_year: int = typer.Option(settings.scope_year_from, help="First sitting year to verify."),
+    to_year: int = typer.Option(settings.scope_year_to, help="Last sitting year to verify."),
+    paper: list[str] = typer.Option(
+        None, "--paper",
+        help="Only this paper slug (repeat for several), e.g. chemistry-5070-2020-may-june-p21.",
+    ),
+    thinking: bool = typer.Option(
+        False, "--thinking/--no-thinking",
+        help="DeepSeek thinking mode. OFF by default here, unlike tag-verify-auto: on a "
+             "20-question trial it was ~4x slower, changed the verdict on ~25% of questions "
+             "between identical runs, and over-weighted whichever part carried the most marks.",
+    ),
+    workers: int = typer.Option(8, help="Model calls in flight at once (1 = one at a time)."),
+    report_path: Path = typer.Option(
+        None, "--report",
+        help="Where to write the triage CSV (default: pipeline/work/verify-structured-*.csv).",
+    ),
+    verbose: bool = typer.Option(False, help="Print every question's result, not just conflicts."),
+) -> None:
+    """The structured counterpart to tag-verify-auto: a vision model reads each
+    structured question's printed page-crops (every page, in order) and chooses
+    a primary topic and up to two secondary ones, compared against the first
+    pass, which worked from extracted text. DeepSeek only.
+
+    A structured question usually tests several topics, so two reads can list
+    the same topics in a different order. That is reported as 'reordered' and
+    changes nothing; only a read with no topic in common is a 'disagreement'.
+    A disagreement on a question that is not yet approved returns it to the
+    review queue. On one that is ALREADY approved it only lowers the tag's
+    confidence and appears in the report — an approved question is live to
+    students, and a model's second opinion should not edit it unreviewed.
+
+    Defaults to a dry run. Every result, disagreements first, is written to a
+    CSV for triage.
+    """
+    from datetime import datetime
+
+    from .verify_structured import verify_structured_with_model, write_findings_csv
+
+    _require_verify_setup(from_year, to_year)
+
+    label = (
+        f"verifying {subject} {from_year}-{to_year} structured "
+        f"against {settings.deepseek_vision_model}"
+    )
+    with console.status(label + "...") as status:
+        try:
+            report = verify_structured_with_model(
+                subject, papers, year_from=from_year, year_to=to_year,
+                confidence_floor=floor, dry_run=dry_run, thinking=thinking,
+                workers=workers, paper_slugs=paper or None,
+                on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
+            )
+        except DeepSeekAccountError as error:
+            console.print(f"[red]{error}. Nothing was written.[/red]")
+            raise typer.Exit(code=2) from error
+
+    table = Table(
+        "", "", title=f"{subject} {from_year}-{to_year} — structured second pass"
+        + (" (dry run)" if dry_run else "")
+    )
+    table.add_row("agreed (confidence raised)", str(report.agreed))
+    table.add_row("reordered (same topics, other order; nothing written)", str(report.reordered))
+    table.add_row("disagreed (no topic in common)", str(report.disagreed))
+    table.add_row("   of which already approved: reported only", str(report.disagreed_approved))
+    table.add_row("   of which returned to the review queue",
+                  str(report.disagreed - report.disagreed_approved))
+    table.add_row("no crops on file, skipped", str(report.skipped_no_crops))
+    table.add_row("too many page crops, skipped", str(report.skipped_too_many_pages))
+    table.add_row("source PDF missing, skipped", str(report.skipped_no_pdf))
+    table.add_row("changed while running, skipped", str(report.skipped_changed))
+    table.add_row("call failed, skipped", str(len(report.failed_calls)))
+    console.print(table)
+
+    shown = [f for f in report.findings if verbose or f.outcome == "disagreed"]
+    for f in shown:
+        colour = {"agreed": "green", "reordered": "yellow", "disagreed": "red"}[f.outcome]
+        plural = "s" if f.pages != 1 else ""
+        file_extra = f" + {' '.join(f.file_secondary)}" if f.file_secondary else ""
+        model_extra = f" + {' '.join(f.model_secondary)}" if f.model_secondary else ""
+        console.print(
+            f"[{colour}]{f.outcome.upper():9s}[/{colour}] {f.paper_slug} Q{f.display_label} "
+            f"({f.status}, {f.pages} page{plural})"
+        )
+        console.print(f"    file  : {f.file_primary} ({f.file_confidence:.2f}){file_extra}")
+        console.print(f"    model : {f.model_primary} ({f.model_confidence:.2f}){model_extra}")
+        console.print(f"    why   : {f.reasoning}", highlight=False)
+
+    if report.findings:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = report_path or settings.work_dir / f"verify-structured-{subject}-{stamp}.csv"
+        write_findings_csv(report.findings, path)
+        console.print(f"triage report: {path}")
 
     if report.unknown_codes:
         console.print(

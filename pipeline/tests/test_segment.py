@@ -61,6 +61,78 @@ class TestFindQuestionStarts:
         assert [y for _, y in starts] == sorted(y for _, y in starts)
 
 
+class TestQuestionNumberEdgeCases:
+    """Two shapes of real page that the plain "digits in the gutter" rule got
+    wrong — one read a number that is not there, the other missed one that is."""
+
+    @staticmethod
+    def one_page(tmp_path: Path, draw) -> pymupdf.Page:
+        doc = pymupdf.open()
+        page = doc.new_page(width=595.0, height=842.0)
+        draw(page)
+        out = tmp_path / "edge.pdf"
+        doc.save(out)
+        doc.close()
+        return pymupdf.open(out)[0]
+
+    def test_a_zero_in_the_gutter_is_not_a_question(self, tmp_path):
+        # A graph's origin label can land inside the gutter window (Physics 2021
+        # Oct/Nov). No question is numbered 0, and reading it fails the paper.
+        def draw(page):
+            page.insert_text((49.6, 100.0), "22", fontsize=11, fontname="hebo")
+            page.insert_text((51.0, 300.0), "0", fontsize=9)
+            page.insert_text((49.6, 400.0), "23", fontsize=11, fontname="hebo")
+
+        starts = find_question_starts(self.one_page(tmp_path, draw))
+        assert [n for n, _ in starts] == [22, 23]
+
+    def test_a_bold_number_merged_with_the_first_word_is_still_the_number(self, tmp_path):
+        # "37 Z is a compound that:" — the question opens with a chemical symbol,
+        # and the PDF joins it to the number in one span (Chemistry 2018 M/J).
+        def draw(page):
+            page.insert_text((49.6, 100.0), "36", fontsize=11, fontname="hebo")
+            merged = "37 Z is a compound that:"
+            page.insert_text((49.6, 300.0), merged, fontsize=11, fontname="hebo")
+            page.insert_text((49.6, 500.0), "38", fontsize=11, fontname="hebo")
+
+        starts = find_question_starts(self.one_page(tmp_path, draw))
+        assert [n for n, _ in starts] == [36, 37, 38]
+
+    def test_a_regular_weight_line_starting_with_a_number_is_not_a_question(self, tmp_path):
+        # Requiring bold is what keeps ordinary text such as "3 mol of gas" out.
+        def draw(page):
+            page.insert_text((49.6, 100.0), "1", fontsize=11, fontname="hebo")
+            page.insert_text((49.6, 300.0), "3 mol of gas is collected", fontsize=11)
+
+        starts = find_question_starts(self.one_page(tmp_path, draw))
+        assert [n for n, _ in starts] == [1]
+
+    def test_a_bold_line_outside_the_gutter_is_not_a_question(self, tmp_path):
+        def draw(page):
+            page.insert_text((49.6, 100.0), "1", fontsize=11, fontname="hebo")
+            page.insert_text((72.3, 300.0), "4 Which is correct", fontsize=11, fontname="hebo")
+
+        starts = find_question_starts(self.one_page(tmp_path, draw))
+        assert [n for n, _ in starts] == [1]
+
+    def test_a_paper_with_both_quirks_segments_cleanly(self, tmp_path):
+        doc = pymupdf.open()
+        for numbers in ([1, 2, 3], [4, 5]):
+            page = doc.new_page(width=595.0, height=842.0)
+            page.insert_text((296, 34), "3", fontsize=10)
+            page.insert_text((51.0, 250.0), "0", fontsize=9)  # axis label in the gutter
+            for i, n in enumerate(numbers):
+                label = f"{n} Z is a gas" if n == 4 else str(n)
+                page.insert_text((49.6, 100.0 + i * 200), label, fontsize=11, fontname="hebo")
+        out = tmp_path / "quirks.pdf"
+        doc.save(out)
+        doc.close()
+
+        regions, problems = segment_mcq_paper(out)
+        assert problems == []
+        assert [r.number for r in regions] == [1, 2, 3, 4, 5]
+
+
 class TestSegmentMcqPaper:
     def test_segments_a_whole_paper(self, tmp_path):
         path = build_paper(
