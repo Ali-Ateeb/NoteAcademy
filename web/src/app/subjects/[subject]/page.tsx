@@ -59,19 +59,19 @@ export default async function SubjectPage({ params }: Params) {
       </nav>
 
       <div className="flex flex-wrap items-baseline gap-3">
-        <h1 className="font-serif text-4xl tracking-tight text-ink">{subject.title}</h1>
-        <span className="rounded-md bg-surface-2 px-2 py-1 font-mono text-sm text-ink-2">
-          {subject.syllabusCode}
-        </span>
+        <h1 className="font-serif text-4xl font-extrabold tracking-tight text-ink sm:text-5xl">
+          {subject.title}
+        </h1>
+        <span className="hl hl-blue font-mono text-sm">{subject.syllabusCode}</span>
       </div>
       <p className="mt-3 max-w-2xl leading-relaxed text-ink-2">{subject.description}</p>
 
       <HighestValueTopics subject={slug} topics={topics} />
 
       {playable.length > 0 && (
-        <section className="mt-10 rounded-2xl border border-line bg-accent-soft p-6">
-          <h2 className="font-medium tracking-tight text-ink">Timed Paper 1 practice</h2>
-          <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-ink-2">
+        <section className="mt-10 rounded-[2rem] bg-periwinkle p-6 sm:p-8">
+          <h2 className="text-2xl font-extrabold text-ink">Timed Paper 1 practice</h2>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink">
             Sit a multiple-choice paper under exam conditions. Progress is saved as
             you go, so a closed tab does not cost you the attempt.
           </p>
@@ -80,7 +80,7 @@ export default async function SubjectPage({ params }: Params) {
               <Link
                 key={paper.slug}
                 href={`/practice/${paper.slug}`}
-                className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+                className="pill pill-plain px-4 py-2 text-sm"
               >
                 {SEASON_LABELS[paper.season]} {paper.year} · {paperName(paper)}
               </Link>
@@ -91,20 +91,22 @@ export default async function SubjectPage({ params }: Params) {
 
       <div className="mt-12 grid gap-12 lg:grid-cols-[1fr_320px]">
         <section>
-          <h2 className="font-serif text-2xl tracking-tight text-ink">By year</h2>
+          <h2 className="rule-under font-serif text-2xl tracking-tight text-ink">By year</h2>
           <div className="mt-5 space-y-7">
             {years.map(({ year, papers }) => (
               <div key={year}>
-                <h3 className="mb-2.5 font-mono text-sm text-ink-3">{year}</h3>
+                <h3 className="mb-3">
+                  <span className="hl hl-yellow font-mono text-sm">{year}</span>
+                </h3>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {papers.map((paper) => (
                     <Link
                       key={paper.slug}
                       href={`/papers/${paper.slug}`}
-                      className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3 shadow-card transition-colors hover:border-line-strong"
+                      className="lift flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3 shadow-card"
                     >
                       <span className="text-sm text-ink">
-                        <span className="font-medium">{paperName(paper)}</span>
+                        <span className="font-bold">{paperName(paper)}</span>
                         <span className="ml-2 text-ink-3">
                           {SEASON_LABELS[paper.season]}
                         </span>
@@ -128,7 +130,7 @@ export default async function SubjectPage({ params }: Params) {
         </section>
 
         <aside>
-          <h2 className="font-serif text-2xl tracking-tight text-ink">By topic</h2>
+          <h2 className="rule-under font-serif text-2xl tracking-tight text-ink">By topic</h2>
           <p className="mt-2 text-sm leading-relaxed text-ink-2">
             Questions from every year, grouped by what they test.
           </p>
@@ -143,7 +145,7 @@ export default async function SubjectPage({ params }: Params) {
               .filter((topic) => topic.parentCode === null)
               .map((section) => (
                 <div key={section.code}>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-widest text-ink-3">
+                  <p className="mb-1.5 text-xs font-bold uppercase tracking-widest text-ink-2">
                     <span className="mr-2 font-mono normal-case">{section.code}</span>
                     {section.title}
                   </p>
@@ -189,22 +191,25 @@ function HighestValueTopics({ subject, topics }: { subject: string; topics: Topi
   if (ranked.length === 0) return null;
 
   return (
-    <section className="mt-8 rounded-2xl border border-line bg-surface p-6 shadow-card">
-      <h2 className="font-medium tracking-tight text-ink">Where the marks actually are</h2>
-      <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-ink-2">
+    <section className="note-sheet mt-8 py-7 pr-6 pl-14">
+      {/* 28px line-height throughout: every line of text sits on a ruled line. */}
+      <h2 className="text-lg leading-7 text-ink">
+        <span className="hl hl-yellow">Where the marks actually are</span>
+      </h2>
+      <p className="max-w-xl text-sm leading-7 text-ink-2">
         Ranked by marks earned across every past paper, not just how many questions
         mention them — a topic tested by six-mark structured parts outweighs one tested
         only by 1-mark MCQs.
       </p>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-x-2 gap-y-[14px] pt-[7px]">
         {ranked.map((topic) => (
           <Link
             key={topic.code}
             href={`/topics/${subject}/${topic.slug}`}
-            className="flex items-center gap-2 rounded-lg border border-line bg-surface-2 px-3.5 py-2 text-sm transition-colors hover:border-line-strong"
+            className="pill pill-plain gap-2 px-3.5 py-1.5 text-sm"
           >
-            <span className="text-ink">{topic.title}</span>
-            <span className="font-mono text-xs text-ink-3">{topic.totalMarks} marks</span>
+            <span>{topic.title}</span>
+            <span className="font-mono text-xs font-normal opacity-70">{topic.totalMarks} marks</span>
           </Link>
         ))}
       </div>
@@ -227,7 +232,7 @@ function TopicRow({ subject, topic }: { subject: string; topic: Topic }) {
   return (
     <Link
       href={`/topics/${subject}/${topic.slug}`}
-      className={`${indent} flex items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm shadow-card transition-colors hover:border-line-strong`}
+      className={`${indent} lift flex items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm shadow-card`}
     >
       <span className="text-ink">
         <span className="mr-2 font-mono text-xs text-ink-3">{topic.code}</span>

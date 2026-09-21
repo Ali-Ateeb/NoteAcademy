@@ -22,7 +22,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-12">
-      <h1 className="font-serif text-4xl tracking-tight text-ink">Your dashboard</h1>
+      <h1 className="rule-under font-serif text-4xl font-extrabold tracking-tight text-ink">Your dashboard</h1>
       <p className="mt-3 max-w-xl leading-relaxed text-ink-2">
         Pick a subject to see accuracy per topic, worst first — revision goes
         where it is needed, not where it is comfortable.

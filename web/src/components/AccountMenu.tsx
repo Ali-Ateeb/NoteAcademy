@@ -16,7 +16,7 @@ export function AccountMenu() {
 
   if (!user) {
     return (
-      <Link href="/login" className="text-sm font-medium text-ink-2 transition-colors hover:text-ink">
+      <Link href="/login" className="px-1 text-sm font-bold whitespace-nowrap text-ink transition-colors hover:text-accent sm:px-2">
         Sign in
       </Link>
     );
@@ -30,7 +30,7 @@ export function AccountMenu() {
 
   return (
     <div className="flex items-center gap-3 text-sm">
-      <Link href="/dashboard" className="hidden text-ink-2 transition-colors hover:text-ink sm:inline">
+      <Link href="/dashboard" className="hidden max-w-40 truncate text-ink-2 transition-colors hover:text-accent lg:inline">
         {user.email}
       </Link>
       <button

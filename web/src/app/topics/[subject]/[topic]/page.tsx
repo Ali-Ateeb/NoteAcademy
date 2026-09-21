@@ -72,18 +72,20 @@ export default async function TopicPage({ params }: Params) {
       </nav>
 
       <div className="flex flex-wrap items-baseline gap-3">
-        <h1 className="font-serif text-3xl tracking-tight text-ink">{topic.title}</h1>
-        <span className="font-mono text-sm text-ink-3">{topic.code}</span>
+        <h1 className="font-serif text-3xl font-extrabold tracking-tight text-ink">{topic.title}</h1>
+        <span className="hl hl-blue font-mono text-sm">{topic.code}</span>
       </div>
 
-      <div className="mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-3">
-          What the syllabus asks of you
+      <div className="note-sheet mt-6 py-7 pr-6 pl-14">
+        {/* 28px line-height throughout, so each line of text sits on a ruled
+            line. Objectives that wrap keep to the same grid. */}
+        <h2 className="text-lg leading-7 text-ink">
+          <span className="hl hl-yellow">What the syllabus asks of you</span>
         </h2>
-        <ul className="mt-3 space-y-1.5">
+        <ul>
           {topic.learningObjectives.map((objective) => (
-            <li key={objective} className="flex gap-2.5 text-sm text-ink-2">
-              <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent" />
+            <li key={objective} className="flex gap-2.5 text-sm leading-7 text-ink">
+              <span className="mt-[13px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
               {objective}
             </li>
           ))}
@@ -91,25 +93,25 @@ export default async function TopicPage({ params }: Params) {
       </div>
 
       {questions.length > 0 && (
-        <div className="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-accent-soft p-5">
+        <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[2rem] bg-periwinkle p-6">
           <div>
-            <p className="font-medium tracking-tight text-ink">
+            <p className="text-lg font-extrabold text-ink">
               Drill this topic
             </p>
-            <p className="mt-1 text-sm text-ink-2">
+            <p className="mt-1 text-sm text-ink">
               Every question on {topic.title}, untimed, marked as you go.
             </p>
           </div>
           <Link
             href={`/topics/${subject.slug}/${topic.slug}/practice`}
-            className="ml-auto rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+            className="pill pill-plain ml-auto px-5 py-2.5 text-sm"
           >
             Start drill →
           </Link>
         </div>
       )}
 
-      <h2 className="mb-4 mt-10 font-serif text-2xl tracking-tight text-ink">
+      <h2 className="rule-under mb-5 mt-10 font-serif text-2xl tracking-tight text-ink">
         {questions.length} question{questions.length === 1 ? "" : "s"}
       </h2>
 
@@ -117,7 +119,7 @@ export default async function TopicPage({ params }: Params) {
         {questions.map((question) => (
           <details
             key={question.id}
-            className="group rounded-2xl border border-line bg-surface p-5 shadow-card"
+            className="group rounded-2xl border border-line bg-surface p-5 shadow-card transition-colors open:border-line-strong"
           >
             <summary className="cursor-pointer list-none">
               {question.alsoIn.length > 0 && (

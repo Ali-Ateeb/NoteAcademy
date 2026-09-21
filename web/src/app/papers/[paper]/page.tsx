@@ -86,7 +86,7 @@ export default async function PaperPage({ params }: Params) {
 
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-serif text-3xl tracking-tight text-ink">
+          <h1 className="font-serif text-3xl font-extrabold tracking-tight text-ink">
             {subject.title} {paperName(paper)}
           </h1>
           <p className="mt-1.5 text-ink-2">

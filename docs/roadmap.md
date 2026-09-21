@@ -1,6 +1,7 @@
 # Where the app stands
 
-Rewritten 2026-09-15 — the previous version of this file described a state
+Rewritten 2026-09-15 (corrected and extended 2026-09-21: revision queue,
+marks-weighted topics, the Voyage blocker and the Note Academy redesign) — the previous version of this file described a state
 (120 questions, no auth, chemistry/biology "not loaded," no structured arena)
 that everything shipped since had already overtaken without anyone updating
 the doc. Everything below is checked against the live database and the actual
@@ -45,6 +46,13 @@ is what topic tagging and the topical browser are tagged against.
   one card.
 - Dashboard — accuracy per topic, worst first, from `localStorage` (signed
   out) or `current_answers` (signed in, cross-device via RLS).
+- **Revise your weakest topics** (`/dashboard/[subject]/revise`, committed) —
+  a drill built from the topics the student is actually getting wrong (>=3
+  attempts, <70% accuracy, worst five), missed questions first then unseen
+  ones, capped at 20. Public `/api/revision-queue` feeds it.
+- **Marks-weighted topics** (`0031_topic_marks.sql`, applied) — each topic
+  carries the total marks it has been worth across every past paper, and the
+  subject page leads with "Where the marks actually are".
 - Auth — real Supabase email/password accounts: sign-up (with email
   confirmation if the project requires it), sign-in, forgot/reset password.
   `next` (the post-login redirect target) is validated same-origin
@@ -96,11 +104,61 @@ is what topic tagging and the topical browser are tagged against.
   mostly done) before the ModelScope reliability problems above stopped
   progress. 14 of 15 physics-5054 MCQ papers still untouched.
 - `embed` (retrieval embeddings): built, tested live against real data,
-  **never actually run** — `question_embeddings` is still 0 rows. This
-  fell off after `VOYAGE_API_KEY` was added; nothing is blocking it.
-- 30 migrations, all applied to the live database with matching checksums
+  **never actually run** — `question_embeddings` is still 0 rows. **Blocked
+  on the Voyage account, not on code:** with no payment method on file the key
+  is held to 3 requests/min and 10K tokens/min, and a first real run hit
+  persistent 429s. `embed.py` now retries with `Retry-After` and paces
+  batches, but a run at that limit would take hours; adding a payment method
+  lifts it. Earlier versions of this file said nothing was blocking it. That
+  was wrong.
+- 31 migrations, all applied to the live database with matching checksums
   (`db/apply.py --status`), including `0030` fixing the attempts/profiles
   cascade-delete bug.
+
+---
+
+## Look and feel — Note Academy redesign (2026-09-21, uncommitted)
+
+The site is being re-skinned to match the Note Academy brand and the reference
+site (`Ali-Ateeb/nawa`, `toolbar` branch): a student's notebook rather than a
+generic app. Light and dark are both done for the main student flow.
+
+Done:
+- **Brand assets in place.** Cropped, WebP-optimised logos in
+  `web/src/assets/brand/` (long lockup, stacked light/dark, pencil, and the
+  calculator/compass/ruler stationery), all through one `Brand.tsx`.
+  Favicon and Apple icon are the pencil; `opengraph-image.png` is the stacked
+  logo on graph paper. The old `icon.svg` is gone.
+- **Design system** (`globals.css`): dotted graph-paper ground drawn in CSS
+  (no image), Raleway for display and body (variable, self-hosted via
+  `next/font`) with Plex Mono kept for codes, marks and the timer; logo blue,
+  periwinkle card, highlighter chips (`.hl`), yellow lined `.note-sheet`,
+  pill buttons with the reference site's underline-then-glow hover (`.pill`).
+- **Toolbar**: one floating bar — logo, Home/Subjects/Dashboard pills with an
+  active state (`NavLinks.tsx`), account, theme, CTA. Fits at 375px.
+- **Restyled pages**: landing (logo drop-in, bobbing stationery, periwinkle
+  notes card), subjects index, subject page, topic page, dashboard, all four
+  auth pages, and the MCQ arena including the results card.
+- **No new runtime JS.** The reference site uses framer-motion and a Lottie
+  splash; neither was brought over — every animation is CSS and honours
+  `prefers-reduced-motion`. Shared JS is unchanged at 103 kB.
+
+- **Dark theme** (2026-09-21): a midnight-blue notebook rather than neutral
+  black — deep navy page and visible dots, chalk-coloured outlines with a blue
+  hard shadow on the sticker cards and pills (`--edge` / `--pop` tokens),
+  amber-tinted lined notes, dimmed highlighter chips, a darker periwinkle
+  card. Both logos have real white colourways (no light plate); the stationery
+  gets a thin die-cut outline so the dark calculator does not sink. The manual
+  toggle overrides the OS setting in both directions (checked). Verified
+  visually on landing, subject, topic, arena and results pages.
+
+Not done yet:
+- Dark mode has not been eyeballed on the dashboard, sign-in pages or a phone
+  width; `StructuredArena`, `SplitViewer`, the paper page, and the admin review
+  queue still carry the previous styling on shared tokens (correct colours and
+  fonts, but not the notebook motifs).
+- The landing page still claims examiner-report content that does not exist
+  in the data (see Known gaps).
 
 ---
 
@@ -138,6 +196,21 @@ Concrete and verified this session, not carried forward from an old list:
   no refund and shows a misleading error. Flagged, not yet fixed.
 - **The split viewer's real documents aren't uploaded.** Interaction shell
   is done; the panes have nothing to render yet.
+- **The landing page advertises examiner comments that have no data behind
+  them.** `questions.examiner_comment` is populated on 0 of 8,489 questions
+  and `paper_documents` holds only question papers and mark schemes — no
+  examiner reports were ever acquired. Either the copy is softened or the
+  reports are ingested. Left unchanged so far because it is a product claim.
+- **One approved structured question cannot be marked:**
+  `chemistry-5070-2014-may-june-p22` `A6` (no leaves, `max_marks` null).
+- **Question crops have no reserved space**, so every question page shifts
+  layout as its image loads. `question_assets.width_px/height_px` are unset
+  (0/4,279); the aspect ratio can be derived from the stored `bbox` instead.
+- **The dashboard ships ~100 kB of inline props** (600-row `questionTopics`)
+  so the client can aggregate accuracy. `topic_mastery` already computes this
+  and can be exposed through an `auth.uid()`-filtered view.
+- `attempts` is 0 rows in production: the signed-in path has never run
+  against real user data.
 - **Payments are schema-only** (`payment_submissions`) — no UI, no flow.
 
 ---
@@ -145,18 +218,14 @@ Concrete and verified this session, not carried forward from an old list:
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
-2. **Commit and push the outstanding pipeline work.** `modelscope.py`'s
-   retry-broadening, the trailing-comma JSON repair, `verify.py`'s two-phase
-   connection restructure (see below), and the Qwen-Ambassador model
-   defaults are all sitting uncommitted right now — the last pushed commit
-   is `88dd5d4`, itself still unpushed too.
-3. **Decide Gemini-with-billing vs. real Anthropic API for the
-   vision-dependent work** (tagging verification, `mcq-options`), then add
-   that provider's path to `tag_from_crop` (currently ModelScope-only) —
-   in progress, cost estimated for both, not yet implemented.
-4. **Run `embed` for physics-5054.** Fully built, tested live, nothing
-   blocking it — it just never got run. This alone would turn on the AI
-   solver's real `match_question()` path instead of its fallback.
+2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
+3. **Add Gemini's path to `tag_from_crop`** (currently ModelScope-only) for
+   the vision-dependent work (tagging verification, `mcq-options`). Gemini
+   was chosen over Anthropic on cost; needs Gemini billing enabled first.
+4. **Add a payment method to the Voyage account, then run `embed` for
+   physics-5054.** Fully built and tested; blocked only by the free-tier rate
+   limit. Turns on the AI solver's real `match_question()` path and unblocks
+   similar-question nudges.
 5. **Finish `mcq-options` for the remaining 14 physics-5054 papers**, once
    a reliable vision provider is wired up.
 6. **Provision at least one reviewer account** (`update profiles set
@@ -172,3 +241,7 @@ Concrete and verified this session, not carried forward from an old list:
 9. **Upload the source PDFs and finish the split viewer.** Unlocks the
    `SplitViewer`'s real panes instead of placeholders.
 10. **Payments**, once there's a live audience to charge.
+11. **Finish the redesign**: the structured arena, split viewer, paper page
+    and admin queue (see Look and feel).
+12. **Speed**: expose `topic_mastery` via an `auth.uid()` view to drop the
+    dashboard's ~100 kB payload; reserve crop space from `bbox`.

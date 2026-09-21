@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
+import { LogoStacked } from "@/components/Brand";
 import { useAuth } from "@/components/AuthProvider";
 import { safeNextPath } from "@/lib/safeRedirect";
 
@@ -49,7 +50,10 @@ function LoginForm() {
   }
 
   return (
-    <div className="mx-auto max-w-sm px-5 py-16">
+    <div className="mx-4 my-12 max-w-sm min-[420px]:mx-auto rounded-[2rem] border-2 border-edge bg-surface px-7 py-9 shadow-[4px_4px_0_var(--pop)]">
+        <div className="mb-6 flex justify-center">
+          <LogoStacked className="h-20" />
+        </div>
       <h1 className="font-serif text-3xl tracking-tight text-ink">Sign in</h1>
       <p className="mt-2 text-sm leading-relaxed text-ink-2">
         Your progress follows you to any device once you&apos;re signed in.
@@ -76,7 +80,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-60"
+            className="pill pill-solid w-full justify-center px-4 py-2.5 text-sm disabled:opacity-60"
           >
             {submitting ? "Signing in…" : "Sign in"}
           </button>
@@ -117,7 +121,7 @@ function Field({
         autoComplete={autoComplete}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-ink outline-none transition-colors focus:border-line-strong"
+        className="w-full rounded-xl border-2 border-line bg-surface px-3.5 py-2.5 text-sm text-ink outline-none transition-colors focus:border-accent"
       />
     </label>
   );

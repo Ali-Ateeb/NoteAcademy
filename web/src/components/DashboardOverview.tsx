@@ -92,11 +92,11 @@ export function DashboardOverview({ subjects }: Props) {
           <Link
             key={card.slug}
             href={`/dashboard/${card.slug}` as Route}
-            className="group rounded-2xl border border-line bg-surface p-5 shadow-card transition-all hover:border-line-strong hover:shadow-lift"
+            className="lift group rounded-2xl border-2 border-edge bg-surface p-5 shadow-[4px_4px_0_var(--pop)]"
           >
             <div className="flex items-baseline justify-between">
-              <span className="font-medium tracking-tight text-ink">{card.title}</span>
-              <span className="font-mono text-xs text-ink-3">{card.syllabusCode}</span>
+              <span className="text-lg font-bold text-ink">{card.title}</span>
+              <span className="hl hl-blue font-mono text-xs">{card.syllabusCode}</span>
             </div>
             {percentage === null ? (
               <p className="mt-2 text-sm leading-relaxed text-ink-3">
@@ -108,7 +108,7 @@ export function DashboardOverview({ subjects }: Props) {
                 <span className="font-mono tabular-nums">{percentage}%</span>
               </p>
             )}
-            <span className="mt-4 inline-block text-sm font-medium text-accent">
+            <span className="mt-4 inline-block text-sm font-bold text-accent">
               View weak areas →
             </span>
           </Link>

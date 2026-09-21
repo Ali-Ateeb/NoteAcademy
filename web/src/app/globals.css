@@ -3,94 +3,163 @@
 /* --------------------------------------------------------------------------
    Design tokens.
 
+   The theme is a student's notebook, taken from the Note Academy brand
+   itself: dotted graph paper for a ground, chunky Raleway for headings,
+   highlighter-marker labels the way a well-made set of notes colours its
+   titles, and yellow lined sheets for anything that should read as "a note".
+   The blue is the logo's own underline stroke; the yellow and red are the
+   pencil.
+
    Every colour is defined once on :root and only *redefined* in the two dark
    blocks, so no colour has its sole definition inside a media query. The
    [data-theme] blocks let an explicit toggle win in both directions.
 
-   The palette is deliberately quiet: a warm paper ground rather than pure
-   white, one accent, and semantic colours reserved for meaning (correct,
-   incorrect, marks). A revision tool is looked at for four hours at a stretch —
-   restraint is the feature.
+   Dark is the same notebook at night: a midnight-blue page, chalk outlines,
+   and highlighter colours pulled down so they glow rather than shout.
    -------------------------------------------------------------------------- */
 
 :root {
-  --paper:        #faf9f7;
+  --paper:        #ffffff;
+  --dot:          #c9d0db;
   --surface:      #ffffff;
-  --surface-2:    #f4f2ee;
-  --border:       #e4e1da;
-  --border-strong:#d2cec4;
+  --surface-2:    #f2f5fa;
+  --border:       #dfe4ec;
+  --border-strong:#b9c1cf;
 
-  --ink:          #17181c;
-  --ink-2:        #4a4d57;
-  --ink-3:        #7c8089;
+  --ink:          #111318;
+  --ink-2:        #414957;
+  --ink-3:        #6a7381;
 
-  --accent:       #2f4bd4;
+  --accent:       #1f6fe5;
   --accent-ink:   #ffffff;
-  --accent-soft:  #eaeeff;
+  --accent-soft:  #e1eeff;
+  --sky:          #3fb0ff;
+  --periwinkle:   #7db1ff;
 
-  --correct:      #1f7a4d;
-  --correct-soft: #e6f4ec;
-  --incorrect:    #c0392b;
-  --incorrect-soft:#fbeae8;
-  --marks:        #9a6b1f;
-  --marks-soft:   #f8f0df;
+  --ochre:        #a35f00;
+  --ochre-soft:   #fff2c9;
 
-  --shadow-sm: 0 1px 2px rgb(20 22 28 / 0.05);
-  --shadow-md: 0 4px 16px -4px rgb(20 22 28 / 0.10), 0 1px 3px rgb(20 22 28 / 0.05);
+  /* A sheet of yellow lined paper, and the three highlighter colours the
+     notes use for titles and sub-headings. */
+  --note:         #fff9c9;
+  --note-line:    #e9e2a6;
+  --note-margin:  #f0a5a5;
+  --hl-blue:      #bfe0ff;
+  --hl-yellow:    #ffe58a;
+  --hl-pink:      #ffc4c4;
+
+  /* Outline and hard-shadow colours for the sticker-style cards and pills.
+     Black ink in light; a chalk outline over a deep blue shadow in dark. */
+  --edge:         #111318;
+  --pop:          #111318;
+
+  --correct:      #17853f;
+  --correct-soft: #dff5e6;
+  --incorrect:    #d23b32;
+  --incorrect-soft:#fde7e5;
+  --marks:        #a35f00;
+  --marks-soft:   #fff2c9;
+
+  --shadow-sm: 0 1px 2px rgb(17 19 24 / 0.06);
+  --shadow-md: 0 12px 28px -14px rgb(31 111 229 / 0.4), 0 2px 4px rgb(17 19 24 / 0.06);
+  --glow:      0 10px 24px -8px rgb(63 176 255 / 0.85);
+
+  /* Motion. One easing for entrances (decelerating, never springy) and one
+     for interface state changes, so nothing in the app animates with the
+     browser default and looks unconsidered next to everything that doesn't. */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+  --dur-slow: 420ms;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper:        #0b0c0f;
-    --surface:      #131519;
-    --surface-2:    #1a1d23;
-    --border:       #262a32;
-    --border-strong:#363b45;
+  --paper:        #0e1320;
+  --dot:          #29324d;
+  --surface:      #161d30;
+  --surface-2:    #1f2841;
+  --border:       #2d3856;
+  --border-strong:#46537a;
 
-    --ink:          #eceef2;
-    --ink-2:        #a8adb8;
-    --ink-3:        #767c88;
+  --ink:          #eef1f8;
+  --ink-2:        #b4bdd2;
+  --ink-3:        #8792ab;
 
-    --accent:       #8b9dff;
-    --accent-ink:   #0b0c0f;
-    --accent-soft:  #1b2140;
+  --accent:       #6cb0ff;
+  --accent-ink:   #0b1020;
+  --accent-soft:  #17305c;
+  --sky:          #4cb8ff;
+  --periwinkle:   #2b4a8f;
 
-    --correct:      #4ade80;
-    --correct-soft: #10281c;
-    --incorrect:    #f87171;
-    --incorrect-soft:#2b1616;
-    --marks:        #e0b063;
-    --marks-soft:   #2a2113;
+  --ochre:        #f2b64a;
+  --ochre-soft:   #2e2712;
 
-    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-    --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --note:         #2a2716;
+  --note-line:    #3d3921;
+  --note-margin:  #8a4444;
+  --hl-blue:      #1f5591;
+  --hl-yellow:    #7a6414;
+  --hl-pink:      #7b3232;
+
+  --edge:         #d7def0;
+  --pop:          #2f6fd0;
+
+  --correct:      #4ade80;
+  --correct-soft: #10281c;
+  --incorrect:    #f0776a;
+  --incorrect-soft:#301818;
+  --marks:        #f2b64a;
+  --marks-soft:   #2e2712;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 14px 30px -14px rgb(0 0 0 / 0.75), 0 2px 4px rgb(0 0 0 / 0.4);
+  --glow:      0 10px 26px -8px rgb(76 184 255 / 0.55);
   }
 }
 
 :root[data-theme="dark"] {
-  --paper:        #0b0c0f;
-  --surface:      #131519;
-  --surface-2:    #1a1d23;
-  --border:       #262a32;
-  --border-strong:#363b45;
+  --paper:        #0e1320;
+  --dot:          #29324d;
+  --surface:      #161d30;
+  --surface-2:    #1f2841;
+  --border:       #2d3856;
+  --border-strong:#46537a;
 
-  --ink:          #eceef2;
-  --ink-2:        #a8adb8;
-  --ink-3:        #767c88;
+  --ink:          #eef1f8;
+  --ink-2:        #b4bdd2;
+  --ink-3:        #8792ab;
 
-  --accent:       #8b9dff;
-  --accent-ink:   #0b0c0f;
-  --accent-soft:  #1b2140;
+  --accent:       #6cb0ff;
+  --accent-ink:   #0b1020;
+  --accent-soft:  #17305c;
+  --sky:          #4cb8ff;
+  --periwinkle:   #2b4a8f;
+
+  --ochre:        #f2b64a;
+  --ochre-soft:   #2e2712;
+
+  --note:         #2a2716;
+  --note-line:    #3d3921;
+  --note-margin:  #8a4444;
+  --hl-blue:      #1f5591;
+  --hl-yellow:    #7a6414;
+  --hl-pink:      #7b3232;
+
+  --edge:         #d7def0;
+  --pop:          #2f6fd0;
 
   --correct:      #4ade80;
   --correct-soft: #10281c;
-  --incorrect:    #f87171;
-  --incorrect-soft:#2b1616;
-  --marks:        #e0b063;
-  --marks-soft:   #2a2113;
+  --incorrect:    #f0776a;
+  --incorrect-soft:#301818;
+  --marks:        #f2b64a;
+  --marks-soft:   #2e2712;
 
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 14px 30px -14px rgb(0 0 0 / 0.75), 0 2px 4px rgb(0 0 0 / 0.4);
+  --glow:      0 10px 26px -8px rgb(76 184 255 / 0.55);
 }
 
 @theme inline {
@@ -105,6 +174,16 @@
   --color-accent:        var(--accent);
   --color-accent-ink:    var(--accent-ink);
   --color-accent-soft:   var(--accent-soft);
+  --color-sky:           var(--sky);
+  --color-periwinkle:    var(--periwinkle);
+  --color-edge:          var(--edge);
+  --color-ochre:         var(--ochre);
+  --color-ochre-soft:    var(--ochre-soft);
+  --color-note:          var(--note);
+  --color-note-line:     var(--note-line);
+  --color-hl-blue:       var(--hl-blue);
+  --color-hl-yellow:     var(--hl-yellow);
+  --color-hl-pink:       var(--hl-pink);
   --color-correct:       var(--correct);
   --color-correct-soft:  var(--correct-soft);
   --color-incorrect:     var(--incorrect);
@@ -112,13 +191,21 @@
   --color-marks:         var(--marks);
   --color-marks-soft:    var(--marks-soft);
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-               "Helvetica Neue", Arial, sans-serif;
-  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* Wired to next/font in layout.tsx; the fallbacks matter because the
+     variables are undefined until that font actually loads. Raleway does both
+     jobs — the display weight is the same family as the body, exactly as it
+     is on the Note Academy site — so `font-serif` (kept as the name so every
+     existing heading picks the new face up without being touched) now means
+     "display". */
+  --font-sans:  var(--font-raleway), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-raleway), ui-sans-serif, system-ui, sans-serif;
+  --font-mono:  var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --shadow-card: var(--shadow-sm);
   --shadow-lift: var(--shadow-md);
+
+  --ease-entrance: var(--ease-out-quint);
+  --ease-state: var(--ease-in-out-quad);
 }
 
 /* These belong in @layer base, and the layer is not decoration.
@@ -134,30 +221,283 @@
     -webkit-text-size-adjust: 100%;
   }
 
+  /* The graph paper. A dot every 26px, drawn by the browser rather than
+     shipped as the 90 KB JPEG it started life as — same look, zero bytes,
+     and it stays crisp at any zoom or pixel density. */
   body {
-    background: var(--paper);
+    background-color: var(--paper);
+    background-image: radial-gradient(circle, var(--dot) 1.1px, transparent 1.4px);
+    background-size: 26px 26px;
     color: var(--ink);
     font-family: var(--font-sans);
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-weight: 450;
+    /* Raleway's default numerals are old-style, which makes a mark scheme
+       full of "3 marks" and "2014" look like it is bouncing. Lining figures
+       are the right call for an exam product. */
+    font-feature-settings: "lnum" 1;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
+  h1, h2, h3 {
+    font-family: var(--font-serif);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+  }
+
   /* Speed is what reads as premium. A focus ring that is always correct does
-     more for perceived quality than any amount of gradient. */
+     more for perceived quality than any amount of decoration. */
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
     border-radius: 3px;
   }
 
+  ::selection { background: var(--hl-yellow); color: var(--ink); }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
     }
   }
 }
+
+/* --------------------------------------------------------------------------
+   Motion.
+
+   Entrances arrive; nothing bounces. The one thing that loops is the
+   stationery on the landing page, which bobs slowly the way it does on the
+   Note Academy site — and reduced-motion collapses it to a single frame.
+   -------------------------------------------------------------------------- */
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* A mark being made: how a revealed answer state arrives. Scales from
+   slightly small so it reads as *landing* rather than popping. */
+@keyframes stamp {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* A rule drawing itself under a heading. */
+@keyframes draw-rule {
+  from { transform: scaleX(0) rotate(-1deg); }
+  to   { transform: scaleX(1) rotate(-1deg); }
+}
+
+/* The logo dropping onto the page, as it does on the original site. */
+@keyframes drop-in {
+  from { opacity: 0; transform: translateY(-24px) scale(1.08); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Stationery bobbing on the desk. Uses `translate` and `rotate` rather than
+   `transform` so a per-item tilt set in the class list is not overwritten. */
+@keyframes bob {
+  from { translate: 0 0; }
+  to   { translate: 0 14px; }
+}
+
+.animate-rise  { animation: rise var(--dur-slow) var(--ease-out-quint) both; }
+.animate-fade  { animation: fade var(--dur-base) var(--ease-out-quint) both; }
+.animate-stamp { animation: stamp var(--dur-base) var(--ease-out-quint) both; }
+.animate-drop  { animation: drop-in 700ms var(--ease-out-quint) both; }
+
+.animate-rule {
+  transform-origin: left;
+  animation: draw-rule var(--dur-slow) var(--ease-out-quint) both;
+}
+
+.animate-bob {
+  animation: bob 3s var(--ease-in-out-quad) infinite alternate;
+  animation-delay: var(--bob-delay, 0s);
+}
+
+/* Staggered entrance for lists. Cheap, and the reason a grid of cards reads
+   as one considered movement instead of ten things flashing at once. */
+.stagger > * { animation: rise var(--dur-slow) var(--ease-out-quint) both; }
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 40ms; }
+.stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; }
+.stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; }
+.stagger > *:nth-child(n + 7) { animation-delay: 240ms; }
+
+/* --------------------------------------------------------------------------
+   Theme motifs.
+   -------------------------------------------------------------------------- */
+
+/* The toolbar button from the Note Academy site: a white pill, bold and
+   underlined, that swells and glows blue on hover. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 9999px;
+  border: 1.5px solid var(--edge);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  transition:
+    transform var(--dur-base) var(--ease-out-quint),
+    box-shadow var(--dur-base) var(--ease-out-quint),
+    background-color var(--dur-fast) var(--ease-in-out-quad),
+    color var(--dur-fast) var(--ease-in-out-quad);
+}
+.pill:hover {
+  text-decoration-color: transparent;
+  transform: scale(1.05);
+  box-shadow: var(--glow);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.pill:active { transform: scale(0.98); }
+.pill[aria-current="page"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  text-decoration-color: transparent;
+}
+
+/* A pill whose text is not underlined until it is hovered — for pills that
+   appear in groups, where a row of underlines is noise. */
+.pill-plain { text-decoration: none; }
+
+/* The filled call to action: the same pill, blue from the start. */
+.pill-solid {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  text-decoration: none;
+  box-shadow: 3px 3px 0 var(--pop);
+}
+.pill-solid:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: var(--glow), 3px 3px 0 var(--pop);
+}
+
+/* A highlighter stroke behind a title. Rotated a hair so it looks laid on by
+   hand, and box-decoration-break keeps it intact across a wrapped line. */
+.hl {
+  padding: 0.05em 0.35em;
+  border-radius: 0.3em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  color: var(--ink);
+}
+.hl-blue   { background: var(--hl-blue); }
+.hl-yellow { background: var(--hl-yellow); }
+.hl-pink   { background: var(--hl-pink); }
+
+/* The blue underline stroke from the logo, drawn under a section title. */
+.rule-under {
+  position: relative;
+  padding-bottom: 0.7rem;
+}
+.rule-under::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 3.25rem;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--sky);
+  transform: rotate(-1deg);
+  transform-origin: left;
+}
+
+/* A sheet of yellow lined paper with the red margin down the left: the
+   background of anything that should read as a note. */
+.note-sheet {
+  position: relative;
+  background-color: var(--note);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 27px,
+    var(--note-line) 27px,
+    var(--note-line) 28px
+  );
+  border: 1px solid var(--note-line);
+  border-radius: 0.375rem;
+  box-shadow: 0 10px 24px -14px rgb(17 19 24 / 0.35);
+}
+.note-sheet::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 2.6rem;
+  width: 1.5px;
+  background: var(--note-margin);
+  opacity: 0.7;
+}
+
+/* The gutter number: mono, muted, hanging outside the text column the way a
+   question number does on the paper itself. */
+.gutter-num {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Marks, as the paper prints them. */
+.marks-bracket {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--marks);
+  font-variant-numeric: tabular-nums;
+}
+.marks-bracket::before { content: "["; }
+.marks-bracket::after  { content: "]"; }
+
+/* Lift on hover, with the app's own easing rather than the browser default. */
+.lift {
+  transition:
+    transform var(--dur-base) var(--ease-out-quint),
+    box-shadow var(--dur-base) var(--ease-out-quint),
+    border-color var(--dur-fast) var(--ease-in-out-quad);
+}
+.lift:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent);
+}
+
+/* Logo colourways. The artwork is black-outlined for light pages, so dark
+   mode swaps in the white versions; the hidden one is lazy-loaded, so a reader
+   only downloads the colourway they can see. */
+.logo-on-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .logo-on-light { display: none; }
+  :root:not([data-theme="light"]) .logo-on-dark  { display: block; }
+}
+:root[data-theme="dark"] .logo-on-light { display: none; }
+:root[data-theme="dark"] .logo-on-dark  { display: block; }
+
+/* Stationery as die-cut stickers in dark mode: a thin light outline keeps the
+   dark-bodied calculator from sinking into the page. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .stationery { filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.9)) drop-shadow(0 0 10px rgb(108 176 255 / 0.25)); }
+}
+:root[data-theme="dark"] .stationery { filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.9)) drop-shadow(0 0 10px rgb(108 176 255 / 0.25)); }
 
 /* Wide content — mark scheme tables, long question stems — scrolls inside its
    own box. The page body never scrolls sideways. */

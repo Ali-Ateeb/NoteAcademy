@@ -66,14 +66,14 @@ export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
 
   if (rows.length === 0) {
     return (
-      <div className="mt-10 rounded-2xl border border-dashed border-line p-10 text-center">
+      <div className="mt-10 rounded-[2rem] border-2 border-dashed border-line-strong bg-surface/80 p-10 text-center">
         <p className="text-ink-2">Nothing to show yet.</p>
         <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-ink-3">
           Sit a paper and this fills with accuracy per topic and time per question.
         </p>
         <Link
           href={`/subjects/${subjectSlug}` as Route}
-          className="mt-5 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+          className="pill pill-solid mt-5 px-5 py-2 text-sm"
         >
           Browse papers →
         </Link>
@@ -97,16 +97,16 @@ export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
 
       <Link
         href={`/dashboard/${subjectSlug}/revise` as Route}
-        className="mt-4 flex items-center justify-between rounded-2xl border border-line bg-accent-soft p-5 transition-colors hover:border-line-strong"
+        className="lift group mt-4 flex items-center justify-between rounded-[2rem] bg-periwinkle p-6"
       >
         <div>
-          <p className="font-medium tracking-tight text-ink">Revise your weakest topics</p>
-          <p className="mt-1 text-sm leading-relaxed text-ink-2">
+          <p className="text-lg font-extrabold text-ink">Revise your weakest topics</p>
+          <p className="mt-1 text-sm leading-relaxed text-ink">
             A mixed drill built from the topics you are actually getting wrong — not a full
             re-drill of every topic below.
           </p>
         </div>
-        <span className="ml-4 shrink-0 text-sm font-medium text-accent">Start →</span>
+        <span className="pill pill-plain ml-4 shrink-0 px-4 py-1.5 text-sm group-hover:bg-accent group-hover:text-accent-ink">Start →</span>
       </Link>
 
       <div className="mt-8 space-y-2">
@@ -125,7 +125,7 @@ export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
             <Link
               key={topic.code}
               href={`/topics/${subjectSlug}/${topic.slug}/practice` as Route}
-              className="block rounded-xl border border-line bg-surface p-4 shadow-card transition-colors hover:border-line-strong"
+              className="lift block rounded-xl border border-line bg-surface p-4 shadow-card"
             >
               <div className="flex items-baseline justify-between gap-4">
                 <span className="text-sm text-ink">
@@ -158,7 +158,7 @@ export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-line bg-surface p-4 shadow-card">
+    <div className="rounded-2xl border-2 border-edge bg-surface p-4 shadow-[3px_3px_0_var(--pop)]">
       <p className="font-mono text-2xl tabular-nums text-ink">{value}</p>
       <p className="mt-1 text-xs text-ink-3">{label}</p>
     </div>

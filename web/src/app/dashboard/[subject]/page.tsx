@@ -49,7 +49,7 @@ export default async function SubjectDashboardPage({ params }: Params) {
         <span className="text-ink-2">{subject.title}</span>
       </nav>
 
-      <h1 className="font-serif text-4xl tracking-tight text-ink">
+      <h1 className="rule-under font-serif text-4xl font-extrabold tracking-tight text-ink">
         {subject.title} — your weak areas
       </h1>
       <p className="mt-3 max-w-xl leading-relaxed text-ink-2">

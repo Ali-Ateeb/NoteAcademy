@@ -47,7 +47,7 @@ export function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label="Toggle colour theme"
-      className="rounded-lg border border-line px-2 py-1.5 text-ink-2 transition-colors hover:border-line-strong hover:text-ink"
+      className="rounded-full border border-line p-2 text-ink-2 transition-all duration-200 hover:scale-110 hover:border-accent hover:text-accent"
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path

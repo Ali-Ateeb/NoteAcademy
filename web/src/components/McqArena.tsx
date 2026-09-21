@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { PencilMark } from "@/components/Brand";
 import { SolutionButton } from "@/components/SolutionButton";
 import {
   appendAttempts,
@@ -237,8 +238,10 @@ export function McqArena({
       <div className="mb-5 flex flex-wrap items-center gap-4">
         {timed && (
           <span
-            className={`rounded-lg px-3 py-1.5 font-mono text-lg tabular-nums ${
-              lowTime ? "bg-incorrect-soft text-incorrect" : "bg-surface-2 text-ink"
+            className={`rounded-full border-2 px-4 py-1 font-mono text-lg tabular-nums ${
+              lowTime
+                ? "border-incorrect bg-incorrect-soft text-incorrect"
+                : "border-edge bg-surface text-ink"
             }`}
             aria-live={lowTime ? "polite" : "off"}
           >
@@ -251,25 +254,31 @@ export function McqArena({
         <button
           type="button"
           onClick={submit}
-          className="ml-auto rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+          className="pill pill-solid ml-auto px-5 py-2 text-sm"
         >
           {timed ? "Submit paper" : "Mark answers"}
         </button>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_200px]">
-        <div className="rounded-2xl border border-line bg-surface p-6 shadow-card">
+        {/* Keyed on the question, so moving between questions re-runs the
+            entrance: each one arrives rather than swapping in place, which is
+            what makes a 40-question paper feel paced instead of abrupt. */}
+        <div
+          key={current.id}
+          className="animate-rise rounded-2xl border border-line-strong bg-surface p-6 shadow-card"
+        >
           <div className="mb-4 flex items-center justify-between">
-            <span className="font-mono text-sm text-ink-3">
+            <span className="hl hl-blue gutter-num !text-ink">
               Question {state.currentIndex + 1} / {total}
             </span>
             <button
               type="button"
               onClick={toggleFlag}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
                 state.flagged.includes(current.id)
-                  ? "bg-marks-soft text-marks"
-                  : "text-ink-3 hover:bg-surface-2"
+                  ? "bg-hl-yellow text-ink"
+                  : "text-ink-3 hover:bg-surface-2 hover:text-ink"
               }`}
             >
               {state.flagged.includes(current.id) ? "Flagged" : "Flag for review"}
@@ -307,15 +316,15 @@ export function McqArena({
                   role="radio"
                   aria-checked={selected}
                   onClick={() => select(option)}
-                  className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors ${
+                  className={`flex w-full items-start gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all duration-150 ease-[cubic-bezier(0.45,0,0.55,1)] active:scale-[0.995] ${
                     selected
                       ? "border-accent bg-accent-soft"
-                      : "border-line hover:border-line-strong hover:bg-surface-2"
+                      : "border-line hover:border-accent hover:bg-accent-soft/50"
                   }`}
                 >
                   <span
-                    className={`mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-md font-mono text-xs ${
-                      selected ? "bg-accent text-accent-ink" : "bg-surface-2 text-ink-2"
+                    className={`mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-xs font-medium transition-colors duration-150 ${
+                      selected ? "bg-accent text-accent-ink" : "bg-hl-yellow text-ink"
                     }`}
                   >
                     {option}
@@ -338,7 +347,7 @@ export function McqArena({
               type="button"
               onClick={() => goTo(state.currentIndex - 1)}
               disabled={state.currentIndex === 0}
-              className="rounded-lg px-3 py-1.5 text-sm text-ink-2 transition-colors hover:bg-surface-2 disabled:opacity-40"
+              className="pill pill-plain px-4 py-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
             >
               ← Previous
             </button>
@@ -352,7 +361,7 @@ export function McqArena({
               type="button"
               onClick={() => goTo(state.currentIndex + 1)}
               disabled={state.currentIndex === total - 1}
-              className="rounded-lg px-3 py-1.5 text-sm text-ink-2 transition-colors hover:bg-surface-2 disabled:opacity-40"
+              className="pill pill-plain px-4 py-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
             >
               Next →
             </button>
@@ -360,7 +369,7 @@ export function McqArena({
         </div>
 
         <aside>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-3">
+          <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-ink-2">
             Questions
           </h2>
           <div className="grid grid-cols-8 gap-1.5 lg:grid-cols-5">
@@ -374,12 +383,12 @@ export function McqArena({
                   type="button"
                   onClick={() => goTo(index)}
                   aria-label={`Question ${index + 1}${answered ? ", answered" : ""}${flagged ? ", flagged" : ""}`}
-                  className={`relative aspect-square rounded-md font-mono text-xs transition-colors ${
+                  className={`relative aspect-square rounded-lg border-2 font-mono text-xs transition-all duration-150 hover:scale-105 ${
                     active
-                      ? "bg-accent text-accent-ink"
+                      ? "border-accent bg-accent text-accent-ink"
                       : answered
-                        ? "bg-accent-soft text-ink"
-                        : "bg-surface-2 text-ink-3 hover:text-ink"
+                        ? "border-transparent bg-hl-blue text-ink"
+                        : "border-line bg-surface text-ink-3 hover:border-accent hover:text-ink"
                   }`}
                 >
                   {index + 1}
@@ -424,11 +433,14 @@ function Results({
 
   return (
     <div>
-      <div className="rounded-2xl border border-line bg-surface p-7 shadow-card">
-        <p className="text-sm text-ink-3">{title}</p>
+      <div className="animate-rise relative rounded-2xl border-2 border-edge bg-surface p-7 shadow-[4px_4px_0_var(--pop)]">
+        <PencilMark className="absolute -top-5 right-6 h-14 rotate-6" />
+        <p className="hl hl-yellow gutter-num w-fit !text-ink">{title}</p>
         <div className="mt-3 flex flex-wrap items-end gap-8">
           <div>
-            <span className="font-serif text-5xl tabular-nums text-ink">
+            {/* The score lands rather than appears — the one moment in the
+                app where a small piece of theatre is actually earned. */}
+            <span className="animate-stamp block font-serif text-5xl tabular-nums text-ink">
               {score}
               <span className="text-2xl text-ink-3">/{questions.length}</span>
             </span>
@@ -444,13 +456,13 @@ function Results({
             <button
               type="button"
               onClick={onRetake}
-              className="rounded-lg border border-line-strong px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-2"
+              className="pill pill-plain px-4 py-2 text-sm"
             >
               Retake
             </button>
             <Link
               href="/dashboard"
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition-opacity hover:opacity-90"
+              className="pill pill-solid px-4 py-2 text-sm"
             >
               See weak areas
             </Link>
@@ -458,7 +470,7 @@ function Results({
         </div>
       </div>
 
-      <h2 className="mb-4 mt-10 font-serif text-2xl tracking-tight text-ink">
+      <h2 className="rule-under mb-5 mt-10 font-serif text-2xl tracking-tight text-ink">
         Every question
       </h2>
       <div className="space-y-3">
