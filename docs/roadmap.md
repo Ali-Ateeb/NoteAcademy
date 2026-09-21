@@ -375,6 +375,22 @@ The route for the 2,960 newly loaded MCQs, run end to end for both subjects.
   students see. `question_topics.confidence` is a float4, so `= 0.74`
   comparisons miss; use a range.
 
+- **Accuracy check against the approved tags (read-only), 2026-09-21.** The
+  first-pass tagger was run, in memory, on every approved question with text
+  and compared with the topic already approved. **Physics agrees on 68 of 77
+  (88%)** and the 9 differences are mostly neighbouring topics. **Chemistry
+  agrees on only 157 of 316 (50%), and the disagreement is concentrated in four
+  papers whose approved tags are wrong, not the tagger:**
+  2019 May/June P11 (0/40), 2019 May/June P12 (11/40), 2020 Oct/Nov P11 (6/38),
+  2020 Oct/Nov P12 (3/40). The other four approved Chemistry papers match at
+  78-92%. In the worst paper the approved tags run in ascending syllabus order
+  regardless of content ("rate of reaction" filed under Preparation of salts).
+  These ~158 questions are **approved, so live to students, under the wrong
+  topics**. Cause unknown (not this session's writes: tag-auto only touches
+  untagged questions). Not yet fixed; re-tag and re-review, or take offline.
+  This also means the 153 Chemistry disagreements on approved questions found by
+  the second read were largely real.
+
 ---
 
 ## Next steps, in priority order
