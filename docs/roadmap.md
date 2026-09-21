@@ -339,23 +339,57 @@ Concrete and verified this session, not carried forward from an old list:
 
 ---
 
+## First-pass tagging of the Paper 1 backfill (2026-09-21)
+
+The route for the 2,960 newly loaded MCQs, run end to end for both subjects.
+**Nothing is approved and nothing is live to students.**
+
+- `mcq-options` (DeepSeek vision reads each question's stem and options) was run
+  on all 84 in-scope variant 11/12 papers, 5 at a time, in about 25 minutes,
+  none failed. 3,323 of 3,360 questions got text. The other 37 (figure-only
+  questions, mostly) are not tagged: 22 still have no text after a retry.
+- **`noteacademy tag-auto`** (new; `tag_auto.py`): reads each untagged MCQ's stem,
+  options and keyed answer, asks `deepseek-v4-pro` for a topic from the closed
+  list, writes it. Dry run by default; no DB connection during model calls;
+  questions with no text are skipped, not guessed at. Result: **2,900 tagged**
+  (Chemistry 1,315, Physics 1,583); 3 calls returned truncated JSON and
+  succeeded on retry. Sampled tags read correctly; a stem like "Which
+  statement is not correct?" leans entirely on the options.
+- **`tag-verify-auto`** (second read, of the printed crop) on both subjects:
+  Chemistry 1,391 agreed / 276 disagreed; Physics 1,580 agreed / 78 disagreed.
+  Unapproved disagreements are now `needs_review` with `low_tag_confidence`
+  (Chemistry 123, Physics 73). **12 calls failed** (max_tokens cut off, or
+  malformed JSON) and are unverified; a re-run would re-read everything.
+  Chemistry disagrees ~16% of the time against Physics ~5%; given ~15%
+  run-to-run noise on identical runs, treat these as flags for a person.
+- **Mistake, found and fixed, then cleaned up.** The MCQ model verifier, unlike
+  the structured one, wrote to *approved* questions on a disagreement: primary
+  confidence lowered to 0.74 and a model-suggested secondary topic (0.6) added.
+  This run did that to **153 approved Chemistry and 5 approved Physics
+  questions** (status unchanged, so still live). The verifier now only reports
+  those (`leave_approved`; regression tests added; the manual `tag-verify-apply`
+  path is unchanged). The 158 added secondary rows were deleted afterwards
+  (exact-count guarded). **Still wrong:** those questions' primary confidence
+  stays at 0.74; the original was overwritten and is not recoverable (the
+  untouched approved ones sit at 0.9). Approval, not confidence, gates what
+  students see. `question_topics.confidence` is a float4, so `= 0.74`
+  comparisons miss; use a range.
+
+---
+
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Tag, verify and approve the 2,960 newly loaded MCQs** (Physics 1,600 and
-   Chemistry 1,360 untagged). MCQ crops carry no text, so the designed route is:
-   `mcq-options` (DeepSeek vision reads the question and options, ~cents) ->
-   text tagging with `deepseek-v4-pro` -> `tag-verify-auto` (a *different* model
-   reading the crop, so the two passes are genuinely independent) -> review
-   the disagreements -> `bulk-approve`. Not built as one command yet. Then:
-   **run tagging verification at scale on DeepSeek** (both tools built; dry
-   run first, then review the triage CSV before `--no-dry-run`):
-   `noteacademy tag-verify-auto --subject chemistry-5070` and `biology-5090`
-   (MCQ; thinking on by default; ~545 distinct questions, under $1), and
-   `noteacademy tag-verify-structured --subject <each>` (thinking off by
-   default; ~$0.44 and ~16 minutes for all three subjects). Then finish
-   `mcq-options` (text and options only, so the loose boxes do not matter).
+3. **Review and approve the 2,960 newly loaded MCQs.** Tagged and second-read
+   (see the section above). Remaining: (a) review the 196 flagged
+   disagreements (Chemistry 123, Physics 73) in the queue; (b) tag the 22
+   figure-only questions from the crop (`tag_from_crop`) or by hand; (c) re-run
+   verification for the 12 failed calls; (d) `bulk-approve` the rest, only
+   after a person has looked at a sample. Then run `tag-verify-structured`
+   for chemistry-5070, biology-5090 and physics (~$0.44, ~16 minutes for all
+   three; dry run first, review the triage CSV) and `tag-verify-auto` for
+   biology-5090.
 4. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks

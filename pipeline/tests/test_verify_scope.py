@@ -313,3 +313,60 @@ def test_a_dry_run_still_rolls_back(mcq_world):
     report = run_mcq(mcq_world, dry_run=True, year_from=2016, year_to=2026)
     assert isinstance(report, VerifyReport)
     assert mcq_world["conns"][-1].rolled_back and not mcq_world["conns"][-1].committed
+
+
+# --------------------------------------------------------------------------
+# an approved question is never edited by the model verifier
+# --------------------------------------------------------------------------
+
+
+class _Cursor:
+    def __init__(self, status):
+        self.status, self.sql = status, []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.sql.append(" ".join(sql.split()).lower())
+
+    def fetchone(self):
+        return {"code": "1.1", "confidence": 0.9, "extraction_status": self.status}
+
+
+class _ApplyConn:
+    def __init__(self, status):
+        self.cur = _Cursor(status)
+
+    def cursor(self):
+        return self.cur
+
+
+def _apply(status, pass2_code, **kw):
+    conn, report = _ApplyConn(status), VerifyReport()
+    verify._apply_one(conn, "q", pass2_code, {"1.1": "t1", "2.1": "t2"}, 0.75, report, **kw)
+    return conn.cur.sql, report
+
+
+def _writes(sql):
+    return [s for s in sql if s.startswith(("update", "insert"))]
+
+
+def test_a_disagreement_on_an_approved_question_is_reported_and_writes_nothing():
+    sql, report = _apply("approved", "2.1", leave_approved=True)
+    assert _writes(sql) == []
+    assert (report.disagreed, report.disagreed_approved) == (0, 1)
+
+
+def test_a_disagreement_on_an_unapproved_question_still_returns_it_to_review():
+    sql, report = _apply("extracted", "2.1", leave_approved=True)
+    assert any("needs_review" in s for s in _writes(sql))
+    assert (report.disagreed, report.disagreed_approved) == (1, 0)
+
+
+def test_a_persons_decision_may_still_change_an_approved_question():
+    sql, report = _apply("approved", "2.1")  # the manual path does not pass leave_approved
+    assert _writes(sql) and report.disagreed == 1

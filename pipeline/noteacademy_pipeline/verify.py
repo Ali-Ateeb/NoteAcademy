@@ -401,6 +401,9 @@ class VerifyReport:
     disagreed: int = 0
     skipped_no_decision: int = 0
     skipped_approved: int = 0
+    # Disagreements on questions that were already approved, which the model
+    # verifier reports and does not write (see `_apply_one`'s `leave_approved`).
+    disagreed_approved: int = 0
     unknown_codes: list[str] = field(default_factory=list)
     # A question the model call itself failed on (a malformed reply the
     # trailing-comma fix couldn't rescue, a network error past deepseek.py's
@@ -501,7 +504,13 @@ def _apply_one(
     topic_ids: dict[str, str],
     floor: float,
     report: VerifyReport,
+    *,
+    leave_approved: bool = False,
 ) -> None:
+    """`leave_approved` is for the model verifier: a disagreement on an approved
+    (live) question is counted and nothing else, since one model read is not
+    grounds to alter what students can see. A person's decision, through
+    `apply_verification`, still may."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -525,6 +534,8 @@ def _apply_one(
         if pass1_code == pass2_code:
             confirm_primary(cur, question_id, pass1_confidence, approved=approved)
             report.agreed += 1
+        elif approved and leave_approved:
+            report.disagreed_approved += 1
         else:
             # Below the floor regardless of how confident the first pass was:
             # a second independent method landing somewhere else is new
@@ -703,7 +714,8 @@ def verify_mcqs_with_model(
 
         for canonical_id, topic_code in decisions.items():
             for question_id in groups[canonical_id]:
-                _apply_one(conn, question_id, topic_code, topic_ids, confidence_floor, report)
+                _apply_one(conn, question_id, topic_code, topic_ids, confidence_floor, report,
+                           leave_approved=True)
 
         if dry_run:
             conn.rollback()
