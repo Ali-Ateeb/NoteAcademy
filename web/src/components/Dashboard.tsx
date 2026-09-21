@@ -2,58 +2,80 @@
 
 import type { Route } from "next";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import {
   computeTopicStats,
+  currentAnswers,
   formatDuration,
   fromRemoteCurrentAnswers,
-  topicStats,
+  type AttemptRecord,
   type RemoteCurrentAnswer,
   type TopicStat,
 } from "@/lib/attempts";
-import type { Topic } from "@/lib/data/types";
+import type { TopicLabel } from "@/lib/data/types";
+import { topicsByQuestionForSubject } from "@/lib/questionMeta";
 
 interface Props {
   subjectSlug: string;
-  topics: Topic[];
-  questionTopics: { id: string; topicCodes: string[] }[];
+  topics: TopicLabel[];
 }
 
-export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
+export function Dashboard({ subjectSlug, topics }: Props) {
   // Signed out, attempts live in localStorage, unavailable during server
   // render; signed in, they live behind a database round trip. Either way
   // this settles in an effect, so the markup matches on both passes.
   const [stats, setStats] = useState<Map<string, TopicStat> | null>(null);
+  const [failed, setFailed] = useState(false);
   const { user, supabase } = useAuth();
-
-  const topicsByQuestion = useMemo(
-    () => new Map(questionTopics.map((q) => [q.id, q.topicCodes])),
-    [questionTopics],
-  );
 
   useEffect(() => {
     if (user === undefined) return; // still resolving the session
 
-    if (!user || !supabase) {
-      setStats(topicStats(topicsByQuestion));
-      return;
+    let cancelled = false;
+
+    async function load() {
+      let attempts: Pick<AttemptRecord, "questionId" | "isCorrect" | "timeSpentMs">[];
+      if (user && supabase) {
+        const { data } = await supabase
+          .from("current_answers")
+          .select("question_id, is_correct, time_spent_ms")
+          .returns<RemoteCurrentAnswer[]>();
+        attempts = fromRemoteCurrentAnswers(data ?? []);
+      } else {
+        attempts = [...currentAnswers().values()];
+      }
+
+      // Only the questions this student has actually attempted are looked up;
+      // the page used to carry every question's topics for everyone. No
+      // attempts means no request at all.
+      const topicsByQuestion = await topicsByQuestionForSubject(
+        subjectSlug,
+        attempts.map((a) => a.questionId),
+      );
+      if (cancelled) return;
+      setStats(computeTopicStats(attempts, topicsByQuestion));
     }
 
-    let cancelled = false;
-    supabase
-      .from("current_answers")
-      .select("question_id, is_correct, time_spent_ms")
-      .returns<RemoteCurrentAnswer[]>()
-      .then(({ data }) => {
-        if (cancelled) return;
-        setStats(computeTopicStats(fromRemoteCurrentAnswers(data ?? []), topicsByQuestion));
-      });
+    load().catch(() => {
+      if (!cancelled) setFailed(true);
+    });
     return () => {
       cancelled = true;
     };
-  }, [topicsByQuestion, user, supabase]);
+  }, [subjectSlug, user, supabase]);
+
+  if (failed) {
+    return (
+      <div className="mt-10 rounded-[2rem] border-2 border-dashed border-line-strong bg-surface/80 p-10 text-center">
+        <p className="text-ink-2">Could not load your topic breakdown.</p>
+        <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-ink-3">
+          Your answers are safe. Check your connection and reload the page.
+        </p>
+      </div>
+    );
+  }
 
   if (stats === null) {
     return <div className="py-16 text-center text-ink-3">Loading…</div>;
@@ -61,7 +83,7 @@ export function Dashboard({ subjectSlug, topics, questionTopics }: Props) {
 
   const rows = topics
     .map((topic) => ({ topic, stat: stats.get(topic.code) }))
-    .filter((row): row is { topic: Topic; stat: TopicStat } => row.stat !== undefined)
+    .filter((row): row is { topic: TopicLabel; stat: TopicStat } => row.stat !== undefined)
     .sort((a, b) => a.stat.accuracy - b.stat.accuracy);
 
   if (rows.length === 0) {

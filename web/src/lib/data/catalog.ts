@@ -514,31 +514,62 @@ export async function getQuestionsByTopics(
   return result.map(toMcq);
 }
 
-/** The question id and topic codes for every playable MCQ in a subject, across
- *  every paper — the dashboard's weak-topic accuracy is computed against a
- *  student's whole local attempt log, and an attempt can land on any paper
- *  the subject has, not just one. Deliberately not deduplicated by
- *  `canonical_question_id`: the timed arena never folds a paper's own
- *  duplicate questions either, so an attempt at one is a real attempt and
- *  belongs in the count, the same as it does in the arena itself. */
-export async function getQuestionTopicsForSubject(
-  subjectSlug: string,
-): Promise<{ id: string; topicCodes: string[] }[]> {
+/** Which subject and topics a set of questions belong to — for the student's
+ *  own dashboard, which knows only the ids of what they have attempted.
+ *
+ *  This replaced a per-subject dump of every question's topics, which was
+ *  serialised into the page for every visitor (about 100 kB of inline props
+ *  on the Physics dashboard) so the browser could look up a few dozen ids.
+ *  Asking only about the attempted ids moves that cost to the students who
+ *  have attempted something, and scales with their history rather than the
+ *  size of the question bank.
+ *
+ *  Ids that are not approved multiple-choice questions simply do not come
+ *  back — the same set the dashboard has always measured. */
+export async function getQuestionMetaByIds(
+  ids: string[],
+): Promise<{ id: string; subjectSlug: string; topicCodes: string[] }[]> {
+  if (ids.length === 0) return [];
+
   const client = db();
   if (!client) {
-    const papers = new Set(
-      seed.papers.filter((p) => p.subjectSlug === subjectSlug).map((p) => p.slug),
-    );
+    const subjectByPaper = new Map(seed.papers.map((p) => [p.slug, p.subjectSlug]));
+    const wanted = new Set(ids);
     return seed.mcqQuestions
-      .filter((q) => papers.has(q.paperSlug))
-      .map((q) => ({ id: q.id, topicCodes: q.topicCodes }));
+      .filter((q) => wanted.has(q.id))
+      .map((q) => ({
+        id: q.id,
+        subjectSlug: subjectByPaper.get(q.paperSlug) ?? "",
+        topicCodes: q.topicCodes,
+      }));
   }
 
-  const result = await rows<{ id: string; topic_codes: string[] }>(
-    "question topics for a subject",
-    client.from("v_mcq_questions").select("id,topic_codes").eq("subject_slug", subjectSlug),
+  // A local attempt log can hold an id from an older schema or a hand-edited
+  // value. Postgres rejects a non-uuid against a uuid column and would fail the
+  // whole chunk with it, so such ids are dropped here: they could never match
+  // a question anyway.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const valid = ids.filter((id) => UUID.test(id));
+
+  // `in.(…)` travels in the URL, so a long list is chunked: 100 uuids is about
+  // 4 kB, comfortably inside every proxy's limit, and the chunks run together.
+  const CHUNK = 100;
+  const chunks: string[][] = [];
+  for (let i = 0; i < valid.length; i += CHUNK) chunks.push(valid.slice(i, i + CHUNK));
+
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      rows<{ id: string; subject_slug: string; topic_codes: string[] }>(
+        "question topics for attempted questions",
+        client.from("v_mcq_questions").select("id,subject_slug,topic_codes").in("id", chunk),
+      ),
+    ),
   );
-  return result.map((row) => ({ id: row.id, topicCodes: row.topic_codes }));
+  return results.flat().map((row) => ({
+    id: row.id,
+    subjectSlug: row.subject_slug,
+    topicCodes: row.topic_codes,
+  }));
 }
 
 /** Papers with questions loaded and therefore playable in an arena — timed

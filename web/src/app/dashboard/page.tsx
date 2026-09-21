@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { DashboardOverview } from "@/components/DashboardOverview";
-import { getQuestionTopicsForSubject, getSubjects } from "@/lib/data/catalog";
+import { getSubjects } from "@/lib/data/catalog";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -11,14 +11,11 @@ export const metadata: Metadata = {
 export default async function DashboardPage() {
   const subjects = (await getSubjects()).filter((s) => s.isPublished);
 
-  const summaries = await Promise.all(
-    subjects.map(async (subject) => ({
-      slug: subject.slug,
-      title: subject.title,
-      syllabusCode: subject.syllabusCode,
-      questionIds: (await getQuestionTopicsForSubject(subject.slug)).map((q) => q.id),
-    })),
-  );
+  const summaries = subjects.map((subject) => ({
+    slug: subject.slug,
+    title: subject.title,
+    syllabusCode: subject.syllabusCode,
+  }));
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-12">

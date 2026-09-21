@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ReviseWeakTopics } from "@/components/ReviseWeakTopics";
-import { getQuestionTopicsForSubject, getSubject, getTopics } from "@/lib/data/catalog";
+import { getSubject, getTopics } from "@/lib/data/catalog";
+import { toTopicLabels } from "@/lib/data/types";
 
 type Params = { params: Promise<{ subject: string }> };
 
@@ -25,14 +26,11 @@ export default async function ReviseWeakTopicsPage({ params }: Params) {
   const subject = await getSubject(subjectSlug);
   if (!subject || !subject.isPublished) notFound();
 
-  const [topics, questionTopics] = await Promise.all([
-    getTopics(subjectSlug),
-    getQuestionTopicsForSubject(subjectSlug),
-  ]);
+  const topics = await getTopics(subjectSlug);
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-10">
-      <ReviseWeakTopics subject={subject} topics={topics} questionTopics={questionTopics} />
+      <ReviseWeakTopics subject={subject} topics={toTopicLabels(topics)} />
     </div>
   );
 }

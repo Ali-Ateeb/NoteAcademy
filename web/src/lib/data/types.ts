@@ -49,6 +49,17 @@ export interface Topic {
   isRevisable: boolean;
 }
 
+/** What a screen needs to name a topic and link to it. The dashboards receive
+ *  this rather than a full `Topic`: `learningObjectives` alone is most of the
+ *  bytes of a subject's topic list, and a component that only prints a title
+ *  should not make every visitor download the syllabus sentences. */
+export type TopicLabel = Pick<Topic, "code" | "slug" | "title">;
+
+/** Strips a full `Topic` down to its label at the server/client boundary. */
+export function toTopicLabels(topics: readonly Topic[]): TopicLabel[] {
+  return topics.map(({ code, slug, title }) => ({ code, slug, title }));
+}
+
 export interface PaperDocument {
   docType: PaperDocType;
   pageCount: number | null;

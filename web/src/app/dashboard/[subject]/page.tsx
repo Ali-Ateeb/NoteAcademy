@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Dashboard } from "@/components/Dashboard";
-import { getQuestionTopicsForSubject, getSubject, getSubjects, getTopics } from "@/lib/data/catalog";
+import { getSubject, getSubjects, getTopics } from "@/lib/data/catalog";
+import { toTopicLabels } from "@/lib/data/types";
 
 type Params = { params: Promise<{ subject: string }> };
 
@@ -34,10 +35,7 @@ export default async function SubjectDashboardPage({ params }: Params) {
   const subject = await getSubject(subjectSlug);
   if (!subject || !subject.isPublished) notFound();
 
-  const [topics, questionTopics] = await Promise.all([
-    getTopics(subjectSlug),
-    getQuestionTopicsForSubject(subjectSlug),
-  ]);
+  const topics = await getTopics(subjectSlug);
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-12">
@@ -56,7 +54,7 @@ export default async function SubjectDashboardPage({ params }: Params) {
         Accuracy per topic, worst first. Revision goes where it is needed, not
         where it is comfortable.
       </p>
-      <Dashboard subjectSlug={subjectSlug} topics={topics} questionTopics={questionTopics} />
+      <Dashboard subjectSlug={subjectSlug} topics={toTopicLabels(topics)} />
     </div>
   );
 }

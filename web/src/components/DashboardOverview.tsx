@@ -6,12 +6,12 @@ import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { currentAnswers, fromRemoteCurrentAnswers, type RemoteCurrentAnswer } from "@/lib/attempts";
+import { resolveQuestionMeta } from "@/lib/questionMeta";
 
 interface SubjectSummary {
   slug: string;
   title: string;
   syllabusCode: string;
-  questionIds: string[];
 }
 
 interface Props {
@@ -29,6 +29,7 @@ export function DashboardOverview({ subjects }: Props) {
   // passes, and so signed-in state (also unknown at render time) has settled
   // before deciding which source to read.
   const [cards, setCards] = useState<SubjectCard[] | null>(null);
+  const [failed, setFailed] = useState(false);
   const { user, supabase } = useAuth();
 
   useEffect(() => {
@@ -56,27 +57,49 @@ export function DashboardOverview({ subjects }: Props) {
         }
       }
 
+      // The server says which subject each attempted question belongs to; the
+      // page no longer carries every question id of every subject to answer
+      // that here. No attempts means no request.
+      const meta = await resolveQuestionMeta(Array.from(answers.keys()));
       if (cancelled) return;
+
+      const tally = new Map<string, { attempted: number; correct: number }>();
+      for (const [questionId, attempt] of answers) {
+        const subjectSlug = meta.get(questionId)?.subjectSlug;
+        if (!subjectSlug) continue;
+        const bucket = tally.get(subjectSlug) ?? { attempted: 0, correct: 0 };
+        bucket.attempted += 1;
+        if (attempt.isCorrect) bucket.correct += 1;
+        tally.set(subjectSlug, bucket);
+      }
+
       setCards(
-        subjects.map((subject) => {
-          const ids = new Set(subject.questionIds);
-          let attempted = 0;
-          let correct = 0;
-          for (const [questionId, attempt] of answers) {
-            if (!ids.has(questionId)) continue;
-            attempted += 1;
-            if (attempt.isCorrect) correct += 1;
-          }
-          return { ...subject, attempted, correct };
-        }),
+        subjects.map((subject) => ({
+          ...subject,
+          attempted: tally.get(subject.slug)?.attempted ?? 0,
+          correct: tally.get(subject.slug)?.correct ?? 0,
+        })),
       );
     }
 
-    void load();
+    load().catch(() => {
+      if (!cancelled) setFailed(true);
+    });
     return () => {
       cancelled = true;
     };
   }, [subjects, user, supabase]);
+
+  if (failed) {
+    return (
+      <div className="mt-10 rounded-[2rem] border-2 border-dashed border-line-strong bg-surface/80 p-10 text-center">
+        <p className="text-ink-2">Could not load your progress.</p>
+        <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-ink-3">
+          Your answers are safe. Check your connection and reload the page.
+        </p>
+      </div>
+    );
+  }
 
   if (cards === null) {
     return <div className="py-16 text-center text-ink-3">Loading…</div>;

@@ -37,7 +37,7 @@ is what topic tagging and the topical browser are tagged against.
   uploaded yet (`paper_documents` has 458 rows of metadata, no files behind
   them).
 - Timed, resumable MCQ arena (`McqArena.tsx`) — sit a real Paper 1 under exam
-  timing, marked instantly, examiner's note shown after answering.
+  timing, marked instantly; an examiner's note is shown after answering when the data has one (none does yet).
 - Self-marked structured practice (`StructuredArena.tsx`) — untimed; the
   student marks their own handwritten answer against the real mark scheme.
   This did not exist when this file was last accurate.
@@ -172,8 +172,6 @@ Not done yet:
   can lag a moment. No layout shift — the space is reserved. Fixing it means
   either downloading both colourways for everyone or giving up the manual
   toggle for a `<picture>` media query.
-- The landing page still claims examiner-report content that does not exist
-  in the data (see Known gaps).
 
 ---
 
@@ -211,19 +209,32 @@ Concrete and verified this session, not carried forward from an old list:
   no refund and shows a misleading error. Flagged, not yet fixed.
 - **The split viewer's real documents aren't uploaded.** Interaction shell
   is done; the panes have nothing to render yet.
-- **The landing page advertises examiner comments that have no data behind
-  them.** `questions.examiner_comment` is populated on 0 of 8,489 questions
-  and `paper_documents` holds only question papers and mark schemes — no
-  examiner reports were ever acquired. Either the copy is softened or the
-  reports are ingested. Left unchanged so far because it is a product claim.
+- **No examiner reports exist in the data**, so the "examiner comments" feature
+  cannot ship yet: `questions.examiner_comment` is populated on 0 of 8,489
+  questions and `paper_documents` holds only question papers and mark schemes.
+  The site no longer *promises* them (landing page and the three meta
+  descriptions were corrected 2026-09-21). The arena, topic page and split
+  viewer already render an examiner note/tab only when one exists, so
+  ingesting the reports would light the feature up with no further UI work.
 - **One approved structured question cannot be marked:**
   `chemistry-5070-2014-may-june-p22` `A6` (no leaves, `max_marks` null).
 - **Question crops have no reserved space**, so every question page shifts
   layout as its image loads. `question_assets.width_px/height_px` are unset
   (0/4,279); the aspect ratio can be derived from the stored `bbox` instead.
-- **The dashboard ships ~100 kB of inline props** (600-row `questionTopics`)
-  so the client can aggregate accuracy. `topic_mastery` already computes this
-  and can be exposed through an `auth.uid()`-filtered view.
+- ~~**The dashboard shipped ~100 kB of inline props.**~~ Fixed 2026-09-21. The
+  subject dashboard's production HTML fell from 148 kB to 33 kB (largest inline
+  script 100 kB -> 7.9 kB); the index page is 25 kB. Two causes, both removed:
+  a 600-row question->topics table per subject, and every `Topic` with its
+  full learning-objective text (now `TopicLabel`: code, slug, title). The
+  dashboards now ask `POST /api/question-meta` about only the questions the
+  student has attempted (no attempts, no request; results cached per page
+  life). **Deliberately not `topic_mastery`**, which migration 0016 named as
+  the follow-up: it is a materialised view (stale between refreshes, its own
+  comment says "refresh nightly"), and it counts differently from the
+  client's `computeTopicStats` (`is_correct is not null`, tag join), so
+  adopting it would have changed students' numbers. If per-user aggregation
+  ever needs to move into the database, make it a plain `auth.uid()`-filtered
+  view over `current_answers`, not the matview.
 - `attempts` is 0 rows in production: the signed-in path has never run
   against real user data.
 - **Payments are schema-only** (`payment_submissions`) — no UI, no flow.
@@ -258,5 +269,6 @@ Concrete and verified this session, not carried forward from an old list:
 10. **Payments**, once there's a live audience to charge.
 11. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
     signed in.
-12. **Speed**: expose `topic_mastery` via an `auth.uid()` view to drop the
-    dashboard's ~100 kB payload; reserve crop space from `bbox`.
+12. **Speed**: reserve crop space from `bbox` (the dashboard payload is done).
+13. **Ingest examiner reports** (the site no longer promises them, but the UI
+    is ready): needs the source documents acquired first.

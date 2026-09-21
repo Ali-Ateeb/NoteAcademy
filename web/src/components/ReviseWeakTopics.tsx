@@ -13,7 +13,8 @@ import {
   type RemoteCurrentAnswer,
   type TopicStat,
 } from "@/lib/attempts";
-import type { McqQuestion, Subject, Topic } from "@/lib/data/types";
+import type { McqQuestion, Subject, TopicLabel } from "@/lib/data/types";
+import { topicsByQuestionForSubject } from "@/lib/questionMeta";
 
 // A topic needs enough attempts behind it to mean something — one unlucky
 // guess should not brand a topic "weak" the same way a real pattern across a
@@ -29,30 +30,26 @@ const MAX_QUESTIONS = 20;
 
 interface Props {
   subject: Subject;
-  topics: Topic[];
-  questionTopics: { id: string; topicCodes: string[] }[];
+  topics: TopicLabel[];
 }
 
 interface WeakTopic {
-  topic: Topic;
+  topic: TopicLabel;
   accuracy: number;
   attempted: number;
 }
 
 type QueueState =
   | { kind: "loading" }
+  | { kind: "failed" }
   | { kind: "no-weak-topics" }
   | { kind: "empty"; weakTopics: WeakTopic[] }
   | { kind: "ready"; weakTopics: WeakTopic[]; questions: McqQuestion[] };
 
-export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
+export function ReviseWeakTopics({ subject, topics }: Props) {
   const { user, supabase } = useAuth();
   const [state, setState] = useState<QueueState>({ kind: "loading" });
 
-  const topicsByQuestion = useMemo(
-    () => new Map(questionTopics.map((q) => [q.id, q.topicCodes])),
-    [questionTopics],
-  );
   const topicsByCode = useMemo(() => new Map(topics.map((t) => [t.code, t])), [topics]);
 
   useEffect(() => {
@@ -84,6 +81,13 @@ export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
       }
       if (cancelled) return;
 
+      // Only what this student has attempted is looked up, not the whole bank.
+      const topicsByQuestion = await topicsByQuestionForSubject(
+        subject.slug,
+        Array.from(answers.keys()),
+      );
+      if (cancelled) return;
+
       const stats = computeTopicStats(
         Array.from(answers).map(([questionId, isCorrect]) => ({
           questionId,
@@ -94,12 +98,12 @@ export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
       );
 
       const weakTopics: WeakTopic[] = Array.from(stats)
-        .map(([code, stat]): { topic: Topic | undefined; stat: TopicStat } => ({
+        .map(([code, stat]): { topic: TopicLabel | undefined; stat: TopicStat } => ({
           topic: topicsByCode.get(code),
           stat,
         }))
         .filter(
-          (row): row is { topic: Topic; stat: TopicStat } =>
+          (row): row is { topic: TopicLabel; stat: TopicStat } =>
             row.topic !== undefined &&
             row.stat.attempted >= MIN_ATTEMPTS &&
             row.stat.accuracy < WEAK_ACCURACY,
@@ -134,14 +138,29 @@ export function ReviseWeakTopics({ subject, topics, questionTopics }: Props) {
       );
     }
 
-    void build();
+    build().catch(() => {
+      if (!cancelled) setState({ kind: "failed" });
+    });
     return () => {
       cancelled = true;
     };
-  }, [user, supabase, subject.slug, topicsByQuestion, topicsByCode]);
+  }, [user, supabase, subject.slug, topicsByCode]);
 
   if (state.kind === "loading") {
     return <div className="py-16 text-center text-ink-3">Building your revision queue…</div>;
+  }
+
+  if (state.kind === "failed") {
+    return (
+      <div className="rounded-[2rem] border-2 border-dashed border-line-strong bg-surface/80 p-10 text-center">
+        <h1 className="font-serif text-2xl font-extrabold tracking-tight text-ink">
+          Could not build your revision queue
+        </h1>
+        <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-ink-3">
+          Your answers are safe. Check your connection and reload the page.
+        </p>
+      </div>
+    );
   }
 
   if (state.kind === "no-weak-topics") {
