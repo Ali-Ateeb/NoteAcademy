@@ -90,12 +90,31 @@ is what topic tagging and the topical browser are tagged against.
   **DeepSeek** instead of Gemini, switched independently per stage by
   `NOTEACADEMY_EXTRACTION_PROVIDER` / `NOTEACADEMY_TAGGING_PROVIDER`
   (`deepseek.py`, replacing `modelscope.py`; an unrecognised provider value is
-  now an error rather than a silent fall-back to Gemini). **Written and
-  unit-tested against DeepSeek's documented contract (236 pipeline tests,
-  mocked transport); never run against the live API — no `DEEPSEEK_API_KEY` is
-  configured yet.** The likeliest first-run surprises are the vision path
-  (base64 `image_url` parts, with JSON mode) and the model names, both taken
-  from DeepSeek's docs of 2026-09-21. Design points worth knowing:
+  now an error rather than a silent fall-back to Gemini). **Live-tested
+  2026-09-21 against the real API on two chemistry-5070 2020 papers, read-only,
+  ~$0.06 in total; every call succeeded (109 of 109 HTTP 200, no retries
+  needed).** Vision verification (`deepseek-flash`, `tag_from_crop`): 80/80
+  MCQs, 90% agreement with the tags on file, 0 invalid topic codes, ~1.6s per
+  call, 90% of input tokens served from DeepSeek's cache. Judged by eye on the
+  crops, the 8 disagreements were: 1 clear DeepSeek error (an alloy conducting
+  solid and molten -> it said ionic bonding, file's metallic bonding is right),
+  1 where DeepSeek is arguably right (a question purely about which apparatus
+  to use, filed under its rate-of-reaction context), and 6 genuinely
+  multi-topic questions. **Thinking mode fixed both cases where the file was
+  right** (the alloy question, and a saturated/unsaturated one) at 2-7s and
+  ~600 output tokens per call (about $0.001) — so turn it on for verification
+  runs: `NOTEACADEMY_DEEPSEEK_THINKING=1`. Text tagging (`deepseek-v4-pro`):
+  12/12 calls worked, 7/12 agree with file; all 5 differences were questions
+  the file itself had tagged at <=0.65 confidence, and its reasoning cites real
+  syllabus objectives — but **its self-reported confidence is uniformly high
+  (0.90-0.95), so it will not flag borderline questions for review the way
+  Gemini's lower confidences did**. Page extraction (`deepseek-flash`): found
+  every question label (14/14 MCQ, structured parts and marks plausible) but
+  **its bounding boxes are loose — mean IoU 0.71 against the stored geometric
+  boxes, only 5/14 at 0.8 or better, some 20-50pt off** — fine for reading
+  text and options (the `mcq-options` backfill), not for cutting crops. A wrong
+  key returns 401 in ~1.6s as `DeepSeekAccountError`, confirmed live. Design
+  points worth knowing:
   `deepseek-flash` is the only vision model and `deepseek-v4-pro` (the default
   for text tagging) refuses images before any request is sent; thinking mode
   is on by default at DeepSeek's API and is explicitly turned off here
@@ -253,11 +272,11 @@ Concrete and verified this session, not carried forward from an old list:
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Add a `DEEPSEEK_API_KEY` (with a balance) and do one small supervised
-   run** — `noteacademy tag-verify-auto --subject chemistry-5070` in its
-   default dry-run mode — to prove the vision path against the live API before
-   trusting it at scale, then run tagging verification for the subjects still
-   resting on a single unchecked pass, and finish `mcq-options`.
+3. **Run tagging verification at scale on DeepSeek** — the vision path is
+   proven live. `NOTEACADEMY_DEEPSEEK_THINKING=1 noteacademy tag-verify-auto
+   --subject chemistry-5070` (dry run first) is roughly 320 calls, ~20 minutes,
+   well under $1; then biology-5090 and physics's structured bank. Then finish
+   `mcq-options` (text and options only, so the loose boxes do not matter).
 4. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks
