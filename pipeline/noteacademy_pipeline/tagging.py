@@ -123,10 +123,12 @@ def tag_question(
     cache too, since a cached-content request may not also set its own. With
     no cache, this sends the full syllabus inline every time, exactly as
     before. `cached_content` is Gemini-only and ignored under
-    `settings.tagging_provider == "modelscope"`, which has no equivalent.
+    `settings.tagging_provider == "deepseek"`, which caches automatically by
+    shared prefix instead — the syllabus block leads the prompt for exactly
+    that reason.
     """
-    if settings.tagging_provider == "modelscope":
-        return _tag_question_modelscope(question_text, topics, mark_scheme=mark_scheme)
+    if settings.tagging_provider == "deepseek":
+        return _tag_question_deepseek(question_text, topics, mark_scheme=mark_scheme)
     return _tag_question_gemini(
         question_text, topics, mark_scheme=mark_scheme, client=client, cached_content=cached_content
     )
@@ -167,9 +169,9 @@ def _tag_question_gemini(
     return _validated(response.parsed, topics)
 
 
-# The exact shape _tag_question_modelscope asks Qwen for — spelled out in the
-# prompt because, unlike Gemini's response_schema, response_format on this
-# endpoint doesn't constrain decoding, only asks for it.
+# The exact shape _tag_question_deepseek asks for — spelled out in the prompt
+# because, unlike Gemini's response_schema, JSON mode guarantees valid JSON
+# but not a particular schema (and requires an example in the prompt).
 _TAGGING_JSON_SHAPE = (
     'Respond with ONLY a JSON object of this exact shape, no other text, '
     "no markdown fence:\n"
@@ -178,13 +180,13 @@ _TAGGING_JSON_SHAPE = (
 )
 
 
-def _tag_question_modelscope(
+def _tag_question_deepseek(
     question_text: str,
     topics: list[TopicOption],
     *,
     mark_scheme: str | None = None,
 ) -> TopicTagging:
-    from .modelscope import chat_json
+    from .deepseek import chat_json
 
     blocks = [
         f"Syllabus topics:\n\n{render_syllabus(topics)}",
@@ -195,7 +197,7 @@ def _tag_question_modelscope(
     blocks.append(_TAGGING_JSON_SHAPE)
 
     raw = chat_json(
-        model=settings.modelscope_text_model,
+        model=settings.deepseek_text_model,
         system=TAGGING_SYSTEM,
         user_content="\n\n".join(blocks),
     )
@@ -243,23 +245,27 @@ def tag_from_crop(crop_path: Path, topics: list[TopicOption]) -> TopicAssignment
     This is the point a text-only second opinion (`tag_question` again,
     against the same PDF-text-layer extraction the first pass already used)
     would miss: a crop is a genuinely different signal, not a second
-    classifier reading the same scrambled words. ModelScope/Qwen-only —
+    classifier reading the same scrambled words. DeepSeek-only —
     there is no Gemini path here, because the existing human/Claude-session
     workflow (`tag-verify-export`/`tag-verify-apply`) already covers that
     case at zero API cost. This exists for when a model is doing the
     looking instead of a person.
     """
-    from .modelscope import chat_json, image_content_block, text_content_block
+    from .deepseek import chat_json, image_content_block, text_content_block
 
     raw = chat_json(
-        model=settings.modelscope_vision_model,
+        model=settings.deepseek_vision_model,
         system=VERIFY_FROM_CROP_SYSTEM,
         max_tokens=1024,
+        # The syllabus leads and the image follows, on purpose: DeepSeek caches
+        # by shared prefix, and the syllabus is identical on every call while
+        # the crop never is. Image first would put the one thing that always
+        # differs ahead of the one thing that never does, and nothing after it
+        # could ever be a cache hit.
         user_content=[
+            text_content_block(f"Syllabus topics:\n\n{render_syllabus(topics)}"),
             image_content_block(crop_path.read_bytes()),
-            text_content_block(
-                f"Syllabus topics:\n\n{render_syllabus(topics)}\n\n{_VERIFY_JSON_SHAPE}"
-            ),
+            text_content_block(_VERIFY_JSON_SHAPE),
         ],
     )
     assignment = TopicAssignment.model_validate_json(raw)

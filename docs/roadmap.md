@@ -85,23 +85,30 @@ is what topic tagging and the topical browser are tagged against.
   non-conforming or scanned papers and for the `mcq-options` backfill. It
   skips the model call outright for a page it can confidently tell is a
   cover, instructions, a formula sheet, or blank filler.
-- Both `extract.py` (vision) and `tagging.py` (direct-API tagging, plus a
-  new `tag_from_crop` built specifically for automated verification — see
-  below) can run against Qwen via ModelScope's API-Inference endpoint
-  instead of Gemini, switched independently per stage by
-  `NOTEACADEMY_EXTRACTION_PROVIDER` / `NOTEACADEMY_TAGGING_PROVIDER`. Tried
-  for real this session with a live `MODELSCOPE_API_KEY` and found
-  **unreliable enough not to depend on**: `Qwen-Ambassador/Qwen3.8-Max`
-  gave persistent `504`s on every vision call across multiple attempts;
-  `Qwen-Ambassador/Qwen3.7-Max` answers text instantly but returns a clean
-  `500 "No choices in OpenAI response"` on every vision call specifically.
-  Text-only calls work fine on both. Current decision: moving off ModelScope
-  back toward Gemini (now with real billing, unlocking Gemini 3 Pro, which
-  was previously hard-blocked at 0 free-tier quota) or the real Anthropic
-  API for the vision-dependent work — not yet implemented for either.
+- Both `extract.py` (vision) and `tagging.py` (direct-API tagging, plus
+  `tag_from_crop` for automated verification — see below) can run against
+  **DeepSeek** instead of Gemini, switched independently per stage by
+  `NOTEACADEMY_EXTRACTION_PROVIDER` / `NOTEACADEMY_TAGGING_PROVIDER`
+  (`deepseek.py`, replacing `modelscope.py`; an unrecognised provider value is
+  now an error rather than a silent fall-back to Gemini). **Written and
+  unit-tested against DeepSeek's documented contract (236 pipeline tests,
+  mocked transport); never run against the live API — no `DEEPSEEK_API_KEY` is
+  configured yet.** The likeliest first-run surprises are the vision path
+  (base64 `image_url` parts, with JSON mode) and the model names, both taken
+  from DeepSeek's docs of 2026-09-21. Design points worth knowing:
+  `deepseek-flash` is the only vision model and `deepseek-v4-pro` (the default
+  for text tagging) refuses images before any request is sent; thinking mode
+  is on by default at DeepSeek's API and is explicitly turned off here
+  (`NOTEACADEMY_DEEPSEEK_THINKING`) because these stages run sequentially; a
+  401 or 402 aborts `tag-verify-auto` instead of being counted as thousands of
+  failed questions; the syllabus leads each prompt so DeepSeek's automatic
+  prefix cache hits. ModelScope/Qwen was tried earlier and found unreliable
+  (persistent `504`s on vision calls with `Qwen3.8-Max`, `500`s with
+  `Qwen3.7-Max`) — that code is in git history (before the DeepSeek switch) if
+  ever wanted again.
 - `mcq-options` (vision backfill of MCQ question/option text): 144
   `question_options` rows written (one paper, physics-5054's newest sitting,
-  mostly done) before the ModelScope reliability problems above stopped
+  mostly done) before ModelScope's vision reliability problems stopped
   progress. 14 of 15 physics-5054 MCQ papers still untouched.
 - `embed` (retrieval embeddings): built, tested live against real data,
   **never actually run** — `question_embeddings` is still 0 rows. **Blocked
@@ -196,9 +203,10 @@ Concrete and verified this session, not carried forward from an old list:
   (DB said topic `12.4`, the model's independent crop read said `7.3` —
   salt preparation from an insoluble carbonate) on the very first question
   it disagreed on. Stalled at ~74/272 chemistry-5070 MCQs, not because the
-  tool is wrong but because ModelScope's vision access proved unreliable
-  (see above) — needs a Gemini or Anthropic vision path added to
-  `tag_from_crop` before it can be trusted to run unattended at scale.
+  tool is wrong but because ModelScope's vision access proved unreliable.
+  `tag_from_crop` now targets DeepSeek's `deepseek-flash` (see above); it
+  needs a real key and one supervised run before it can be trusted to run
+  unattended at scale.
 - **Tagging accuracy has only been independently checked for one-fifth of
   the bank.** Physics 5054's 594 MCQs were verified by a second, independent
   pass (564/600, 94%, agreed). Chemistry 5070, biology 5090, and physics's
@@ -245,9 +253,11 @@ Concrete and verified this session, not carried forward from an old list:
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Add Gemini's path to `tag_from_crop`** (currently ModelScope-only) for
-   the vision-dependent work (tagging verification, `mcq-options`). Gemini
-   was chosen over Anthropic on cost; needs Gemini billing enabled first.
+3. **Add a `DEEPSEEK_API_KEY` (with a balance) and do one small supervised
+   run** — `noteacademy tag-verify-auto --subject chemistry-5070` in its
+   default dry-run mode — to prove the vision path against the live API before
+   trusting it at scale, then run tagging verification for the subjects still
+   resting on a single unchecked pass, and finish `mcq-options`.
 4. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks

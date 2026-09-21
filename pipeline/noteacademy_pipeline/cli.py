@@ -26,6 +26,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import settings
+from .deepseek import DeepSeekAccountError
 from .render import crop, render_pdf
 
 # Windows' legacy console defaults stdout to the system codepage (cp1252),
@@ -788,7 +789,7 @@ def tag_verify_auto(
     """The automated counterpart to tag-verify-export/tag-verify-apply: a
     vision-capable model reads each MCQ's own printed crop and chooses a
     topic, compared against the first pass exactly like a person's decision
-    from a contact sheet already is. ModelScope/Qwen only.
+    from a contact sheet already is. DeepSeek only.
 
     Reads the crop, not the extracted text the first pass used — a text-only
     second opinion would be a second classifier reading the same scrambled
@@ -801,12 +802,18 @@ def tag_verify_auto(
     if not settings.database_url:
         console.print("[red]DATABASE_URL is not set.[/red]")
         raise typer.Exit(code=2)
-    if not settings.modelscope_api_key:
-        console.print("[red]MODELSCOPE_API_KEY is not set.[/red]")
+    if not settings.deepseek_api_key:
+        console.print("[red]DEEPSEEK_API_KEY is not set.[/red]")
         raise typer.Exit(code=2)
 
-    with console.status(f"verifying {subject} against {settings.modelscope_vision_model}..."):
-        report = verify_mcqs_with_model(subject, papers, confidence_floor=floor, dry_run=dry_run)
+    with console.status(f"verifying {subject} against {settings.deepseek_vision_model}..."):
+        try:
+            report = verify_mcqs_with_model(
+                subject, papers, confidence_floor=floor, dry_run=dry_run
+            )
+        except DeepSeekAccountError as error:
+            console.print(f"[red]{error}. Nothing was written.[/red]")
+            raise typer.Exit(code=2) from error
     if dry_run:
         console.print("[yellow]dry run: rolled back[/yellow]")
 

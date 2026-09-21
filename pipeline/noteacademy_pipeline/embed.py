@@ -31,7 +31,7 @@ VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
 BATCH_SIZE = 128
 
 # A free/new-account rate limit hits on roughly the second batch of any real
-# backfill, confirmed live — modelscope.py needed the identical fix for the
+# backfill, confirmed live — deepseek.py needed the identical fix for the
 # identical reason, so it gets the identical shape here. Reactive retry alone
 # was not enough: one real run rescued its second batch after four backed-off
 # retries, then exhausted all five on the very next one — the limit here is

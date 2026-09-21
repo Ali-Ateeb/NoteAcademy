@@ -138,8 +138,8 @@ def extract_page(page: RenderedPage, *, client: genai.Client | None = None) -> E
                    "page — skipping the vision call", page.page_number)
         return ExtractedPage(page_number=page.page_number, is_content_page=False, questions=[])
 
-    if settings.extraction_provider == "modelscope":
-        result = _extract_page_modelscope(page)
+    if settings.extraction_provider == "deepseek":
+        result = _extract_page_deepseek(page)
     else:
         result = _extract_page_gemini(page, client=client)
 
@@ -182,10 +182,10 @@ def _extract_page_gemini(
     return response.parsed
 
 
-# The exact shape _extract_page_modelscope asks Qwen-VL for — spelled out in
-# the prompt because response_format on this endpoint asks for JSON, it
-# doesn't constrain decoding to a schema the way Gemini's response_schema
-# does. page_number is asked for only so every field ExtractedPage requires
+# The exact shape _extract_page_deepseek asks DeepSeek for — spelled out in
+# the prompt because JSON mode guarantees valid JSON, not a particular schema
+# the way Gemini's response_schema does (and requires an example in the prompt
+# regardless). page_number is asked for only so every field ExtractedPage requires
 # is present; extract_page overwrites it from the RenderedPage regardless of
 # what either provider returns, so what the model puts there doesn't matter.
 _EXTRACTION_JSON_SHAPE = (
@@ -203,8 +203,8 @@ _EXTRACTION_JSON_SHAPE = (
 )
 
 
-def _extract_page_modelscope(page: RenderedPage) -> ExtractedPage:
-    from .modelscope import chat_json, image_content_block, text_content_block
+def _extract_page_deepseek(page: RenderedPage) -> ExtractedPage:
+    from .deepseek import chat_json, image_content_block, text_content_block
 
     page_note = (
         f"Text layer for page {page.page_number} "
@@ -215,7 +215,7 @@ def _extract_page_modelscope(page: RenderedPage) -> ExtractedPage:
     )
 
     raw = chat_json(
-        model=settings.modelscope_vision_model,
+        model=settings.deepseek_vision_model,
         system=EXTRACTION_SYSTEM,
         max_tokens=16000,
         user_content=[

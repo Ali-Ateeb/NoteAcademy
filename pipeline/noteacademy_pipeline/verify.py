@@ -38,6 +38,7 @@ import psycopg
 import pymupdf
 from PIL import Image, ImageDraw, ImageFont
 
+from .deepseek import DeepSeekAccountError
 from .naming import caie_filename
 from .worksheet import question_text
 
@@ -400,7 +401,7 @@ class VerifyReport:
     skipped_approved: int = 0
     unknown_codes: list[str] = field(default_factory=list)
     # A question the model call itself failed on (a malformed reply the
-    # trailing-comma fix couldn't rescue, a network error past modelscope.py's
+    # trailing-comma fix couldn't rescue, a network error past deepseek.py's
     # own retries) — distinct from unknown_codes, which is a well-formed
     # response naming a code outside the syllabus. Only ever populated by
     # verify_mcqs_with_model; the manual tag-verify-apply path has no
@@ -627,6 +628,12 @@ def verify_mcqs_with_model(
 
         try:
             assignment = tag_from_crop(crop_path, topics)
+        except DeepSeekAccountError:
+            # A wrong key or an empty balance is not one bad question: every
+            # remaining call would fail the same way, so carrying on would
+            # only walk the whole subject into failed_calls, quickly and
+            # silently. Stop while nothing has been written.
+            raise
         except Exception as exc:  # noqa: BLE001 - one bad reply must not lose the rest
             log.warning(
                 "verifying %s %s failed: %s", question.paper_slug, question.display_label, exc
