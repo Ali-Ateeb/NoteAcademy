@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { LogoStacked, Stationery } from "@/components/Brand";
-import { getSubjects } from "@/lib/data/catalog";
+import { getPlayablePapers, getSubjects } from "@/lib/data/catalog";
 
 /* Four notes, one claim each. They are set on lined paper because that is the
  * product's own vocabulary — and because four numbered notes read as an
@@ -15,13 +15,13 @@ const FEATURES = [
   },
   {
     title: "Mark scheme beside the question",
-    body: "The official marking points and the chief examiner's comments, attached to the question they belong to. Not a separate PDF you open in another tab.",
+    body: "The official marking points, attached to the question they belong to — not a separate PDF you open in another tab.",
     tilt: "rotate-1",
     highlight: "hl-yellow",
   },
   {
     title: "Paper 1 as a real test",
-    body: "Timed, resumable, marked instantly, with the examiner's note on what most candidates got wrong — shown after you answer, not before.",
+    body: "Timed, resumable and marked the moment you submit, with a question-by-question review of what you got right and wrong.",
     tilt: "rotate-1",
     highlight: "hl-pink",
   },
@@ -37,6 +37,14 @@ export default async function HomePage() {
   const subjects = await getSubjects();
   const published = subjects.filter((s) => s.isPublished);
   const inProgress = subjects.filter((s) => !s.isPublished);
+
+  // The "Sit a Paper 1" button links to a paper that actually exists: the
+  // newest playable multiple-choice paper of the first published subject.
+  // A hard-coded slug was a dead link the day that paper was renamed or
+  // withdrawn, and a 404 on the landing page's main call to action.
+  const samplePaper = published[0]
+    ? (await getPlayablePapers(published[0].slug)).find((p) => p.questionType === "mcq")
+    : undefined;
 
   return (
     <>
@@ -68,7 +76,7 @@ export default async function HomePage() {
           style={{ animationDelay: "200ms" }}
         >
           Every Cambridge O Level past paper, split question by question, tagged to your
-          syllabus, with the mark scheme and examiner report attached to each one.
+          syllabus, with the official mark scheme beside each one.
         </p>
 
         <div
@@ -78,18 +86,17 @@ export default async function HomePage() {
           <Link href="/subjects" className="pill pill-solid px-7 py-3 text-base">
             Browse subjects
           </Link>
-          <Link
-            href="/practice/physics-5054-2026-may-june-p11"
-            className="pill group px-7 py-3 text-base"
-          >
-            Sit a Paper 1
-            <span
-              aria-hidden
-              className="transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:translate-x-1"
-            >
-              →
-            </span>
-          </Link>
+          {samplePaper && (
+            <Link href={`/practice/${samplePaper.slug}`} className="pill group px-7 py-3 text-base">
+              Sit a Paper 1
+              <span
+                aria-hidden
+                className="transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:translate-x-1"
+              >
+                →
+              </span>
+            </Link>
+          )}
         </div>
       </section>
 

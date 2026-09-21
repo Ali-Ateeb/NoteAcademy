@@ -33,7 +33,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 
   return {
     title: `${subject.title} ${subject.syllabusCode} past papers`,
-    description: `Every ${subject.title} ${subject.syllabusCode} past paper with mark schemes and examiner reports, plus topical questions and timed Paper 1 practice.`,
+    description: `Every ${subject.title} ${subject.syllabusCode} past paper with mark schemes, plus topical questions and timed Paper 1 practice.`,
   };
 }
 

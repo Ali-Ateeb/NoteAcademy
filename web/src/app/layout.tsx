@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     template: "%s · Note Academy",
   },
   description:
-    "Every CAIE past paper, split into individual questions, tagged to your syllabus, with the mark scheme and examiner report attached.",
+    "Every CAIE past paper, split into individual questions, tagged to your syllabus, with the official mark scheme attached.",
 };
 
 function Header() {

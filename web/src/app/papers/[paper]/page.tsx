@@ -53,7 +53,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const title = `${subject.title} ${subject.syllabusCode} ${sessionName(paper)} ${paperName(paper)}`;
   return {
     title,
-    description: `${title} — question paper, mark scheme and examiner report, side by side.`,
+    description: `${title} — question paper and mark scheme, side by side.`,
   };
 }
 
