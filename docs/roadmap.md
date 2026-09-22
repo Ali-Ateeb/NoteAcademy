@@ -446,26 +446,91 @@ None has a `source='human'` tag. So the chemistry and biology structured banks
 were approved wholesale with tags the classifier itself flagged as unsure, and
 they are live to students now. Physics is in far better shape.
 
+## Structured tag verification, and three bugs it uncovered (2026-09-22)
+
+Running the second read over the structured banks, and fixing what doing it
+exposed.
+
+**Chemistry structured: below-floor approved tags 451 -> 174.** All 613 tagged
+top-level questions were re-read from their printed page-crops: 420 agreed
+(confidence raised to 0.9), 144 reordered, 49 disagreed (46 of them approved,
+so reported and not acted on).
+
+**Why the remaining 174 were left alone.** Four of the disagreements were
+audited by reading every sub-part and asking which topic carries the most
+marks. The second read was better twice, *worse* once (2018 M/J P22 Q2: filed
+under Redox, which owns 4 of its 7 marks; the model wanted Transition elements,
+which owns 2), and a toss-up once. Adopting the second read wholesale across
+173 questions would therefore have been close to a coin flip and would have
+regressed a question that was already right. The triage CSV has each one with
+both candidates and the model's reasoning; they need a reasoning pass or a
+person, not a rule.
+
+**The signal worth encoding later:** three of those four calls came down to
+*which topic the marks sit under*, not what the question's opening sentence is
+about. Both classifiers go wrong the same way — they follow the framing. The
+leaf `max_marks` needed to compute this is already in the database.
+
+### Three bugs
+
+1. **The replaced topic was demoted, not deleted.** `apply_worksheet` and the
+   review route's `assignTopic` both unset `is_primary` and left the old row,
+   so every correction silently added a *second* topic the question went on
+   being listed under. Live data had 85 such rows from the chemistry MCQ retag,
+   plus one physics question carrying a reviewer's own superseded choice beside
+   their later one. Both paths now delete the row they replace; 10 leftovers
+   cleaned out; 7 tests.
+2. **`bulk-approve-structured` published unverified tags silently.** It vets a
+   question's content and deliberately not its topic tag — defensible, except
+   approving publishes both, which is how 451 chemistry questions went live
+   under topics the classifier itself doubted. It now counts and warns. The
+   gate is unchanged: that is a product decision.
+3. **A failed write pass threw away every model call.** Two runs of ~900 vision
+   calls were lost — the first to `server closed the connection unexpectedly`,
+   the second to a statement timeout. The answers are now written to JSONL at
+   the phase boundary, and `tag-verify-structured --from-results <file>`
+   replays them: one transaction per question, a short `lock_timeout`, locked
+   rows skipped and reported. The replay then wrote all 613 with nothing lost.
+
+**The incident behind the second failure**, worth knowing about: the first
+crashed run left a session *idle in transaction* holding row locks on
+`question_topics`, and this database has
+`idle_in_transaction_session_timeout = 0`, so it would never have expired on
+its own. It eventually went when the pooler reclaimed it. Setting that timeout
+to something finite would turn a hard block into a self-clearing one.
+
+### The topic count said 76 where the page showed 23
+
+`v_topics.question_count` counted duplicate MCQs the topic page folds (8),
+structured questions it never lists (45), and left approval filtering to RLS,
+so the same view answered differently depending on who asked. `0032` counts
+approved, non-duplicate MCQs instead. `total_marks` is untouched: "what is this
+topic worth" and "how much can I practise here" are different questions.
+**Expect the badges to drop sharply** — physics Momentum reads 1, not 12 —
+because most physics MCQs are not approved yet. The numbers are honest now and
+climb as the queue is reviewed.
+
+Alignment on the same list: topic codes are different lengths ('1.8' against
+'1.7.1'), so each title started wherever its code ended. The code now sits in a
+fixed-width column, and a section heading carries the same padding as the boxes
+beneath it rather than hanging into the gutter.
+
+---
+
 ---
 
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Chemistry MCQs: done (see above). Remaining: Physics's 73 flagged MCQs,
-   and the structured banks.** The 451 below-floor approved chemistry structured
-   tags (and biology's 328) are the bigger prize: they are live and mostly
-   unverified. `tag-verify-structured` exists for exactly this.
-   Older text: **Review and approve the 2,960 newly loaded MCQs.** Tagged and second-read
-   (see the section above). Remaining: (a) review the 196 flagged
-   disagreements (Chemistry 123, Physics 73) and the 160 retagged Chemistry
-   questions in the queue; (b) tag the 22
-   figure-only questions from the crop (`tag_from_crop`) or by hand; (c) re-run
-   verification for the 12 failed calls; (d) `bulk-approve` the rest, only
-   after a person has looked at a sample. Then run `tag-verify-structured`
-   for chemistry-5070, biology-5090 and physics (~$0.44, ~16 minutes for all
-   three; dry run first, review the triage CSV) and `tag-verify-auto` for
-   biology-5090.
+3. **Finish the topic tags.** Chemistry MCQs are done; chemistry structured is
+   down to 174 below-floor tags and biology is being verified. Remaining, in
+   order of how live the damage is: (a) the ~174 chemistry and biology
+   structured disagreements — a reasoning pass against the marks, not a rule
+   (see above); (b) Physics's 73 flagged MCQs; (c) the 22 figure-only MCQs that
+   have no text to tag from (`tag_from_crop` or by hand); (d) the 12 MCQ
+   verification calls that failed; (e) `bulk-approve` what is left, after a
+   person has read a sample.
 4. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks
