@@ -345,9 +345,17 @@ def apply_worksheet(
                 report.unknown_questions.append(str(question_id))
                 continue
 
+            # The topic being replaced is *removed*, not demoted. Unsetting
+            # `is_primary` and leaving the row behind turns every superseded
+            # tag into a phantom secondary, so the question goes on being
+            # listed under a topic that no pass chose — which is exactly what
+            # happened to 85 retagged chemistry MCQs (see docs/roadmap.md).
+            # A genuine secondary (one that was already not primary when this
+            # call started) is left alone.
             cur.execute(
-                "update question_topics set is_primary = false where question_id = %s",
-                (question_id,),
+                "delete from question_topics"
+                " where question_id = %s and is_primary and topic_id <> %s",
+                (question_id, topic_ids[code]),
             )
             cur.execute(
                 """

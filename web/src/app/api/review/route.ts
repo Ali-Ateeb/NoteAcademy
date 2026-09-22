@@ -329,11 +329,18 @@ async function assignTopic(
   const previousTopicSlug =
     (previous as unknown as { topics: { slug: string } | null } | null)?.topics?.slug ?? null;
 
-  // One primary per question is a unique index, so the old one has to go first.
+  // The topic being replaced is removed, not demoted. Unsetting `is_primary`
+  // and leaving the row behind turns every correction into a second topic the
+  // question goes on being listed under — including, in the live data this was
+  // found in, a reviewer's own earlier choice sitting alongside their later
+  // one. (One primary per question is a unique index, so the old row has to go
+  // before the upsert either way.)
   await client
     .from("question_topics")
-    .update({ is_primary: false })
-    .eq("question_id", questionId);
+    .delete()
+    .eq("question_id", questionId)
+    .eq("is_primary", true)
+    .neq("topic_id", (topic as { id: string }).id);
 
   const { error } = await client.from("question_topics").upsert(
     {
