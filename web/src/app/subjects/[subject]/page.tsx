@@ -217,14 +217,24 @@ function HighestValueTopics({ subject, topics }: { subject: string; topics: Topi
   );
 }
 
+/** One row of the syllabus tree.
+ *
+ *  Two things have to line up for this to read as a tree rather than a pile.
+ *  The codes are different lengths ('1.8' against '1.7.1'), so the code sits in
+ *  a fixed-width column and the titles start at one x instead of wherever the
+ *  code happened to end. And a container's own heading carries the same
+ *  horizontal padding as the boxes beneath it, so its code sits directly above
+ *  theirs rather than hanging into the gutter. */
 function TopicRow({ subject, topic }: { subject: string; topic: Topic }) {
   const indent = topic.code.split(".").length > 2 ? "ml-3" : "";
+  // Wide enough for the longest code the tree holds ('1.7.1') at text-xs mono.
+  const code = <span className="w-11 shrink-0 font-mono text-xs text-ink-3">{topic.code}</span>;
 
   if (!topic.isRevisable) {
     return (
-      <p className={`${indent} pt-1.5 text-xs text-ink-3`}>
-        <span className="mr-2 font-mono">{topic.code}</span>
-        {topic.title}
+      <p className={`${indent} flex items-baseline px-3 pt-1.5 text-xs text-ink-3`}>
+        {code}
+        <span>{topic.title}</span>
       </p>
     );
   }
@@ -234,11 +244,11 @@ function TopicRow({ subject, topic }: { subject: string; topic: Topic }) {
       href={`/topics/${subject}/${topic.slug}`}
       className={`${indent} lift flex items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm shadow-card`}
     >
-      <span className="text-ink">
-        <span className="mr-2 font-mono text-xs text-ink-3">{topic.code}</span>
-        {topic.title}
+      <span className="flex items-baseline text-ink">
+        {code}
+        <span>{topic.title}</span>
       </span>
-      <span className="font-mono text-xs text-ink-3">{topic.questionCount}</span>
+      <span className="font-mono text-xs text-ink-3 tabular-nums">{topic.questionCount}</span>
     </Link>
   );
 }

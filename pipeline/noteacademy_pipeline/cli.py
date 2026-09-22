@@ -962,6 +962,11 @@ def tag_verify_structured(
              "between identical runs, and over-weighted whichever part carried the most marks.",
     ),
     workers: int = typer.Option(8, help="Model calls in flight at once (1 = one at a time)."),
+    from_results: Path = typer.Option(
+        None, "--from-results", exists=True,
+        help="Replay the model answers saved by an earlier run instead of calling the model "
+             "again. For when the calls succeeded but the write pass did not.",
+    ),
     report_path: Path = typer.Option(
         None, "--report",
         help="Where to write the triage CSV (default: pipeline/work/verify-structured-*.csv).",
@@ -987,6 +992,40 @@ def tag_verify_structured(
     from datetime import datetime
 
     from .verify_structured import verify_structured_with_model, write_findings_csv
+
+    if from_results is not None:
+        # A replay needs the database, but no key and no year range: the
+        # questions it touches are whichever ones the saved file names.
+        from .verify_structured import resume_structured_from_results
+
+        if not settings.database_url:
+            console.print("[red]DATABASE_URL is not set.[/red]")
+            raise typer.Exit(code=2)
+        result = resume_structured_from_results(
+            subject, from_results, confidence_floor=floor, dry_run=dry_run
+        )
+        table = Table("", "", title=f"{subject} — replayed from {from_results.name}")
+        table.add_row("agreed (confidence raised)", str(result.agreed))
+        table.add_row("reordered (nothing written)", str(result.reordered))
+        table.add_row("disagreed", str(result.disagreed))
+        table.add_row("  of those, approved and left alone", str(result.disagreed_approved))
+        table.add_row("gone or changed since the run", str(result.skipped_changed))
+        table.add_row("locked by another session, skipped", str(result.skipped_locked))
+        table.add_row("write failed", str(len(result.failed_writes)))
+        console.print(table)
+        if result.findings:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            path = report_path or settings.work_dir / f"verify-structured-{subject}-{stamp}.csv"
+            write_findings_csv(result.findings, path)
+            console.print(f"triage report: {path}")
+        if result.skipped_locked:
+            console.print(
+                "[yellow]Some rows were held by another session. Re-run this same "
+                "command once it has gone to pick them up.[/yellow]"
+            )
+        if dry_run:
+            console.print("[yellow]dry run: rolled back[/yellow]")
+        return
 
     _require_verify_setup(from_year, to_year)
 
