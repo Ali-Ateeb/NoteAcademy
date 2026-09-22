@@ -39,7 +39,7 @@ class _Cursor:
 
 class _Conn:
     def __init__(self):
-        self.committed = self.rolled_back = False
+        self.committed = self.rolled_back = self.closed = False
         self.sql = []
 
     def cursor(self):
@@ -49,6 +49,7 @@ class _Conn:
         return self
 
     def __exit__(self, *exc):
+        self.closed = True
         return False
 
     def commit(self):
@@ -184,3 +185,101 @@ def test_retag_replaces_old_tags_and_returns_the_questions_to_review(world, monk
     assert (report.retagged, report.changed_topic) == (2, 1)   # q1 was already 8.1
     assert report.backup is not None
     assert len(report.backup.read_text(encoding="utf-8").splitlines()) == 3  # header + 2 rows
+
+
+# --------------------------------------------------------------------------
+# tagging the questions that have no text at all, from their printed crop
+# --------------------------------------------------------------------------
+
+
+def textless(n, **kw) -> UntaggedMcq:
+    base = dict(id=f"q{n}", paper_slug="physics-5054-2020-may-june-p11", display_label=str(n),
+                question_text="", options={}, correct_option="A",
+                syllabus_code="5054", year=2020, season="may_june", component=1, variant=1,
+                page_number=3, bbox=(0.0, 0.0, 100.0, 100.0))
+    base.update(kw)
+    return UntaggedMcq(**base)
+
+
+@pytest.fixture
+def crop_world(world, monkeypatch, tmp_path):
+    """Extends `world` with a fake renderer and a fake vision call."""
+    state = world
+    state["cropped"] = []
+    state["crop_confidence"] = 0.95
+
+    def fake_crop(pdf, page, bbox, out, **kw):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"png")
+        state["cropped"].append(out.name)
+        return out
+
+    def fake_tag_from_crop(path, topics, *, thinking=None):
+        state["sent"].append((path.name, thinking))
+        if state["raise"]:
+            raise state["raise"]
+        return TopicAssignment(topic_code=state["code"], confidence=state["crop_confidence"],
+                               reasoning="r")
+
+    monkeypatch.setattr("noteacademy_pipeline.render.crop", fake_crop)
+    monkeypatch.setattr("noteacademy_pipeline.tagging.tag_from_crop", fake_tag_from_crop)
+    papers = tmp_path / "papers" / "5054"
+    papers.mkdir(parents=True)
+    (papers / "5054_s20_qp_11.pdf").write_bytes(b"%PDF")
+    state["papers"] = tmp_path / "papers"
+    state["crop_dir"] = tmp_path / "crops"
+    return state
+
+
+def run_crops(world, **kw):
+    from noteacademy_pipeline.tag_auto import tag_mcqs_from_crops
+
+    kw.setdefault("crop_dir", world["crop_dir"])
+    return tag_mcqs_from_crops(
+        "physics-5054", world["papers"], year_from=2016, year_to=2026,
+        confidence_floor=0.75, **kw,
+    )
+
+
+def test_only_the_questions_with_no_text_are_read_from_their_crop(crop_world):
+    crop_world["questions"] = [textless(1), mcq(2)]      # mcq(2) has text and options
+    report = run_crops(crop_world)
+    assert report.candidates == 1
+    assert [d["id"] for d in crop_world["decisions"]] == ["q1"]
+
+
+def test_the_tag_is_held_below_the_floor_however_confident_the_model_sounds(crop_world):
+    crop_world["questions"] = [textless(1)]
+    crop_world["crop_confidence"] = 0.95
+    run_crops(crop_world)
+    assert crop_world["decisions"][0]["confidence"] < 0.75
+
+
+def test_a_question_with_no_recorded_crop_is_counted_not_guessed_at(crop_world):
+    crop_world["questions"] = [textless(1, bbox=None, page_number=None)]
+    report = run_crops(crop_world)
+    assert report.skipped_no_crop == 1
+    assert crop_world["sent"] == []
+
+
+def test_a_missing_source_pdf_is_counted_not_guessed_at(crop_world):
+    crop_world["questions"] = [textless(1, year=2011)]   # no 5054_s11_qp_11.pdf on disk
+    report = run_crops(crop_world)
+    assert report.skipped_no_pdf == 1
+    assert crop_world["sent"] == []
+
+
+def test_no_connection_is_open_while_the_crop_is_being_read(crop_world):
+    crop_world["questions"] = [textless(1)]
+    run_crops(crop_world)
+    # One connection to read the plan, one to write: never one spanning the call.
+    assert len(crop_world["conns"]) == 2
+    assert crop_world["conns"][0].closed
+
+
+def test_a_rejected_key_stops_the_crop_run_before_any_write(crop_world):
+    crop_world["questions"] = [textless(i) for i in range(4)]
+    crop_world["raise"] = DeepSeekAccountError("out of balance (402)")
+    with pytest.raises(DeepSeekAccountError):
+        run_crops(crop_world, workers=2)
+    assert len(crop_world["conns"]) == 1 and crop_world["decisions"] is None

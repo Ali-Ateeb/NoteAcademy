@@ -789,6 +789,11 @@ def tag_auto(
     retag: bool = typer.Option(
         False, help="Replace the topics of questions that already have one, and put them back "
                     "into review. Needs --paper; the old tags are saved to a CSV first."),
+    from_crops: bool = typer.Option(
+        False, "--from-crops",
+        help="Tag the questions this command otherwise skips -- the ones whose stem and options "
+             "are all artwork -- by reading their printed crop with the vision model."),
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live (--from-crops)."),
 ) -> None:
     """First-pass topic tags for multiple-choice questions, read from text.
 
@@ -799,9 +804,42 @@ def tag_auto(
     independent second read from the printed crop. Questions whose text has
     not been read yet are skipped, not guessed at.
     """
-    from .tag_auto import tag_mcqs_with_model
+    from .tag_auto import tag_mcqs_from_crops, tag_mcqs_with_model
 
     _require_verify_setup(from_year, to_year)
+
+    if from_crops:
+        label = f"reading crops for {subject} {from_year}-{to_year}"
+        with console.status(label + "...") as status:
+            try:
+                result = tag_mcqs_from_crops(
+                    subject, papers, year_from=from_year, year_to=to_year,
+                    confidence_floor=floor, dry_run=dry_run, workers=workers,
+                    paper_slug=paper,
+                    on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
+                )
+            except DeepSeekAccountError as error:
+                console.print(f"[red]{error}. Nothing was written.[/red]")
+                raise typer.Exit(code=2) from error
+
+        table = Table("", "", title=f"{subject} - tagged from the printed crop"
+                                    + (" (dry run)" if dry_run else ""))
+        table.add_row("untagged questions with no text", str(result.candidates))
+        table.add_row("tagged", str(result.tagged))
+        table.add_row("no crop recorded, skipped", str(result.skipped_no_crop))
+        table.add_row("no source PDF, skipped", str(result.skipped_no_pdf))
+        table.add_row("call failed, skipped", str(len(result.failed_calls)))
+        console.print(table)
+        if result.by_topic:
+            console.print("topics: " + ", ".join(
+                f"{c} x{n}" for c, n in sorted(result.by_topic.items())))
+        console.print(
+            "[yellow]These are held below the confidence floor on purpose: one read of a "
+            "picture, with no text and no second opinion, is a lead for a person.[/yellow]"
+        )
+        if dry_run:
+            console.print("[yellow]dry run: nothing was written.[/yellow]")
+        return
 
     label = f"tagging {subject} {from_year}-{to_year} with {settings.deepseek_text_model}"
     with console.status(label + "...") as status:

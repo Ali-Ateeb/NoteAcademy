@@ -28,6 +28,7 @@ import psycopg
 
 from .config import settings
 from .deepseek import DeepSeekAccountError
+from .naming import caie_filename
 from .parallel import map_concurrently
 from .tagging import TopicOption, tag_question
 from .worksheet import apply_worksheet, revisable_topics
@@ -43,6 +44,15 @@ class UntaggedMcq:
     question_text: str
     options: dict[str, str]
     correct_option: str | None
+    # Only loaded for the from-crops path, which needs to re-render the printed
+    # question; None everywhere else.
+    syllabus_code: str = ""
+    year: int = 0
+    season: str = ""
+    component: int = 0
+    variant: int | None = None
+    page_number: int | None = None
+    bbox: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -57,6 +67,9 @@ class TagAutoReport:
     retagged: int = 0
     changed_topic: int = 0
     backup: Path | None = None
+    # from-crops only: no recorded crop, or no source PDF to render it from.
+    skipped_no_crop: int = 0
+    skipped_no_pdf: int = 0
 
 
 def load_untagged_mcqs(
@@ -73,11 +86,15 @@ def load_untagged_mcqs(
         cur.execute(
             f"""
             select q.id, q.display_label, q.question_text, q.correct_option,
-                   p.slug as paper_slug
+                   p.slug as paper_slug, p.component, p.variant,
+                   es.year, es.season, s.syllabus_code,
+                   qa.page_number, qa.bbox
               from questions q
               join papers p on p.id = q.paper_id
               join subjects s on s.id = p.subject_id
               join exam_sessions es on es.id = p.exam_session_id
+              left join question_assets qa
+                on qa.question_id = q.id and qa.kind = 'question_crop'
              where s.slug = %s and q.question_type = 'mcq'
                and es.year between %s and %s
                {"" if include_tagged else
@@ -105,6 +122,10 @@ def load_untagged_mcqs(
             id=str(r["id"]), paper_slug=r["paper_slug"], display_label=r["display_label"],
             question_text=(r["question_text"] or "").strip(),
             options=options.get(r["id"], {}), correct_option=r["correct_option"],
+            syllabus_code=r.get("syllabus_code", ""), year=r.get("year", 0),
+            season=r.get("season", ""), component=r.get("component", 0),
+            variant=r.get("variant"), page_number=r.get("page_number"),
+            bbox=tuple(r["bbox"]) if r.get("bbox") else None,
         )
         for r in rows
     ]
@@ -151,6 +172,112 @@ def _mark_scheme(question: UntaggedMcq) -> str | None:
         return None
     answer = question.options.get(question.correct_option, "")
     return f"Correct answer: {question.correct_option}" + (f". {answer}" if answer else "")
+
+
+def tag_mcqs_from_crops(
+    subject_slug: str,
+    papers_dir: Path,
+    *,
+    year_from: int,
+    year_to: int,
+    confidence_floor: float,
+    dry_run: bool = False,
+    workers: int = 1,
+    thinking: bool | None = None,
+    paper_slug: str | None = None,
+    crop_dir: Path | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> TagAutoReport:
+    """Tag the multiple-choice questions that have no text to tag from.
+
+    The counterpart to `tag_mcqs_with_model`, for exactly the population that
+    one skips: a question whose stem and options are all artwork -- a circuit,
+    a graph, four diagrams -- so `mcq-options` found nothing to write and the
+    text pass has nothing to read. There are only ever a handful per subject,
+    but they are otherwise untaggable and so stay invisible to students for
+    good.
+
+    Reads the printed crop instead, with the same vision call
+    `tag-verify-auto` uses as its second opinion. Confidence is capped below
+    the floor by default: one read of a picture, with no text and no second
+    opinion to check it against, is a lead for a person and not a verdict.
+    """
+    from .load import connect
+    from .render import crop as render_crop
+    from .tagging import tag_from_crop
+
+    with connect(settings.database_url) as conn:
+        _, topic_rows = revisable_topics(conn, subject_slug)
+        questions = [
+            q for q in load_untagged_mcqs(
+                conn, subject_slug, year_from=year_from, year_to=year_to,
+                paper_slug=paper_slug,
+            )
+            if not q.question_text and not q.options
+        ]
+
+    topics = [TopicOption(**row) for row in topic_rows]
+    report = TagAutoReport(candidates=len(questions))
+
+    crop_dir = crop_dir or Path("pipeline/work") / f"{subject_slug}-textless-crops"
+    crop_dir.mkdir(parents=True, exist_ok=True)
+
+    # Phase 1a: render locally and in order -- PyMuPDF is not thread-safe.
+    work: list[tuple[UntaggedMcq, Path]] = []
+    for question in questions:
+        if not question.bbox or not question.page_number:
+            report.skipped_no_crop += 1
+            continue
+        pdf_path = papers_dir / question.syllabus_code / caie_filename(
+            question.syllabus_code, question.year, question.season, "qp",
+            question.component, question.variant,
+        )
+        if not pdf_path.is_file():
+            report.skipped_no_pdf += 1
+            continue
+        path = crop_dir / f"{question.paper_slug}-{question.display_label}.png"
+        if not path.is_file():
+            render_crop(pdf_path, question.page_number, question.bbox, path)
+        work.append((question, path))
+
+    # Phase 1b: the calls, with no connection open.
+    outcomes = map_concurrently(
+        work,
+        lambda item: tag_from_crop(item[1], topics, thinking=thinking),
+        workers=workers,
+        stop_on=(DeepSeekAccountError,),
+        on_done=on_progress,
+    )
+
+    decisions: list[dict] = []
+    for (question, _path), assignment, error in outcomes:
+        if error is not None or assignment is None:
+            report.failed_calls.append(f"{question.paper_slug} Q{question.display_label}")
+            log.warning("tagging %s Q%s from its crop failed: %s",
+                        question.paper_slug, question.display_label, error)
+            continue
+        decisions.append({
+            "id": question.id,
+            "topic_code": assignment.topic_code,
+            # Held below the floor on purpose: see the docstring.
+            "confidence": min(assignment.confidence, confidence_floor - 0.01),
+        })
+
+    # Phase 2: one short pass of writes.
+    with connect(settings.database_url) as conn:
+        applied = apply_worksheet(conn, subject_slug, decisions, confidence_floor=confidence_floor)
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+
+    report.tagged = applied.tagged
+    report.held_for_review = applied.flagged
+    report.unknown_codes = applied.unknown_codes
+    for decision in decisions:
+        code = decision["topic_code"]
+        report.by_topic[code] = report.by_topic.get(code, 0) + 1
+    return report
 
 
 def tag_mcqs_with_model(

@@ -598,6 +598,38 @@ and 21 of them still say so.
 
 ---
 
+## The figure-only MCQs and the failed verification calls (2026-09-22)
+
+**22 figure-only MCQs, tagged from their printed crops.** These are the
+questions `mcq-options` could find no text in and `tag-auto` therefore skipped:
+stem and options all artwork -- a circuit, four vector diagrams, a heating
+curve. There is only ever a handful per subject, but they were untaggable and
+so invisible to students for good. New `tag-auto --from-crops` reads the crop
+with the same vision call `tag-verify-auto` uses, and tags what it sees:
+5 chemistry, 17 physics, none failed. **Their confidence is capped below the
+floor on purpose** -- one read of a picture, with no text and no second opinion
+to check it against, is a lead for a person, not a verdict -- so all 22 sit in
+the review queue. Six tests, including one asserting no connection is open
+while the crop is being read.
+
+**The 12 failed verification calls, retried and finished.** Seven had died on
+"reply was cut off by max_tokens before any answer was produced", which is
+thinking mode eating the token budget; the rest returned malformed JSON. Re-run
+with thinking off, **all 12 succeeded**: 9 agreed with the tag on file, 3
+differed. They were retried individually rather than by re-running their
+papers, since every other question on those papers already had a verdict and
+re-reading them would only add churn from run-to-run noise.
+
+Two of the three disagreements were settled by reading the crop: 2024 O/N P12
+Q30 asks in its own words for the "possible method of extraction", so 9.6 and
+not the reactivity series that gets you there; 2018 O/N P12 Q12 cannot be
+answered without its efficiency step, so 1.7.4 and not Power. The third
+(2022 M/J P11 Q8) compares a metallic, an ionic, a giant covalent and a simple
+molecular structure at once, and is left flagged because no one of them is the
+question.
+
+---
+
 ---
 
 ## Next steps, in priority order
@@ -605,7 +637,9 @@ and 21 of them still say so.
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
 3. **Finish the topic tags.** The structured banks are done (841 below-floor
-   tags -> 21, all three subjects). Remaining: (a) Physics's 73 flagged MCQs; (c) the 22 figure-only MCQs that
+   tags -> 21), the 22 figure-only MCQs are tagged from their crops and the 12
+   failed verification calls are finished. Remaining: (a) Physics's 73 flagged
+   MCQs; (c) the 22 figure-only MCQs that
    have no text to tag from (`tag_from_crop` or by hand); (d) the 12 MCQ
    verification calls that failed; (e) `bulk-approve` what is left, after a
    person has read a sample.
