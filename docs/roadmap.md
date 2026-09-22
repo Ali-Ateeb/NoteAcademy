@@ -555,17 +555,57 @@ beneath it rather than hanging into the gutter.
 
 ---
 
+## The 366 remaining structured tags, read and decided (2026-09-22)
+
+Every below-floor approved structured question in all three subjects was read
+in full -- stem and every sub-part, with each part's marks -- and given a topic
+by hand. **366 decided, 254 tags changed, 345 now above the floor, 21 left
+deliberately flagged.**
+
+| subject | decided | tag changed | still flagged |
+|---|---|---|---|
+| chemistry-5070 | 174 | 106 | 6 |
+| biology-5090 | 97 | 60 | 9 |
+| physics-5054 | 95 | 88 | 6 |
+
+Across the three banks the below-floor population went **841 -> 21**.
+
+**The rule that did the work:** a structured question's topic is wherever its
+*marks* sit, not what its opening sentence is about. That single test decided
+most of these, and it is what both classifiers get wrong -- they follow the
+framing. Examples: a question opening "the reaction between ethene and bromine"
+is energetics, because 6 of its 9 marks are bond energies and a reaction
+pathway; one opening "Alkanes are a homologous series" is kinetic particle
+theory, because 6 of its 10 marks are about melting and boiling; a physics
+question titled around a skeleton carries its marks in blood and gas exchange.
+
+**Three refinements the reading forced:**
+
+  * *"Choose from the following..."* recall questions spread 5-7 topics over
+    single marks and have no dominant one. They take the umbrella the choosing
+    is done from -- elements to 8.1, formulae to 3.1, compounds identified by
+    their tests to 12.5 -- at 0.75, not higher.
+  * One calculation inside an otherwise thematic question does not make the
+    question "about the mole". The marks rule decides between competing
+    *themes*, not between a theme and an arithmetic step.
+  * A question genuinely split four ways keeps a confidence below the floor.
+    That is what the 21 flagged ones are: not unfinished, decided to be
+    undecidable. One of them (biology 2016 O/N P21 Q3) is mostly about the
+    skeleton, which this syllabus does not cover at all.
+
+Tags are written `source = 'model'`. A careful reading is still not a person's,
+and 21 of them still say so.
+
+---
+
 ---
 
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Finish the topic tags.** Chemistry MCQs are done; chemistry structured is
-   down to 174 below-floor tags and biology is being verified. Remaining, in
-   order of how live the damage is: (a) the ~174 chemistry and biology
-   structured disagreements — a reasoning pass against the marks, not a rule
-   (see above); (b) Physics's 73 flagged MCQs; (c) the 22 figure-only MCQs that
+3. **Finish the topic tags.** The structured banks are done (841 below-floor
+   tags -> 21, all three subjects). Remaining: (a) Physics's 73 flagged MCQs; (c) the 22 figure-only MCQs that
    have no text to tag from (`tag_from_crop` or by hand); (d) the 12 MCQ
    verification calls that failed; (e) `bulk-approve` what is left, after a
    person has read a sample.
