@@ -396,13 +396,67 @@ The route for the 2,960 newly loaded MCQs, run end to end for both subjects.
   disagreements on approved questions found by the second read were largely
   real.
 
+## Chemistry MCQ review queue cleared by hand-reasoning (2026-09-21)
+
+All **283** chemistry MCQs in the review queue were read individually against the
+49-topic syllabus (by Claude, not by the pipeline classifier) and decided.
+**275 approved, 8 held.** Chemistry approved MCQs: 160 -> 434.
+
+- **85 tags changed.** The classifier's errors were systematic, not random:
+  uses of sulfuric acid / SO2 filed under *Air quality* instead of with the
+  Contact process (7); gas-volume and combustion stoichiometry under *Formulae*
+  instead of *The mole* (8); "identify the element from its properties" under
+  *Properties of metals* when the point is *transition elements*; ester and
+  carboxylic-acid questions under *acids and bases* (5).
+- **Rules applied consistently across duplicate questions** (the variants share
+  most items): formula asked *from* charges -> 3.1, charges asked *from* a
+  formula -> 2.4; plain percentage-by-mass -> 3.2 (no mole needed); naming
+  general apparatus -> 12.1, choosing a setup that follows a rate -> 6.2.
+- **8 held:** one with no answer key (2017 M/J P11 Q25), one with no extractable
+  text (2020 O/N P11 Q3 - needs a look at the crop), six that genuinely span two
+  topics.
+- Tags written with `source = 'model'` and `reviewed_by` left null: this was a
+  careful reading, but still a model's, and the audit trail should not claim a
+  person checked them.
+- **Bug found while doing it:** replacing a primary tag leaves the old one behind
+  as a *secondary* (`apply_worksheet` unsets `is_primary` rather than deleting),
+  so a retagged question still lists under its old topic. 85 such rows were
+  cleaned up here, but **`tag-auto --retag` and `tag-apply` still do this** -
+  worth fixing in code.
+
+### Paper 2 (structured) spot check - a real problem
+
+Five random *approved* chemistry Paper 2 questions were read in full, sub-parts
+included. Three were correctly tagged (the stem misleads - e.g. a question
+opening "the reaction between ethene and bromine" is correctly filed under
+*Exothermic and endothermic* because 6 of its 9 marks are bond-energy and
+reaction-pathway work). One was borderline. **One was clearly wrong:** 2026 M/J
+P22 Q6, filed under *Extraction of metals*, where only 2 of 12 marks are
+extraction and the bulk is alloys and corrosion.
+
+The counts underneath that are worse than the sample:
+
+| subject | approved structured Qs | tagged below the 0.75 floor | below 0.6 |
+|---|---|---|---|
+| chemistry-5070 | 572 | **451 (79%)** | 294 |
+| biology-5090 | 527 | 328 (62%) | 242 |
+| physics-5054 | 667 | 62 (9%) | 23 |
+
+None has a `source='human'` tag. So the chemistry and biology structured banks
+were approved wholesale with tags the classifier itself flagged as unsure, and
+they are live to students now. Physics is in far better shape.
+
 ---
 
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Review and approve the 2,960 newly loaded MCQs.** Tagged and second-read
+3. **Chemistry MCQs: done (see above). Remaining: Physics's 73 flagged MCQs,
+   and the structured banks.** The 451 below-floor approved chemistry structured
+   tags (and biology's 328) are the bigger prize: they are live and mostly
+   unverified. `tag-verify-structured` exists for exactly this.
+   Older text: **Review and approve the 2,960 newly loaded MCQs.** Tagged and second-read
    (see the section above). Remaining: (a) review the 196 flagged
    disagreements (Chemistry 123, Physics 73) and the 160 retagged Chemistry
    questions in the queue; (b) tag the 22
