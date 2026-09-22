@@ -148,27 +148,22 @@ def _pages_needing_vision(
     return pages
 
 
-def backfill_paper_options(
-    conn: psycopg.Connection,
-    qp_pdf: Path,
-    *,
-    dry_run: bool = False,
-) -> OptionsReport:
-    """Extract and write option text for one already-loaded MCQ paper.
+@dataclass
+class _Plan:
+    """What the read pass worked out, carried across the model calls."""
 
-    Matches the vision pass's questions back to existing rows by paper slug +
-    display label — the same identity the initial geometric load keyed on —
-    rather than inserting anything new.
+    paper_slug: str
+    existing: dict[str, str] = field(default_factory=dict)     # display label -> question id
+    resolved: set[str] = field(default_factory=set)            # needs no model call
+    copyable: dict[str, dict[str, str]] = field(default_factory=dict)
+    copyable_text: dict[str, str] = field(default_factory=dict)
+    needed_pages: set[int] = field(default_factory=set)
+    remaining: list[str] = field(default_factory=list)
 
-    Three ways a question can end this without a model call: it already has
-    options from an earlier run (idempotent re-runs are free), it is a marked
-    duplicate of a question that does (copied, not re-read), or every question
-    on its page falls into one of those two buckets (the page itself is never
-    sent to the model).
-    """
-    from .extract import cross_check, extract_page
+
+def _plan_paper(conn: psycopg.Connection, qp_pdf: Path) -> _Plan:
+    """Everything the write pass will need, read in one pass up front."""
     from .ingest import resolve_subject_slug
-    from .load import replace_options
 
     ref = parse_paper_filename(qp_pdf.stem)
     subject_slug = resolve_subject_slug(conn, ref.syllabus_code)
@@ -197,74 +192,124 @@ def backfill_paper_options(
         )
         existing = {row["display_label"]: row["id"] for row in cur.fetchall()}
 
-    report = OptionsReport(paper_slug=paper_slug)
+    plan = _Plan(paper_slug=paper_slug, existing=existing)
     all_ids = list(existing.values())
 
-    resolved = _already_backfilled(conn, all_ids)
-    remaining = [qid for qid in all_ids if qid not in resolved]
+    plan.resolved = _already_backfilled(conn, all_ids)
+    remaining = [qid for qid in all_ids if qid not in plan.resolved]
 
-    copyable = _duplicate_options(conn, remaining)
-    copyable_text = _canonical_question_text(conn, remaining)
-    if copyable and not dry_run:
-        for question_id, options in copyable.items():
-            replace_options(conn, question_id, options)
-            text = copyable_text.get(question_id)
-            if text:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "update questions set question_text = %s"
-                        " where id = %s and question_text is null",
-                        (text, question_id),
-                    )
-    report.copied_from_duplicate = len(copyable)
-    resolved |= copyable.keys()
-    remaining = [qid for qid in all_ids if qid not in resolved]
+    plan.copyable = _duplicate_options(conn, remaining)
+    plan.copyable_text = _canonical_question_text(conn, remaining)
+    plan.resolved |= plan.copyable.keys()
 
-    if not remaining:
+    plan.remaining = [qid for qid in all_ids if qid not in plan.resolved]
+    plan.needed_pages = _pages_needing_vision(conn, plan.remaining)
+    return plan
+
+
+def backfill_paper_options(
+    qp_pdf: Path,
+    *,
+    dry_run: bool = False,
+) -> OptionsReport:
+    """Extract and write option text for one already-loaded MCQ paper.
+
+    Matches the vision pass's questions back to existing rows by paper slug +
+    display label — the same identity the initial geometric load keyed on —
+    rather than inserting anything new.
+
+    Three ways a question can end this without a model call: it already has
+    options from an earlier run (idempotent re-runs are free), it is a marked
+    duplicate of a question that does (copied, not re-read), or every question
+    on its page falls into one of those two buckets (the page itself is never
+    sent to the model).
+
+    Connects twice, and holds no connection while a model call is in flight —
+    the same three-phase shape as the verifiers, for the same two reasons. A
+    transaction left open across a vision call sat *idle in transaction* for as
+    long as the call took, holding its locks; with
+    `idle_in_transaction_session_timeout` at 0, one such session that outlived
+    its run blocked a later one indefinitely. And a connection merely held open
+    across minutes of model calls is what a pooler reclaims as idle, which has
+    already killed a real run (see `verify.verify_mcqs_with_model`).
+    """
+    from .extract import cross_check, extract_page
+    from .load import connect, replace_options
+
+    # Phase 1: read what is needed, then let the connection go.
+    with connect(settings.database_url) as conn:
+        plan = _plan_paper(conn, qp_pdf)
+
+    report = OptionsReport(paper_slug=plan.paper_slug)
+    report.copied_from_duplicate = len(plan.copyable)
+
+    # Phase 2: render and call the model, with no connection open at all.
+    extracted_options: list[tuple[str, str, dict[str, str], str | None]] = []
+    if plan.remaining:
+        work = settings.work_dir / f"{plan.paper_slug}-options"
+        pages = render_pdf(qp_pdf, work)
+        if plan.needed_pages:
+            report.pages_skipped = sum(
+                1 for p in pages if p.page_number not in plan.needed_pages
+            )
+            pages = [p for p in pages if p.page_number in plan.needed_pages]
+
+        for page in pages:
+            extracted = extract_page(page)
+            if not extracted.is_content_page:
+                continue
+            if cross_check(page, extracted):
+                report.flagged_pages.append(page.page_number)
+
+            for question in extracted.questions:
+                if question.question_type != "mcq" or not question.options:
+                    continue
+                options = {
+                    e.letter: e.text for e in question.options if e.text and e.text.strip()
+                }
+                if len(options) < 2:
+                    continue
+
+                question_id = plan.existing.get(question.display_label)
+                if question_id is None:
+                    report.unmatched_labels.append(question.display_label)
+                    continue
+                if question_id in plan.resolved:
+                    continue
+
+                report.matched += 1
+                if any(v.strip().lower().startswith(_FIGURE_MARKER) for v in options.values()):
+                    report.figure_options.append(question.display_label)
+                text = (question.question_text or "").strip() or None
+                extracted_options.append(
+                    (question_id, question.display_label, options, text)
+                )
+
+    if dry_run or not (plan.copyable or extracted_options):
         return report
 
-    needed_pages = _pages_needing_vision(conn, remaining)
-    work = settings.work_dir / f"{paper_slug}-options"
-    pages = render_pdf(qp_pdf, work)
-    if needed_pages:
-        skipped = [p for p in pages if p.page_number not in needed_pages]
-        report.pages_skipped = len(skipped)
-        pages = [p for p in pages if p.page_number in needed_pages]
-
-    for page in pages:
-        extracted = extract_page(page)
-        if not extracted.is_content_page:
-            continue
-        if cross_check(page, extracted):
-            report.flagged_pages.append(page.page_number)
-
-        for question in extracted.questions:
-            if question.question_type != "mcq" or not question.options:
-                continue
-            options = {e.letter: e.text for e in question.options if e.text and e.text.strip()}
-            if len(options) < 2:
-                continue
-
-            question_id = existing.get(question.display_label)
-            if question_id is None:
-                report.unmatched_labels.append(question.display_label)
-                continue
-            if question_id in resolved:
-                continue
-
-            report.matched += 1
-            if any(v.strip().lower().startswith(_FIGURE_MARKER) for v in options.values()):
-                report.figure_options.append(question.display_label)
-
-            if not dry_run:
-                replace_options(conn, question_id, options)
-                report.written += 1
-                if question.question_text and question.question_text.strip():
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "update questions set question_text = %s"
-                            " where id = %s and question_text is null",
-                            (question.question_text.strip(), question_id),
-                        )
+    # Phase 3: one short pass of writes.
+    with connect(settings.database_url) as conn:
+        for question_id, options in plan.copyable.items():
+            replace_options(conn, question_id, options)
+            _set_question_text(conn, question_id, plan.copyable_text.get(question_id))
+        for question_id, _label, options, text in extracted_options:
+            replace_options(conn, question_id, options)
+            report.written += 1
+            _set_question_text(conn, question_id, text)
+        conn.commit()
 
     return report
+
+
+def _set_question_text(conn: psycopg.Connection, question_id: str, text: str | None) -> None:
+    """Fill a question's text only if it has none: a later, worse read must not
+    overwrite what an earlier pass already established."""
+    if not text:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "update questions set question_text = %s"
+            " where id = %s and question_text is null",
+            (text, question_id),
+        )

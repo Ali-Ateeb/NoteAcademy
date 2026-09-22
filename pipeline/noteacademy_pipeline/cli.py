@@ -331,25 +331,22 @@ def mcq_options(
     processed is the cheap one, since it shares most of its MCQs with the
     first.
     """
-    from .load import connect
     from .mcq_options import backfill_paper_options
 
     if not settings.database_url:
         console.print("[red]DATABASE_URL is not set.[/red]")
         raise typer.Exit(code=2)
 
-    with connect(settings.database_url) as conn:
-        try:
-            report = backfill_paper_options(conn, qp_pdf, dry_run=dry_run)
-        except LookupError as error:
-            console.print(f"[red]{error}[/red]")
-            raise typer.Exit(code=2) from error
+    try:
+        # Manages its own connections: it holds none while the vision model is
+        # being called, so nothing sits idle in transaction across a slow call.
+        report = backfill_paper_options(qp_pdf, dry_run=dry_run)
+    except LookupError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=2) from error
 
-        if dry_run:
-            conn.rollback()
-            console.print("[yellow]dry run: rolled back[/yellow]")
-        else:
-            conn.commit()
+    if dry_run:
+        console.print("[yellow]dry run: nothing was written[/yellow]")
 
     table = Table("", "", title=report.paper_slug)
     table.add_row("questions matched", str(report.matched))
