@@ -39,6 +39,7 @@ open; one short pass of writes follows.
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -113,6 +114,35 @@ class StructuredVerifyReport:
     unknown_codes: list[str] = field(default_factory=list)
     failed_calls: list[str] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    # Where the model's own answers were saved, before any write was attempted.
+    results_path: Path | None = None
+
+
+def _save_results(
+    subject_slug: str,
+    results: list[tuple[StructuredQuestion, int, TopicTagging]],
+    path: Path | None,
+) -> Path:
+    """Persist the model's answers so a failed write pass costs a retry of the
+    writes rather than of the calls. Keyed by question id, which is what the
+    write pass re-reads current state by."""
+    path = path or (
+        settings.work_dir / f"verify-structured-{subject_slug}-results.jsonl"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for question, pages, tagging in results:
+            handle.write(json.dumps({
+                "question_id": question.id,
+                "paper_slug": question.paper_slug,
+                "display_label": question.display_label,
+                "pages": pages,
+                "primary": tagging.primary.topic_code,
+                "confidence": tagging.primary.confidence,
+                "reasoning": tagging.primary.reasoning,
+                "secondary": [t.topic_code for t in tagging.secondary],
+            }, ensure_ascii=False) + "\n")
+    return path
 
 
 def classify_outcome(file_primary: str, file_secondary: list[str], model: TopicTagging) -> str:
@@ -215,6 +245,7 @@ def verify_structured_with_model(
     workers: int = 1,
     paper_slugs: list[str] | None = None,
     crop_dir: Path | None = None,
+    results_path: Path | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> StructuredVerifyReport:
     """Verify a subject's structured question tags against a model's read of
@@ -293,6 +324,17 @@ def verify_structured_with_model(
             report.unknown_codes.append(tagging.primary.topic_code)
             continue
         results.append((question, len(paths), tagging))
+
+    # Phase 1c: the model's answers, on disk, before anything is written.
+    #
+    # Everything above is the expensive part — hundreds of vision calls — and
+    # the write pass below is the fragile part: one connection, hundreds of
+    # statements, over a link that does drop (a real run lost ~900 calls'
+    # worth of work to `server closed the connection unexpectedly` partway
+    # through). Saving here means a failed or rolled-back write costs a retry
+    # of the writes, not of the spend.
+    report.results_path = _save_results(subject_slug, results, results_path)
+    log.info("model results saved to %s", report.results_path)
 
     # Phase 2: every write, in one short connection.
     with connect(settings.database_url) as conn:

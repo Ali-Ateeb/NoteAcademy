@@ -8,6 +8,7 @@ receive an inserted tag or a status change, whatever the model says.
 from __future__ import annotations
 
 import csv
+import json
 
 import pytest
 
@@ -495,3 +496,32 @@ def test_a_backwards_range_is_rejected(monkeypatch):
     with pytest.raises(ValueError, match="backwards"):
         Settings.from_env()
 
+
+
+# --------------------------------------------------------------------------
+# the model's answers survive a failed write pass
+# --------------------------------------------------------------------------
+
+
+def test_the_model_results_are_on_disk_before_any_write_is_attempted(
+    monkeypatch, tmp_path, world
+):
+    """A real run lost ~900 vision calls when the database connection dropped
+    partway through the write pass. The answers are saved first now, so a retry
+    costs the writes and not the spend."""
+    world["state"]["questions"] = [world["with_pdf"](question())]
+    out = tmp_path / "results.jsonl"
+
+    def explode(*a, **k):
+        raise RuntimeError("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(verify_structured, "apply_structured_one", explode)
+
+    with pytest.raises(RuntimeError):
+        run(world, results_path=out)
+
+    assert out.is_file(), "results must be saved before the write pass runs"
+    saved = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert len(saved) == 1
+    assert saved[0]["primary"] == "1.1"
+    assert saved[0]["question_id"] and saved[0]["paper_slug"]
