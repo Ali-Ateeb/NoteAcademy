@@ -362,6 +362,36 @@ class TestParseStructuredMarkScheme:
         assert "9" not in by_label
         assert by_label["5(b)"].content == "a form of an element"
 
+    def test_a_stray_scientific_notation_exponent_is_not_a_new_question(self):
+        # A superscript exponent (3.0 × 10⁸) sometimes extracts as its own
+        # line ahead of the base it modifies rather than glued onto its end,
+        # because it is a raised glyph PyMuPDF's own line-grouping does not
+        # always merge back into the row it visually sits beside. A bare
+        # "8" there satisfies every other check a genuine question start
+        # has, exactly like the nuclide mass number above, and is told
+        # apart from a real root the same way: by what the next line looks
+        # like, here scientific notation's un-multiplied base ("3.0 10").
+        entries = parse_structured_mark_scheme(
+            [
+                _page(
+                    "5(b)(i)", "(l =) c", "f", "or",
+                    "8", "3.0 10", "1.2 10 N", "C1",
+                    "0.025 (m)", "A1",
+                    "8", "encoded microwave", "B1",
+                )
+            ],
+            known_questions={"5", "8"},
+        )
+        by_label = {e.display_label: e for e in entries}
+        assert "5(b)(i)" in by_label
+        assert "8" in by_label
+        # The stray exponent line becomes 5(b)(i)'s own content rather than
+        # vanishing or corrupting the label boundary; the real question 8,
+        # printed afterwards exactly as its own known root, still opens
+        # correctly.
+        assert "3.0 10" in by_label["5(b)(i)"].content
+        assert by_label["8"].content == "encoded microwave"
+
 
 class TestStructuredAlternativeQuestions:
     """CAIE's "EITHER ... OR ..." split (see segment_structured.py's

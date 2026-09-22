@@ -244,6 +244,20 @@ _DOUBLED_OPEN_PAREN_RE = re.compile(r"\(\(([a-z]+)\)")
 # looks like a digit run glued straight onto an element symbol.
 _NUCLIDE_CONTINUATION_RE = re.compile(r"^\d{1,3}[A-Z][a-z]?$")
 
+# Scientific notation's exponent is a true superscript glyph in the PDF, and
+# PyMuPDF's text extraction sometimes assigns a raised superscript to a
+# "line" of its own rather than merging it into the row it visually sits
+# beside — and, since it is raised, that stray line can extract *before* the
+# base number it modifies rather than after it: "8" (the exponent of 10⁸)
+# arrives as its own line immediately ahead of "3.0 10" rather than glued
+# onto its end. A bare "8" there satisfies every other check a genuine
+# question start has (ascending, known, alone on its own line) exactly like
+# the nuclide case above, and is told apart from a real root the same way:
+# by what the *next* line looks like, here the un-multiplied base of
+# scientific notation ("3.0 10", "1.2 10") that a real question's own
+# opening line is never shaped like.
+_SCIENTIFIC_NOTATION_BASE_RE = re.compile(r"^\d+(\.\d+)?\s+10\b")
+
 # A third way the "Question / Answer / Marks" table style marks an
 # "EITHER"/"OR" split (see segment_structured.py's `_ALTERNATIVE_LABELS`):
 # folded into the row's own repeated label instead of a heading row of its
@@ -522,13 +536,18 @@ def parse_structured_mark_scheme(
             # A number alone on its own line is also exactly the shape of a
             # nuclide's mass number, printed with its atomic number and
             # element symbol glued together on the line right after it —
-            # "9" then "4Be". Checked only when nothing else on this line
-            # already ruled it out, since the next line is otherwise
-            # irrelevant to whether this one opens a question.
+            # "9" then "4Be" — or a scientific-notation exponent extracted
+            # ahead of its own base — "8" then "3.0 10" for 3.0 × 10⁸ (see
+            # `_SCIENTIFIC_NOTATION_BASE_RE`). Checked only when nothing else
+            # on this line already ruled it out, since the next line is
+            # otherwise irrelevant to whether this one opens a question.
             and not (
                 i + 1 == len(tokens)
                 and (next_line := _next_content_line(content_lines, line_index)) is not None
-                and _NUCLIDE_CONTINUATION_RE.match(next_line)
+                and (
+                    _NUCLIDE_CONTINUATION_RE.match(next_line)
+                    or _SCIENTIFIC_NOTATION_BASE_RE.match(next_line)
+                )
             )
         ):
             if current_root is None or _root_ordinal(tokens[i]) > _root_ordinal(current_root):

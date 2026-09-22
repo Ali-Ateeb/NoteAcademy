@@ -710,28 +710,88 @@ distances and motion of particles; 2.1.1 is macroscopic properties.
 
 ---
 
-## Mark-scheme extraction is broken on the 2025+ format (2026-09-22)
+## Mark-scheme extraction: 262 -> 136 missing, and what is genuinely left (2026-09-22)
 
-Found while clearing the physics queue. **262 structured leaf questions across
-all three subjects have no mark-scheme text**, so a student practising them
-gets no answer. The source PDFs are all on disk; the parser is what fails, in
-two distinct ways.
+Found while clearing the physics queue: **262 structured leaf questions across
+all three subjects had no mark-scheme text**, so a student practising them got
+no answer. The source PDFs are all on disk (nothing needed downloading); this
+was entirely a parser problem. Investigating it corrected an earlier read of
+the same bug (see below) and turned up three genuinely different causes,
+only one of which was actually fixed today.
 
-  * **The 2025 Cambridge layout.** One question part now spans several mark
-    rows, and the marks column holds codes (`B1`, `C1`, `A1`, `M1`) rather than
-    integers, with the Question column blank on continuation rows.
-    `parse_structured_mark_scheme` assumes one row per label and a numeric
-    marks column, so it reads an answer line such as `20 (m)` as a new label:
-    5054 w25 ms 22 yields **4 entries for a 14-page mark scheme**, two of them
-    garbage. Worst affected years: chemistry 2022 (41), physics 2025 (19),
-    biology 2013 (29).
-  * **EITHER/OR alternative questions.** The question paper labels them
-    `9(either)(a)` and `9(or)(a)`; the mark scheme emits a bare `9`, so all
-    four parts go unmatched (physics 2016 M/J P21, 2017 O/N P21).
+**91 of the 262 were already fixed, just never re-ingested.** Diagnosing the
+original 4-entries-from-a-14-page-mark-scheme failure with `known_questions`
+supplied the way the real ingest path always supplies it (unlike the ad hoc
+first repro, which called the parser with `known_questions=None` and made it
+look far more broken than production actually was) showed most of the corpus
+already parsing correctly against the *current* code. Some improvement made
+earlier in this session — or possibly further back — had never been carried
+into the database by a re-run. `ingest_structured_paper`'s upsert is
+idempotent and protects anything already approved (status, review_flags, and
+it never touches `question_topics`), so simply re-ingesting every affected
+paper was safe, and recovered 91 questions for free.
 
-This is an ingest defect, not a tagging one, and it is corpus-wide rather than
-physics-specific. Fixing it means teaching the parser mark codes and
-continuation rows, then re-ingesting the affected papers.
+**A real, narrow bug was found and fixed: a stray scientific-notation
+exponent.** `3.0 × 10⁸` is a true superscript glyph in these PDFs, and
+PyMuPDF's text extraction sometimes assigns it to a "line" of its own rather
+than merging it into the row it visually sits beside — and because it is
+raised, that stray line can extract *before* its base rather than after it:
+`8` arrives as its own line immediately ahead of `3.0 10`. A bare `8` there
+satisfies every check `parse_structured_mark_scheme` already has for "this is
+a genuine new question root" (ascending, a known label, alone on its own
+line) — exactly the same shape as the nuclide-mass-number case the parser
+already special-cases (`_NUCLIDE_CONTINUATION_RE`) — and is told apart from a
+real root the same way: by what the next line looks like
+(`_SCIENTIFIC_NOTATION_BASE_RE`, matching scientific notation's own
+un-multiplied base, "3.0 10"). Recovered 5054 w25 ms 22 from 4 usable entries
+out of a 14-page mark scheme to 42 of 43, the last one a genuinely
+content-free answer (see below). Six new tests, purely textual — this makes
+*no* change to how any PDF is read, only to which lines the existing
+line-by-line grammar is willing to read as a question boundary.
+
+**A geometric fix was attempted and rejected.** Reconstructing "logical
+rows" from PyMuPDF's raw span geometry (grouping fragments by vertical
+overlap rather than trusting its own line grouping) recovered far more —
+91 questions in testing — by also gluing subscripts, split same-row tokens,
+and other superscript shapes back together. It was not shipped: it corrupted
+reading order on at least one table-column layout (scrambling
+`Question`/`Mark` column values across rows on a biology paper, badly enough
+to crash `_root_ordinal` on a garbled label) and needed a second, tighter
+pass to stop nuclide subscripts occasionally gluing onto the wrong neighbour
+(a bare root a few points away, rather than their own element symbol) even
+after that first crash was fixed — two real defects found by testing against
+every structured paper in the corpus before either shipped, not two ways of
+looking at the same one. A fix whose failure mode is silently reordering a
+mark scheme is worse than the flag it would clear, so it was reverted in
+favour of the smaller, purely-additive regex above. If this is revisited, it
+needs to respect PyMuPDF's own block boundaries rather than discarding them.
+
+**136 remain, for two reasons, neither of them the 2025-format bug:**
+
+  * **Genuinely content-free answers** (a handful, e.g. 5054 w25 ms 22's
+    `5(a)`) — the mark scheme prints a bare mark code with no answer text at
+    all, presumably a diagram-labelling point. Correctly flagged
+    `unmatched_mark_scheme` for a person; there is no text to recover.
+    Likewise a few genuine "merged parts" (one mark-scheme entry covering
+    three question-paper sub-parts at once) and a couple of EITHER/OR
+    branches whose own answer is a bare mark code — all real ambiguities
+    the matcher is deliberately conservative about, not bugs.
+  * **A different, older mark-scheme grammar the parser was never built to
+    read** (the large majority of what remains — 80 of 136 in biology alone,
+    including 29 of 29 leaves on one 2013 paper). This style has no B/C/M/A
+    mark codes at all: marking points are semicolon-separated, and the
+    "Mark" column is a bare number sitting alone on its own row — the exact
+    same shape as a bare question number opening a new question. The two are
+    normally told apart because a document either has mark codes (so a bare
+    number is always a root) or doesn't (so it's always a mark value) — but
+    this table style can print *both* on their own row in the same document,
+    an ambiguity the current line-by-line grammar cannot resolve from text
+    alone. Resolving it needs the PDF's column geometry (a "Mark" column
+    value sits at a different x-position than a "Question" column value),
+    which means passing position data into the parser rather than plain
+    strings — a real feature, not a quick fix, and one this session did not
+    attempt given how narrowly the geometric approach above already went
+    wrong once.
 
 ---
 
@@ -742,9 +802,10 @@ continuation rows, then re-ingesting the affected papers.
 3. **Finish the topic tags.** The structured banks are done (841 below-floor
    tags -> 21), the figure-only MCQs are tagged from their crops, the 12 failed
    verification calls are finished, and the **physics MCQ queue is empty**.
-   Remaining: `bulk-approve` what is left, after a person has read a sample —
-   that alone moves physics from 525 approved MCQs to ~2,000 and fills its
-   three empty topics.
+   A 60-question stratified sample (35 physics, 25 chemistry, one question per
+   topic) of the 2,748 tagged-but-unapproved MCQs is sent for a person to spot
+   check; `bulk-approve` on a clean sample moves physics from 525 approved
+   MCQs to ~2,000 and fills its three empty topics.
 4. **Stop the review route publishing rejected second opinions.** Approving a
    flagged question leaves the verifier's 0.6 non-primary row attached, and
    both `v_topics.question_count` and `v_mcq_questions.topic_codes` then list
@@ -753,9 +814,12 @@ continuation rows, then re-ingesting the affected papers.
    the 7 existing rows, and drop those (and only those — 167 genuine editorial
    secondaries must survive) on approve. Cheap, and it protects the 234
    questions still in the queue.
-5. **Fix mark-scheme parsing for the 2025+ layout and EITHER/OR questions,
-   then re-ingest.** 262 structured leaf questions across all three subjects
-   currently have no mark scheme, so students get no answer on them.
+5. **Support the older, no-mark-code mark-scheme grammar.** 136 structured
+   leaf questions remain without a mark scheme after this session's fix (down
+   from 262) — mostly biology, where marking points are semicolon-separated
+   and the "Mark" column is a bare number indistinguishable from a bare
+   question number by text alone. Needs the parser to read column x-position
+   from the PDF, not just line-by-line text (see the write-up above).
 6. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks
