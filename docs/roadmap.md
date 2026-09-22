@@ -466,10 +466,32 @@ regressed a question that was already right. The triage CSV has each one with
 both candidates and the model's reasoning; they need a reasoning pass or a
 person, not a rule.
 
-**The signal worth encoding later:** three of those four calls came down to
-*which topic the marks sit under*, not what the question's opening sentence is
-about. Both classifiers go wrong the same way — they follow the framing. The
-leaf `max_marks` needed to compute this is already in the database.
+**The signal that looked worth encoding — and the test that killed it.**
+Three of those four calls came down to *which topic the marks sit under*
+rather than what the opening sentence is about, so the obvious next move was
+to tag each leaf part separately and let the marks pick the winner. Tried on
+the same four questions, where the right answer was already known, it got one
+right and three wrong or meaningless:
+
+  * **Ties are the normal case, not the exception.** Three of the four ended
+    in a tie (a 6-way one for a "choose from these elements" question, whose
+    six 1-mark parts are six different topics). Many structured questions
+    genuinely have no dominant topic, and a tie-break invents an answer.
+  * **Per-part tagging brings its own errors, and they are amplified.** In
+    2018 M/J P22 Q2 a 2-mark redox observation was tagged *Electrolysis*,
+    which split redox's marks and handed the question to the wrong topic —
+    the exact regression the whole exercise was meant to prevent.
+  * **The marks are not complete enough to weight by.** In 2014 O/N P21 A5
+    only one of six parts had a mark stored, so the weighting was decided by
+    a single part.
+
+So: no rule. The remaining below-floor tags need a reasoning pass or a person.
+Recorded here so the idea is not re-attempted from scratch.
+
+Separately, 510 of 8,641 leaf parts (6%) store a `max_marks` that disagrees
+with the `[n]` printed in their own text — some off by a lot (33 against a
+printed 5). It is tolerable for `total_marks`, which aggregates hundreds of
+parts per topic, but it is not a foundation to build per-question logic on.
 
 ### Three bugs
 
