@@ -451,10 +451,26 @@ they are live to students now. Physics is in far better shape.
 Running the second read over the structured banks, and fixing what doing it
 exposed.
 
-**Chemistry structured: below-floor approved tags 451 -> 174.** All 613 tagged
-top-level questions were re-read from their printed page-crops: 420 agreed
-(confidence raised to 0.9), 144 reordered, 49 disagreed (46 of them approved,
-so reported and not acted on).
+**All three structured banks re-read from their printed page-crops.** Every
+tagged top-level question, 2010-2026:
+
+| subject | read | agreed | reordered | disagreed | below floor, before -> after |
+|---|---|---|---|---|---|
+| chemistry-5070 | 613 | 420 | 144 | 49 | 451 -> 174 |
+| biology-5090 | 568 | 458 | 93 | 17 | 328 -> 97 |
+| physics-5054 | 677 | 446 | 159 | 72 | 62 -> **95** |
+
+Across the three: **841 -> 366 below the floor**, and 1,257 of 1,766 approved
+structured questions now carry a tag two independent reads agree on, where
+before none did.
+
+**Physics went up, and that is the verifier working.** Its 72 disagreements
+were all on approved questions, so each had its confidence lowered to 0.74 and
+nothing else touched — 65 questions that had been sitting above the floor
+looking settled are now marked as disputed. The tags did not get worse; what
+is recorded about them got honest. Biology, by contrast, finished with none at
+0.74: its two reads simply agreed far more often (81% confirmed, against 66%
+for physics and 68% for chemistry).
 
 **Why the remaining 174 were left alone.** Four of the disagreements were
 audited by reading every sub-part and asking which topic carries the most
