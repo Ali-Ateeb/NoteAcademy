@@ -19,10 +19,17 @@ work lands without a matching edit here, same as last time.
 
 | Subject | Published | Approved MCQs | Approved structured | Papers with approved content |
 |---|---|---:|---:|---:|
-| Physics 5054 | yes | 594 | 667 | 81 |
-| Chemistry 5070 | yes | 318 | 572 | 74 |
-| Biology 5090 | yes | 312 | 527 | 73 |
+| Physics 5054 | yes | 525 | 669 | 116 |
+| Chemistry 5070 | yes | 386 | 572 | 108 |
+| Biology 5090 | yes | 265 | 527 | 73 |
 | Mathematics 4024 | no | 0 | 0 | 0 |
+
+Measured 2026-09-22. **MCQs are counted deduplicated** (`canonical_question_id
+is null`) — the number a student can actually meet, since the topical browser
+folds cross-paper repeats. Counting every approved row instead gives 684 /
+434 / 312, which is what an earlier version of this table reported and why
+physics appears to have gone down. Structured is top-level questions, not
+leaf parts.
 
 All three published subjects have a current 2026–2028 syllabus loaded, which
 is what topic tagging and the topical browser are tagged against.
@@ -630,6 +637,102 @@ question.
 
 ---
 
+## The physics MCQ queue cleared, and 29 published questions corrected (2026-09-22)
+
+**The physics MCQ review queue is empty.** All 90 were read individually --
+73 flagged by the verifier plus the 17 figure-only ones tagged from crops --
+and decided against the published learning objectives. **90 decided, 48 tags
+changed, all 90 approved.** Physics approved MCQs 435 -> 525.
+
+**Two rules did most of the work, and both came from reading the actual LOs
+rather than reasoning from the topic titles:**
+
+  * 1.5.1's resultant objective is limited to forces *"along the same straight
+    line"*, so every non-collinear vector question belongs to 1.1, not Forces.
+    That moved the scale-diagram resultant, the pendulum force triangle and
+    the parallelogram question.
+  * The topic is whatever **discriminates between the four options**, not what
+    the stem's scenery is about. A transformer question whose answer is
+    24/26.4 is Efficiency, not The transformer; a sound trace read off a
+    time-base is Uses of an oscilloscope, but the same trace asked about the
+    *generator coil's rotation* is The a.c. generator.
+
+Duplicates were made consistent as a side effect: the refrigerator question
+appears three times and was tagged two different ways; "a motor rated 10 W for
+5 minutes" appears three times; the infrared-in-a-vacuum question twice.
+
+**The 17 crop-tagged questions validated the `--from-crops` path**: read
+visually, 16 of 17 were already right. Only the 2018 O/N P11 Q37 nuclear
+reaction moved -- it is D-T fusion, but its options turn on nucleus-vs-atom and
+proton-vs-neutron, so it is 5.1.2 and not the 5.2.3 it had.
+
+**29 already-published questions were carrying an unresolved verifier
+disagreement.** They had a second-opinion row attached and, in most cases, a
+primary confidence knocked to 0.74 -- below the review floor -- yet stayed
+approved: residue from the verifier run that predated `leave_approved`. Each
+was read from its crop. **17 tags changed, 12 confirmed.** The model had been
+right in 13 of the 17; in two (the parachutist terminal-velocity pair) *both*
+the file and the model were wrong, and 1.5.2 owns it because "explain how an
+object reaches terminal velocity" is its objective.
+
+**Why those 29 mattered rather than being cosmetic:** neither
+`v_topics.question_count` nor `v_mcq_questions.topic_codes` filters on
+`is_primary`, so an attached second opinion *lists and counts* the question
+under a topic nobody chose. All 29 are cleared; physics now has no non-primary
+MCQ rows at all.
+
+**A live hazard this exposed, not yet fixed.** `verify.py` records a second
+opinion as a non-primary row at exactly 0.6. The web review route clears only
+`is_primary` rows when a reviewer overrides a topic, and touches
+`question_topics` not at all when a reviewer simply approves -- so approving a
+flagged question leaves the *rejected* suggestion attached, and the two views
+above then publish it. Seven such rows exist today, all on questions still
+awaiting review, so nothing is wrong on the site right now; the exposure is the
+234 questions still queued. **Do not "delete all non-primary rows on approve"**
+-- 167 structured rows at 0.80-0.90 are genuine editorial secondary topics from
+the original tagger. The fix is to make the verifier's second opinion
+distinguishable by intent (a `verifier` value on the `tag_source` enum) instead
+of by a magic 0.6, then have the approve path drop those and only those.
+
+**Physics structured: 2 decided, 29 blocked on a different defect.** The two
+`low_tag_confidence` ones were settled by the marks rule (a 15-mark loudspeaker
+question is Sound, not Forces on a current-carrying conductor -- the motor
+effect carries 3 marks of 15; a radon-222 question is The atom, because
+alpha-particle scattering carries 4 of 9). The other 29 are flagged
+`unmatched_mark_scheme` and are not a tagging problem at all -- see below.
+
+**Topic coverage: 60 of 63 revisable physics topics have an approved MCQ.**
+The three empty ones (2.1.1, 2.3.4, 6.1.1) all have questions waiting in the
+1,516 not-yet-approved pool -- 2.1.1 alone has 18 -- so they fill on
+`bulk-approve`. 2.1.1 emptied because every particle-arrangement question
+genuinely belongs to 2.1.2, whose objective is the one about the forces,
+distances and motion of particles; 2.1.1 is macroscopic properties.
+
+---
+
+## Mark-scheme extraction is broken on the 2025+ format (2026-09-22)
+
+Found while clearing the physics queue. **262 structured leaf questions across
+all three subjects have no mark-scheme text**, so a student practising them
+gets no answer. The source PDFs are all on disk; the parser is what fails, in
+two distinct ways.
+
+  * **The 2025 Cambridge layout.** One question part now spans several mark
+    rows, and the marks column holds codes (`B1`, `C1`, `A1`, `M1`) rather than
+    integers, with the Question column blank on continuation rows.
+    `parse_structured_mark_scheme` assumes one row per label and a numeric
+    marks column, so it reads an answer line such as `20 (m)` as a new label:
+    5054 w25 ms 22 yields **4 entries for a 14-page mark scheme**, two of them
+    garbage. Worst affected years: chemistry 2022 (41), physics 2025 (19),
+    biology 2013 (29).
+  * **EITHER/OR alternative questions.** The question paper labels them
+    `9(either)(a)` and `9(or)(a)`; the mark scheme emits a bare `9`, so all
+    four parts go unmatched (physics 2016 M/J P21, 2017 O/N P21).
+
+This is an ingest defect, not a tagging one, and it is corpus-wide rather than
+physics-specific. Fixing it means teaching the parser mark codes and
+continuation rows, then re-ingesting the affected papers.
+
 ---
 
 ## Next steps, in priority order
@@ -637,33 +740,41 @@ question.
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
 3. **Finish the topic tags.** The structured banks are done (841 below-floor
-   tags -> 21), the 22 figure-only MCQs are tagged from their crops and the 12
-   failed verification calls are finished. Remaining: (a) Physics's 73 flagged
-   MCQs; (c) the 22 figure-only MCQs that
-   have no text to tag from (`tag_from_crop` or by hand); (d) the 12 MCQ
-   verification calls that failed; (e) `bulk-approve` what is left, after a
-   person has read a sample.
-4. **Add a payment method to the Voyage account, then run `embed` for
+   tags -> 21), the figure-only MCQs are tagged from their crops, the 12 failed
+   verification calls are finished, and the **physics MCQ queue is empty**.
+   Remaining: `bulk-approve` what is left, after a person has read a sample —
+   that alone moves physics from 525 approved MCQs to ~2,000 and fills its
+   three empty topics.
+4. **Stop the review route publishing rejected second opinions.** Approving a
+   flagged question leaves the verifier's 0.6 non-primary row attached, and
+   both `v_topics.question_count` and `v_mcq_questions.topic_codes` then list
+   the question under it. Add a `verifier` value to the `tag_source` enum, have
+   `verify.py`/`verify_structured.py` write second opinions with it, backfill
+   the 7 existing rows, and drop those (and only those — 167 genuine editorial
+   secondaries must survive) on approve. Cheap, and it protects the 234
+   questions still in the queue.
+5. **Fix mark-scheme parsing for the 2025+ layout and EITHER/OR questions,
+   then re-ingest.** 262 structured leaf questions across all three subjects
+   currently have no mark scheme, so students get no answer on them.
+6. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks
    similar-question nudges.
-5. **Finish `mcq-options` for the remaining 14 physics-5054 papers**, once
+7. **Finish `mcq-options` for the remaining 14 physics-5054 papers**, once
    a reliable vision provider is wired up.
-6. **Provision at least one reviewer account** (`update profiles set
-   is_reviewer = true where email = '...'`). Costs nothing and unblocks the
-   review queue, which currently has no one who can sign into it.
-7. **Patch the `/api/solve` quota-refund gap.** Small, self-contained, and
+8. ~~**Provision at least one reviewer account.**~~ Done.
+9. **Patch the `/api/solve` quota-refund gap.** Small, self-contained, and
    the failure mode (silently charging a student for a solve that never
    happened) is the kind of thing that erodes trust quietly.
-8. **Run tagging verification at scale for chemistry-5070, biology-5090,
-   and physics's own structured bank**, once #3 lands. The tool works
-   (proven on real data); it just needs a provider it can run unattended
-   against.
-9. **Upload the source PDFs and finish the split viewer.** Unlocks the
-   `SplitViewer`'s real panes instead of placeholders.
-10. **Payments**, once there's a live audience to charge.
-11. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
+10. **Run tagging verification at scale for chemistry-5070, biology-5090,
+    and physics's own structured bank**, once #3 lands. The tool works
+    (proven on real data); it just needs a provider it can run unattended
+    against.
+11. **Upload the source PDFs and finish the split viewer.** Unlocks the
+    `SplitViewer`'s real panes instead of placeholders.
+12. **Payments**, once there's a live audience to charge.
+13. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
     signed in.
-12. **Speed**: reserve crop space from `bbox` (the dashboard payload is done).
-13. **Ingest examiner reports** (the site no longer promises them, but the UI
+14. **Speed**: reserve crop space from `bbox` (the dashboard payload is done).
+15. **Ingest examiner reports** (the site no longer promises them, but the UI
     is ready): needs the source documents acquired first.
