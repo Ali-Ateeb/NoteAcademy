@@ -101,3 +101,66 @@ class TestLocalCropPath:
         (work / "5054_s19_11" / "crops" / "7.png").write_bytes(b"other")
 
         assert _local_crop_path(work, paper_question()) == preferred
+
+
+# --------------------------------------------------------------------------
+# bulk-approve-structured reports the tag quality it is publishing
+# --------------------------------------------------------------------------
+
+
+class _ApproveCursor:
+    def __init__(self, conn):
+        self.conn, self.rows = conn, []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        flat = " ".join(sql.split()).lower()
+        self.conn.statements.append(flat)
+        if "count(*) filter" in flat:
+            self.rows = [self.conn.counts]
+        elif flat.startswith("select q.id, q.paper_id"):
+            self.rows = [{"id": "q1", "paper_id": "p1", "display_label": "1"}]
+        elif flat.startswith("select id from questions"):
+            self.rows = [{"id": "q1"}, {"id": "q1a"}]
+        else:
+            self.rows = []
+
+    def fetchall(self):
+        return self.rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+
+class _ApproveConn:
+    def __init__(self, below=0, untagged=0):
+        self.statements: list[str] = []
+        self.counts = {"below": below, "untagged": untagged}
+
+    def cursor(self):
+        return _ApproveCursor(self)
+
+
+def test_bulk_approve_structured_counts_the_unverified_tags_it_publishes():
+    from noteacademy_pipeline.verify import bulk_approve_structured
+
+    conn = _ApproveConn(below=3, untagged=1)
+    report = bulk_approve_structured(conn, "chemistry-5070", dry_run=True)
+    assert (report.below_floor, report.untagged) == (3, 1)
+    assert report.candidates == 1
+
+
+def test_bulk_approve_structured_still_does_not_gate_on_the_tag():
+    # The counts are advisory: a low-confidence tag does not hold the content back.
+    from noteacademy_pipeline.verify import bulk_approve_structured
+
+    conn = _ApproveConn(below=1)
+    report = bulk_approve_structured(conn, "chemistry-5070", dry_run=False)
+    assert report.approved == 1
+    assert any(s.startswith("update questions set extraction_status = 'approved'")
+               for s in conn.statements)

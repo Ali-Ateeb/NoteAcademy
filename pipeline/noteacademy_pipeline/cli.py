@@ -1176,7 +1176,21 @@ def bulk_approve_structured_cmd(
     table.add_row("candidate questions", str(report.candidates))
     table.add_row("rows moved (incl. parts)", str(report.questions_moved))
     table.add_row("approved", str(report.approved))
+    table.add_row(f"  tagged below the floor ({settings.tag_confidence_floor})",
+                  str(report.below_floor))
+    table.add_row("  not tagged at all", str(report.untagged))
     console.print(table)
+
+    if report.below_floor or report.untagged:
+        # This command vets the content, never the tag (see bulk_approve_structured).
+        # Saying so out loud: approving publishes the tag too, and a question filed
+        # under a topic the classifier was unsure of is served to students revising
+        # that topic. 451 chemistry questions reached the site this way.
+        console.print(
+            f"[yellow]{report.below_floor + report.untagged} of these carry a topic tag "
+            "that has not been verified. They will be listed under that topic for "
+            "students. Run `tag-verify-structured` on them.[/yellow]"
+        )
     if dry_run:
         console.print(
             "[yellow]dry run: nothing was written. Re-run with --no-dry-run to approve.[/yellow]"

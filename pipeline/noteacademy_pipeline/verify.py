@@ -854,6 +854,12 @@ class BulkApproveStructuredReport:
     candidates: int = 0
     approved: int = 0
     questions_moved: int = 0
+    # Approving publishes the question's topic tag along with its content, and
+    # this command deliberately does not gate on that tag (see the docstring).
+    # These two say how much of what it published is tagged on a guess, so the
+    # trade-off is visible in the output instead of only in the database.
+    below_floor: int = 0
+    untagged: int = 0
 
 
 def bulk_approve_structured(
@@ -861,6 +867,7 @@ def bulk_approve_structured(
     subject_slug: str,
     *,
     dry_run: bool = False,
+    confidence_floor: float | None = None,
 ) -> BulkApproveStructuredReport:
     """Approve every structured question whose whole subtree is flag-free,
     without a human opening each one individually.
@@ -928,6 +935,27 @@ def bulk_approve_structured(
             all_ids.extend(r["id"] for r in cur.fetchall())
 
     report.questions_moved = len(all_ids)
+
+    # Count, but do not gate on, the tag quality being published alongside.
+    from .config import settings
+
+    floor = settings.tag_confidence_floor if confidence_floor is None else confidence_floor
+    top_ids = [row["id"] for row in candidates]
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select
+              count(*) filter (where qt.confidence is not null and qt.confidence < %s) as below,
+              count(*) filter (where qt.confidence is null) as untagged
+              from questions q
+              left join question_topics qt on qt.question_id = q.id and qt.is_primary
+             where q.id = any(%s)
+            """,
+            (floor, top_ids),
+        )
+        counts = cur.fetchone()
+        report.below_floor = counts["below"]
+        report.untagged = counts["untagged"]
 
     if not dry_run and all_ids:
         with conn.cursor() as cur:
