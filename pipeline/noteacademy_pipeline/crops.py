@@ -10,11 +10,7 @@ re-uploads it to the exact key the database already names.
 
 from __future__ import annotations
 
-import json
 import logging
-import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,32 +21,6 @@ from .render import crop
 from .storage import SupabaseStorage
 
 log = logging.getLogger(__name__)
-
-
-def _list_folder(storage: SupabaseStorage, prefix: str, attempts: int = 5) -> set[str]:
-    """Names present under one storage prefix. One call per paper's crop
-    folder rather than one per file — a paper of even 79 assets is one round
-    trip, not 79."""
-    last_exc: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            body = json.dumps({"prefix": prefix, "limit": 1000}).encode()
-            req = urllib.request.Request(
-                f"{storage.url}/storage/v1/object/list/{storage.bucket}",
-                method="POST",
-                data=body,
-                headers={
-                    "apikey": storage.service_role_key,
-                    "Authorization": f"Bearer {storage.service_role_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return {item["name"] for item in json.loads(resp.read())}
-        except (urllib.error.URLError, TimeoutError) as exc:
-            last_exc = exc
-            time.sleep(1.5 * (attempt + 1))
-    raise RuntimeError(f"listing {prefix} failed after {attempts} attempts") from last_exc
 
 
 @dataclass
@@ -110,7 +80,7 @@ def find_missing_crops(
     missing: list[MissingCrop] = []
     checked = 0
     for folder, items in by_folder.items():
-        present = _list_folder(storage, folder + "/")
+        present = storage.list_folder(folder + "/")
         checked += 1
         for row in items:
             filename = row["storage_key"].rsplit("/", 1)[1]

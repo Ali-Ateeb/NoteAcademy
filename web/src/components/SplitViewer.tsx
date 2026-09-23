@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { PaperDocType } from "@/lib/data/types";
 import { DOC_LABELS } from "@/lib/data/types";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
 interface Props {
   paperSlug: string;
@@ -13,10 +14,11 @@ interface Props {
 /**
  * Question paper on the left, mark scheme or examiner report on the right.
  *
- * The pane is a placeholder until object storage is wired up — real documents
- * arrive as short-lived signed URLs rendered with PDF.js, never as public bucket
- * links. What is real here is the interaction model, which is the part students
- * feel: synchronised scrolling, a draggable split, and keyboard shortcuts.
+ * Each pane resolves its own short-lived signed URL from `/api/paper-doc`
+ * and renders it with PDF.js — never a public bucket link, and never baked
+ * into the page (see that route's own note on why). The interaction model
+ * around the documents is what students actually feel day to day:
+ * synchronised scrolling, a draggable split, and keyboard shortcuts.
  */
 export function SplitViewer({ paperSlug, available }: Props) {
   const secondaries = available.filter((d) => d !== "qp");
@@ -156,6 +158,12 @@ export function SplitViewer({ paperSlug, available }: Props) {
   );
 }
 
+type PaneState =
+  | { kind: "loading" }
+  | { kind: "missing" }
+  | { kind: "error" }
+  | { kind: "ready"; url: string };
+
 function DocumentPane({
   label,
   paperSlug,
@@ -165,6 +173,35 @@ function DocumentPane({
   paperSlug: string;
   docType: PaperDocType;
 }) {
+  const [state, setState] = useState<PaneState>({ kind: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ kind: "loading" });
+
+    fetch(`/api/paper-doc/${encodeURIComponent(paperSlug)}/${docType}`)
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 404) {
+          setState({ kind: "missing" });
+          return;
+        }
+        if (!res.ok) {
+          setState({ kind: "error" });
+          return;
+        }
+        const data = (await res.json()) as { url: string };
+        setState({ kind: "ready", url: data.url });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ kind: "error" });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [paperSlug, docType]);
+
   return (
     <div>
       <div className="mb-3 flex items-baseline justify-between">
@@ -173,17 +210,87 @@ function DocumentPane({
         </h3>
         <span className="font-mono text-[10px] uppercase text-ink-3">{docType}</span>
       </div>
-      <div className="flex min-h-[300px] items-center justify-center rounded-xl border-2 border-dashed border-note-line bg-note p-8 text-center">
-        <div>
-          <p className="text-sm text-ink">
-            {label} for <span className="font-mono text-xs">{paperSlug}</span>
-          </p>
-          <p className="mt-2 max-w-xs text-xs leading-relaxed text-ink-3">
-            Documents render here via PDF.js once object storage is connected.
-            They are served as short-lived signed URLs, never as public links.
+
+      {state.kind === "ready" ? (
+        <PdfPages url={state.url} />
+      ) : (
+        <div className="flex min-h-[300px] items-center justify-center rounded-xl border-2 border-dashed border-note-line bg-note p-8 text-center">
+          <p className="text-sm text-ink-2">
+            {state.kind === "loading" && `Loading ${label.toLowerCase()}…`}
+            {state.kind === "missing" &&
+              `${label} isn't available for this paper yet.`}
+            {state.kind === "error" && `Couldn't load ${label.toLowerCase()}.`}
           </p>
         </div>
-      </div>
+      )}
     </div>
   );
+}
+
+/** Renders every page of a signed-URL PDF as a stacked column of canvases —
+ *  continuous scroll, not pagination, so the split viewer's existing
+ *  scroll-sync (a plain scrollTop ratio) needs no extra state for "which
+ *  page". PDF.js itself is loaded lazily inside the effect: it touches
+ *  `document`/canvas at import time, which does not exist during this
+ *  client component's server-side render pass. */
+function PdfPages({ url }: { url: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: { destroy(): Promise<void> } | null = null;
+
+    async function render() {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url,
+      ).toString();
+
+      const task = pdfjsLib.getDocument({ url });
+      loadingTask = task;
+      const loaded: PDFDocumentProxy = await task.promise;
+      if (cancelled) return;
+
+      const container = containerRef.current;
+      if (!container) return;
+      container.replaceChildren();
+
+      const targetWidth = container.clientWidth || 600;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      for (let n = 1; n <= loaded.numPages; n++) {
+        if (cancelled) return;
+        const page = await loaded.getPage(n);
+        const scale = targetWidth / page.getViewport({ scale: 1 }).width;
+        const viewport = page.getViewport({ scale: scale * dpr });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.className = "mb-3 block w-full rounded-lg border border-line";
+        container.appendChild(canvas);
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) continue;
+        await page.render({ canvasContext: ctx, canvas, viewport }).promise;
+      }
+    }
+
+    render().catch((err) => {
+      if (!cancelled) {
+        console.error(err);
+        setError("This document could not be rendered.");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      loadingTask?.destroy();
+    };
+  }, [url]);
+
+  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  return <div ref={containerRef} />;
 }

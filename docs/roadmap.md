@@ -1017,6 +1017,59 @@ questions. 344 tests still passing, lint clean (no code touched).
 
 ---
 
+## The source PDFs uploaded, and the split viewer's panes are real (2026-09-23)
+
+**The gap was narrower than it looked.** `paper_documents` has recorded
+every question paper and mark scheme's `storage_key`, checksum and page
+count since the very first backfill (`record_document` in `load.py`) — only
+the file itself was ever missing from the bucket. There was no scraping or
+re-acquisition to do: the source PDFs already live locally under `papers/`
+for all three subjects, the exact files ingestion has been reading crops
+from all session.
+
+  * **`noteacademy upload-papers`** (new CLI command, `paper_documents.py`):
+    audits every recorded document against the bucket, folder by folder —
+    the same shape as `fix-crops`' crop recovery — and uploads whatever is
+    missing straight from `papers/{syllabus_code}/{caie filename}.pdf`.
+    Idempotent, safe to re-run after every future ingest. First run: 606
+    documents missing (242 physics, 216 chemistry, 148 biology), all 606
+    uploaded, 0 failures, 0 missing source PDFs.
+  * **`SupabaseStorage.list_folder`**: promoted out of `crops.py`'s private
+    `_list_folder` into a proper method on `SupabaseStorage`, so the new
+    document-upload path and crop recovery share one implementation instead
+    of two copies of the same retry loop.
+  * **`/api/paper-doc/[paper]/[docType]`**: a new, deliberately dynamic
+    route (never statically baked — see its own docstring) that resolves a
+    paper's `storage_key` through the anonymous client (`paper_documents`
+    and `papers` are both public rows; a paper page only exists for a
+    published subject to begin with, so no extra gate is needed the way
+    `assetIsPublic` needs one for individual questions) and hands back a
+    one-hour signed URL. The bytes themselves are never proxied through this
+    server — PDF.js fetches its own page ranges straight from Supabase's
+    storage CDN once it has the URL.
+  * **`SplitViewer`'s panes render real PDFs.** Each pane resolves its own
+    signed URL client-side and renders every page as a stacked column of
+    canvases via `pdfjs-dist` (continuous scroll, not pagination, so the
+    existing scroll-sync — a plain scrollTop ratio — needed no new state).
+    Loading, missing-document and error states replace the placeholder text
+    depending on what the fetch returns. Verified in the browser against the
+    live database: question paper and mark scheme both render, page by
+    page, with working synchronised scroll.
+  * Confirmed with a full production build (`next build`) and the pipeline's
+    344 tests, both clean. One build run hit an unrelated Postgres statement
+    timeout generating a chemistry topic page; a second run built clean,
+    confirming it was transient load, not a regression.
+
+**Not done**: examiner reports and grade thresholds — no `er`/`gt` files
+exist locally for any of the three subjects yet, so those secondary panes
+still show "not available" until that content is acquired (roadmap item on
+examiner reports already tracks this separately). Chemistry and biology
+still show "Ingestion in progress" on `/subjects` (`is_published = false`),
+unrelated to this work — the viewer is ready for them the moment that flag
+flips.
+
+---
+
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
@@ -1052,8 +1105,11 @@ questions. 344 tests still passing, lint clean (no code touched).
     approved-but-model-disagreed questions across biology/chemistry remain
     unresolved (reported only, no persisted list) — future work if worth
     doing.
-12. **Upload the source PDFs and finish the split viewer.** Unlocks the
-    `SplitViewer`'s real panes instead of placeholders.
+12. ~~**Upload the source PDFs and finish the split viewer.**~~ Done (see
+    2026-09-23 write-up): 606 documents uploaded, `SplitViewer`'s panes
+    render real PDFs via signed URLs and `pdfjs-dist`. Examiner reports and
+    grade thresholds remain unavailable — no local source files for either
+    yet.
 13. **Payments**, once there's a live audience to charge.
 14. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
     signed in.

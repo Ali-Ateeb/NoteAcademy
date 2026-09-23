@@ -1440,6 +1440,69 @@ def fix_crops(
             console.print(f"[red]{label}:[/red] {keys[:10]}" + (" ..." if len(keys) > 10 else ""))
 
 
+@app.command(name="upload-papers")
+def upload_papers(
+    papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),
+    dry_run: bool = typer.Option(False, help="Audit only, upload nothing."),
+) -> None:
+    """Upload a paper's own PDFs (question paper, mark scheme, ...) to the
+    bucket, for every `paper_documents` row that names a file the bucket does
+    not actually have yet.
+
+    Ingestion has recorded `paper_documents.storage_key` since the very
+    first backfill — the metadata (page count, byte size, checksum) has
+    always been right. Only the file itself was ever missing, which is why
+    the split viewer's panes have stayed a placeholder. Safe to re-run at
+    any time: a paper the bucket already has costs one list call and
+    nothing else.
+    """
+    from .load import connect
+    from .paper_documents import find_missing_documents, upload_missing_documents
+    from .storage import SupabaseStorage
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    storage = SupabaseStorage.from_settings(settings)
+    if storage is None:
+        console.print("[red]Supabase Storage is not configured.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        with console.status("auditing documents against storage..."):
+            missing, checked_folders = find_missing_documents(conn, storage)
+
+    console.print(f"checked {checked_folders} paper folder(s)")
+    if not missing:
+        console.print("[green]Nothing missing.[/green]")
+        return
+
+    by_subject: dict[str, int] = {}
+    for item in missing:
+        by_subject[item.subject_slug] = by_subject.get(item.subject_slug, 0) + 1
+    console.print(f"[yellow]{len(missing)} document(s) missing from storage:[/yellow] {by_subject}")
+
+    with console.status(f"uploading{' (dry run)' if dry_run else ''}..."):
+        report = upload_missing_documents(
+            missing, papers_dir=papers, storage=storage, dry_run=dry_run
+        )
+
+    table = Table("", "", title="Document upload" + (" (dry run)" if dry_run else ""))
+    table.add_row("found missing", str(report.found_missing))
+    table.add_row("uploaded", str(report.uploaded))
+    table.add_row("no source PDF", str(len(report.no_source_pdf)))
+    table.add_row("upload failed", str(len(report.upload_failed)))
+    console.print(table)
+
+    for label, keys in [
+        ("no source PDF", report.no_source_pdf),
+        ("upload failed", report.upload_failed),
+    ]:
+        if keys:
+            console.print(f"[red]{label}:[/red] {keys[:10]}" + (" ..." if len(keys) > 10 else ""))
+
+
 @app.command(name="fix-spurious-crops")
 def fix_spurious_crops(
     min_height_pt: float = typer.Option(

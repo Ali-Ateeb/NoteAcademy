@@ -34,6 +34,7 @@ import type {
   McqOption,
   McqQuestion,
   Paper,
+  PaperDocType,
   PaperDocument,
   QuestionType,
   ReviewFlag,
@@ -855,6 +856,30 @@ export async function assetIsPublic(storageKey: string): Promise<boolean> {
     return false;
   }
   return (data?.length ?? 0) > 0;
+}
+
+/** The storage key for one of a paper's own documents (question paper, mark
+ *  scheme, ...), or null if that document has not been ingested for this
+ *  paper. `paper_documents` and `papers` are both public rows — a paper page
+ *  only exists for a published subject in the first place — so this needs no
+ *  extra gate the way `assetIsPublic` needs one for individual questions. */
+export async function getPaperDocumentStorageKey(
+  paperSlug: string,
+  docType: PaperDocType,
+): Promise<string | null> {
+  const client = db();
+  if (!client) return null;
+
+  const [row] = await rows<{ storage_key: string }>(
+    "a paper document",
+    client
+      .from("paper_documents")
+      .select("storage_key,papers!inner(slug)")
+      .eq("doc_type", docType)
+      .eq("papers.slug", paperSlug)
+      .limit(1),
+  );
+  return row?.storage_key ?? null;
 }
 
 export const SEED_NOTICE = seed.SEED_NOTICE;

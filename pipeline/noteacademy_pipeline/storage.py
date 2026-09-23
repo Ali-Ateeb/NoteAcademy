@@ -16,8 +16,10 @@ for R2 or S3 later — that is what keeping the key and the URL separate buys.
 
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -95,6 +97,32 @@ class SupabaseStorage:
             data=json.dumps({"prefixes": keys}).encode(),
             headers={"Content-Type": "application/json"},
         )
+
+    def list_folder(self, prefix: str, attempts: int = 5) -> set[str]:
+        """Names present under one storage prefix, retried: listing is the
+        one call an audit makes before it knows anything is missing, so a
+        transient failure here would otherwise report every crop or document
+        under that prefix as gone."""
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                body = json.dumps({"prefix": prefix, "limit": 1000}).encode()
+                req = urllib.request.Request(
+                    f"{self.url}/storage/v1/object/list/{self.bucket}",
+                    method="POST",
+                    data=body,
+                    headers={
+                        "apikey": self.service_role_key,
+                        "Authorization": f"Bearer {self.service_role_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    return {item["name"] for item in json.loads(resp.read())}
+            except (urllib.error.URLError, TimeoutError) as exc:
+                last_exc = exc
+                time.sleep(1.5 * (attempt + 1))
+        raise StorageError(f"listing {prefix} failed after {attempts} attempts") from last_exc
 
 
 def upload_crops(storage: SupabaseStorage, pairs: list[tuple[str, Path]]) -> int:
