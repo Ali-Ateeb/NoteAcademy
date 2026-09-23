@@ -127,7 +127,10 @@ export default async function TopicPage({ params }: Params) {
                   Also set in {question.alsoIn.map(duplicateRefLabel).join(", ")}
                 </span>
               )}
-              {question.questionText && (
+              {/* Text only when there is no crop to show instead -- the crop
+                  is the question as printed, stem and all, so the extracted
+                  text above it was showing the same words twice. */}
+              {question.questionText && !question.cropUrl && (
                 <span className="text-sm leading-relaxed text-ink">
                   {question.questionText}
                 </span>
@@ -136,7 +139,14 @@ export default async function TopicPage({ params }: Params) {
                 /* A geometrically-segmented MCQ has no extracted text at all —
                    the crop is the question, diagrams and all. White regardless
                    of theme: it is a page, not part of the interface. */
-                <div className="mt-2 overflow-hidden rounded-xl border border-line bg-white">
+                <div
+                  className="mt-2 overflow-hidden rounded-xl border border-line bg-white"
+                  style={
+                    question.cropAspectRatio
+                      ? { aspectRatio: question.cropAspectRatio }
+                      : undefined
+                  }
+                >
                   {/* eslint-disable-next-line @next/next/no-img-element -- signed
                       URL on a bucket host, resolved per request. */}
                   <img

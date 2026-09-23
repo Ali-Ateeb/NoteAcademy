@@ -1138,6 +1138,52 @@ table for a live paper. 347 tests passing (3 new), lint clean.
 
 ---
 
+## A layout-shift fix, and a genuine duplicate spotted in the MCQ arena (2026-09-23)
+
+**The MCQ arena and topic pages were showing a question's text and its crop
+image, stacked** — the extracted `question_text` as a plain paragraph, then
+the full crop underneath repeating the same stem (and, for a geometrically-
+segmented question, the options too). The crop is deliberately "the question
+as printed" for exactly this reason (diagrams, four-way circuit-diagram
+options, reading order text extraction scrambles) — showing the extracted
+text above it was never additive, just the same words twice. Fixed in
+`McqArena.tsx` and the topic page: the text paragraph now renders only when
+there is no crop to show instead. Confirmed by hand that this doesn't
+regress questions where a crop shows *only* a supplementary diagram — that
+turned out not to be a real case here: every crop this pipeline produces for
+an MCQ is the whole question, stem included, so there's no "text stem plus
+separate diagram" split to lose.
+
+**Item 15, "reserve crop space from `bbox`", done.** Every crop image was
+rendering at `w-full` with no declared height, so the page grew underneath
+whatever followed it — the answer options, on every single load, every
+crop. `question_assets.bbox` has known each crop's real proportions since
+the very first extraction; `width_px`/`height_px` on the same table were the
+other candidate and turned out to be unpopulated on all 7,301 existing crop
+rows, so bbox was the only source actually available. Migration `0038` adds
+`crop_aspect_ratio` to `v_mcq_questions` and an `aspectRatio` field to each
+entry in `v_structured_questions`' `crops` array (a `create or replace view`
+can only append a column, never insert one, without dropping the view and
+losing its grants — learned by hitting exactly that error on the first
+attempt). `McqArena`, the topic page, and `StructuredArena` all now set
+`style={{ aspectRatio }}` on the crop's container, verified in the browser:
+the container's computed height is correct immediately, before the image
+byte one ever arrives.
+
+**A stale e2e test, found but not fixed.** Running `e2e/smoke.mjs` against a
+production build turned up a run of failures — but every one traced back to
+the test's own hardcoded expectations having drifted from live data, not a
+regression: `physics-5054-2019-may-june-p12` has 40 questions now, not the
+12 the test still expects, and `/topics/physics-5054/dynamics/practice`
+404s outright because `dynamics` is no longer a real topic slug in the
+current syllabus (real ones include `motion`, `pressure`, ...). Confirmed
+by hand that both pages work correctly against current data. Left as found
+— refreshing the smoke test's fixtures against the current syllabus and
+database is its own piece of work, not something to fold into this one
+silently.
+
+---
+
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
@@ -1179,7 +1225,9 @@ table for a live paper. 347 tests passing (3 new), lint clean.
 13. **Payments**, once there's a live audience to charge.
 14. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
     signed in.
-15. **Speed**: reserve crop space from `bbox` (the dashboard payload is done).
+15. ~~**Speed**: reserve crop space from `bbox`.~~ Done (see 2026-09-23
+    write-up): migration `0038`, `McqArena`/topic page/`StructuredArena` all
+    set `aspectRatio` on a crop's container before the image loads.
 16. ~~**Grade thresholds.**~~ Done (see 2026-09-23 write-up): fetched from
     Cambridge's own public site, new schema, split viewer's "Grade
     Thresholds" pane renders real tables. 2016-2021 unavailable — Cambridge

@@ -99,6 +99,11 @@ export interface McqQuestion {
    *  extracted, and the options are frequently diagrams. Null until the crop
    *  has been uploaded. */
   cropUrl: string | null;
+  /** Width/height of the crop, from its `bbox` — reserves the right height
+   *  for the crop's container before the browser ever fetches the image,
+   *  instead of the page growing underneath whatever follows it once the
+   *  file arrives. Null whenever `cropUrl` is. */
+  cropAspectRatio: number | null;
   /** Every other sitting that shares this question verbatim — CAIE reuses
    *  most MCQs between one session's variants (component 11 and 12, most
    *  often). Empty for a question nothing else repeats. Populated by the
@@ -125,6 +130,11 @@ export interface StructuredPart {
 export interface StructuredQuestionCrop {
   pageNumber: number;
   cropUrl: string | null;
+  /** Width/height of the crop itself, from its `bbox` — set before the
+   *  browser ever fetches the image, so its container can reserve the right
+   *  height instead of collapsing to nothing and jumping once the file
+   *  arrives. Null only if `bbox` was somehow missing or degenerate. */
+  aspectRatio: number | null;
 }
 
 export interface StructuredQuestion {

@@ -143,6 +143,7 @@ interface PaperRow {
 interface StructuredCropRow {
   pageNumber: number;
   storageKey: string;
+  aspectRatio: number | null;
 }
 
 interface StructuredPartRow {
@@ -173,6 +174,7 @@ interface McqRow {
   examiner_comment: string | null;
   topic_codes: string[];
   crop_storage_key: string | null;
+  crop_aspect_ratio: number | null;
   also_in: DuplicateRef[];
 }
 
@@ -222,6 +224,7 @@ const toMcq = (row: McqRow): McqQuestion => ({
   examinerNote: row.examiner_comment,
   topicCodes: row.topic_codes,
   cropUrl: assetUrl(row.crop_storage_key),
+  cropAspectRatio: row.crop_aspect_ratio,
   alsoIn: row.also_in ?? [],
 });
 
@@ -239,7 +242,11 @@ const toStructured = (row: StructuredRow): StructuredQuestion => ({
   markScheme: row.mark_scheme,
   maxMarks: row.max_marks,
   crops: row.crops
-    .map((crop) => ({ pageNumber: crop.pageNumber, cropUrl: assetUrl(crop.storageKey) }))
+    .map((crop) => ({
+      pageNumber: crop.pageNumber,
+      cropUrl: assetUrl(crop.storageKey),
+      aspectRatio: crop.aspectRatio,
+    }))
     .sort((a, b) => a.pageNumber - b.pageNumber),
   parts: row.parts.map(toStructuredPart),
 });
@@ -260,7 +267,7 @@ const PAPER_COLUMNS =
 // One string literal, not a concatenation: supabase-js infers the row type from
 // the literal text of the column list, and `"a," + "b"` widens to `string`.
 const MCQ_COLUMNS =
-  "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key,also_in";
+  "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key,crop_aspect_ratio,also_in";
 const STRUCTURED_COLUMNS =
   "id,paper_slug,display_label,question_text,mark_scheme,max_marks,crops,parts";
 

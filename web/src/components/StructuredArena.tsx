@@ -262,6 +262,11 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
                 <div
                   key={crop.pageNumber}
                   className="overflow-hidden rounded-xl border border-line bg-white"
+                  style={
+                    crop.cropUrl && crop.aspectRatio
+                      ? { aspectRatio: crop.aspectRatio }
+                      : undefined
+                  }
                 >
                   {crop.cropUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element -- a stable

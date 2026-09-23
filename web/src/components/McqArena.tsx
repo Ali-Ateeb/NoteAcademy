@@ -285,7 +285,10 @@ export function McqArena({
             </button>
           </div>
 
-          {current.questionText && (
+          {/* Text only when there is no crop to show instead -- the crop is
+              the question as printed, stem and all, so the extracted text
+              above it was showing the same words twice. */}
+          {current.questionText && !current.cropUrl && (
             <p className="text-[15px] leading-relaxed text-ink">{current.questionText}</p>
           )}
 
@@ -295,7 +298,13 @@ export function McqArena({
                order and loses every diagram, and a 2015 circuit question uses
                four circuit diagrams as its options. White regardless of theme:
                it is a page, not part of the interface. */
-            <div className="overflow-hidden rounded-xl border border-line bg-white">
+            <div
+              className="overflow-hidden rounded-xl border border-line bg-white"
+              // Reserves the crop's own height before the file arrives, from
+              // its bbox — otherwise the page grows underneath the options
+              // below it on every load.
+              style={current.cropAspectRatio ? { aspectRatio: current.cropAspectRatio } : undefined}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element -- signed
                   URL on a bucket host, resolved per request. */}
               <img
