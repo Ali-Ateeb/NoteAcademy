@@ -57,8 +57,31 @@ def load_dotenv() -> None:
             os.environ[key] = value
 
 
+def _hash(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _lf(path: Path) -> bytes:
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    """The checksum recorded for a newly applied file: its LF form, so the
+    same migration hashes the same on every checkout."""
+    return _hash(_lf(path))
+
+
+def accepted_digests(path: Path) -> set[str]:
+    """Every checksum that still means "this file, unedited".
+
+    The ledger holds a mix: some migrations were first applied from a CRLF
+    working copy (core.autocrlf on Windows), some from LF, and git hands back
+    whichever form the checkout happens to produce. A line-ending change is
+    not an edit, so either form matches; a change to the content still does
+    not, and is still refused.
+    """
+    lf = _lf(path)
+    return {_hash(lf), _hash(lf.replace(b"\n", b"\r\n"))}
 
 
 def main() -> int:
@@ -94,7 +117,7 @@ def main() -> int:
             name, checksum = path.name, digest(path)
 
             if name in applied:
-                if applied[name] == checksum:
+                if applied[name] in accepted_digests(path):
                     print(f"  ok      {name}")
                 else:
                     # The file on disk is no longer what the database ran. Fix by

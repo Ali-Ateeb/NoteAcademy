@@ -1,0 +1,3 @@
+# db/apply.py checksums migration files byte for byte, so a CRLF checkout
+# (core.autocrlf on Windows) makes every applied migration look edited.
+db/migrations/*.sql text eol=lf
