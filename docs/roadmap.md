@@ -20,15 +20,17 @@ work lands without a matching edit here, same as last time.
 | Subject | Published | Approved MCQs | Approved structured | Papers with approved content |
 |---|---|---:|---:|---:|
 | Physics 5054 | yes | 1,802 | 669 | 121 |
-| Chemistry 5070 | yes | 1,462 | 572 | 108 |
-| Biology 5090 | yes | 265 | 527 | 73 |
+| Chemistry 5070 | yes | 1,474 | 583 | 108 |
+| Biology 5090 | yes | 265 | 534 | 74 |
 | Mathematics 4024 | no | 0 | 0 | 0 |
 
-Measured 2026-09-23, after the bulk-approve and re-run dedupe below. **MCQs are counted
-deduplicated** (`canonical_question_id is null`) — the number a student can
-actually meet, since the topical browser folds cross-paper repeats.
-Structured is top-level questions, not leaf parts. Every revisable topic in
-physics (63) and chemistry (49) now has at least one approved MCQ.
+Measured 2026-09-23, after the bulk-approve, dedupe re-run and review-queue
+pass below. **MCQs are counted deduplicated** (`canonical_question_id is
+null`) — the number a student can actually meet, since the topical browser
+folds cross-paper repeats. Structured is top-level questions, not leaf parts.
+Every revisable topic in physics (63) and chemistry (49) has at least one
+approved MCQ; biology is 47 of 52, the gap entirely on the one paper left
+outside the current 2016-2026 scope.
 
 All three published subjects have a current 2026–2028 syllabus loaded, which
 is what topic tagging and the topical browser are tagged against.
@@ -882,39 +884,104 @@ questions.
 
 ---
 
+## The review queue read by hand, and a re-ingest regression fixed (2026-09-23)
+
+**Every flagged question in the 2016–2026 range was read and decided.** Not
+run through a heuristic — each one opened from its own crop or its real mark
+scheme PDF, checked against the syllabus's own learning objectives, and
+written up with the reasoning in the decision file before being applied.
+
+  * **14 chemistry MCQs**: 13 approved (several retagged — e.g. a
+    "which statement is correct" question about mixed states was 2.1, not
+    the reactivity-series topic it had; a dot-and-cross ethene question was
+    already right), 1 rejected. That one (2017 M/J P11 Q25, lead(II)
+    sulfate) turned out to have no answer at all — Cambridge's own mark
+    scheme says "Question discounted" — so there was nothing to approve.
+  * **11 chemistry and 7 biology structured questions**, `low_tag_confidence`
+    from the first tagging pass: each retagged by the marks-weighted rule
+    already established this session (the topic is where the marks sit, not
+    what the opening sentence is about), then approved.
+  * **All 57 structured parts in the 2016–2026 range that were flagged
+    `unmatched_mark_scheme`**: read from the real PDF (most were legible
+    once pulled from the right page; a few needed the page rendered as an
+    image, since the printed answer was a diagram — a drawn NAND-gate
+    symbol, an electromagnetic-spectrum diagram with regions marked, a
+    nuclide equation). Every answer was written into `mark_scheme_text` by
+    hand, backed by a `.before.csv` snapshot of every row touched before any
+    write.
+
+**This did not fix the parser.** The underlying limitation from the
+2026-09-22 write-up — a mark-scheme table style with no B/C/M/A codes, where
+a bare "Mark" column value is indistinguishable from a bare question number
+by text alone — is still there. What happened here was a one-time manual
+pass that supplied the missing answer text directly, for every question
+currently in the queue. A newly ingested paper using that same older layout
+will trip the same `unmatched_mark_scheme` flag again; nothing here prevents
+that.
+
+**A second `upsert_question` regression, found proving the first fix.**
+Re-ingesting a paper to attach a hand-read mark scheme re-derived
+`unmatched_mark_scheme` on the very same part, because the old guard checked
+only the *incoming* flags, not whether the row already had text. Fixed:
+the flag is now dropped on conflict whenever `questions.mark_scheme_text` is
+already non-empty, so a hand-attached answer (or one a future ingest run
+finally manages to parse) can never be silently re-flagged by a later
+re-ingest. Proved against the live database in a rolled-back transaction
+(a hand-attached physics answer survives a fresh re-ingest unflagged).
+
+**Scope narrowed by the user mid-session**: only 2016–2026 papers are in
+scope going forward. One item was mid-flight when that landed —
+`biology-5090-2013-may-june-p22` (29 structured parts, an older mark-scheme
+layout) — and was left exactly as found, deliberately unflagged-clear. It is
+the only paper still in the review queue. Chemistry structured papers
+2010–2015 and one biology 2012/2015 pair were already read and fixed earlier
+in this same pass, before the scope was narrowed; that work stands (correct,
+harmless, already committed to the database) and was not reverted.
+
+**Final state**: physics and chemistry review queues empty, 63/63 and 49/49
+revisable topics covered. Biology: 47/52 (the remaining 5 topics' only
+approved-eligible questions are on the 2013 paper). The one queued item is
+the 2013 paper, out of scope. 344 tests passing, lint clean.
+
+---
+
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
 3. ~~**Finish the topic tags.**~~ Done: 2,748 MCQs bulk-approved after a
-   clean sample; every physics and chemistry topic has questions. What is left
-   in the review queue (14 chemistry MCQs; 52 chemistry, 87 biology and 16
-   physics structured) is deliberately flagged and needs a person.
+   clean sample, and every flagged question in the 2016-2026 range read and
+   decided by hand. Physics and chemistry review queues are empty; both
+   subjects have 100% revisable-topic coverage.
 4. ~~**Stop the review route publishing rejected second opinions.**~~ Done
    (0033/0034, `source = 'verifier'`).
-5. **Support the older, no-mark-code mark-scheme grammar.** 136 structured
-   leaf questions remain without a mark scheme after this session's fix (down
-   from 262) — mostly biology, where marking points are semicolon-separated
-   and the "Mark" column is a bare number indistinguishable from a bare
-   question number by text alone. Needs the parser to read column x-position
-   from the PDF, not just line-by-line text (see the write-up above).
-6. **Add a payment method to the Voyage account, then run `embed` for
+5. **Scope is now 2016-2026 only** (set by the user 2026-09-23). One item is
+   deliberately left as found: `biology-5090-2013-may-june-p22` (29
+   structured parts, still `needs_review`), the only paper left in the queue.
+6. **The older, no-mark-code mark-scheme grammar is still unsupported by the
+   parser.** Every part currently affected in the 2016-2026 range was hand-
+   fixed rather than the parser being taught to read it (see the write-up
+   above), so this is not urgent — but a paper newly ingested in that layout
+   will trip the same `unmatched_mark_scheme` flag. Needs the parser to read
+   column x-position from the PDF, not just line-by-line text, if it is ever
+   worth fixing properly.
+7. **Add a payment method to the Voyage account, then run `embed` for
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks
    similar-question nudges.
-7. ~~**Finish `mcq-options`.**~~ Done for every paper (see 2026-09-23); 35
+8. ~~**Finish `mcq-options`.**~~ Done for every paper (see 2026-09-23); 35
    approved MCQs stay crop-only because their options are diagrams.
-8. ~~**Provision at least one reviewer account.**~~ Done.
-9. ~~**Patch the `/api/solve` quota-refund gap.**~~ Done (0035 `refund_quota`).
-10. **Run tagging verification at scale for chemistry-5070, biology-5090,
+9. ~~**Provision at least one reviewer account.**~~ Done.
+10. ~~**Patch the `/api/solve` quota-refund gap.**~~ Done (0035 `refund_quota`).
+11. **Run tagging verification at scale for chemistry-5070, biology-5090,
     and physics's own structured bank**, once #3 lands. The tool works
     (proven on real data); it just needs a provider it can run unattended
     against.
-11. **Upload the source PDFs and finish the split viewer.** Unlocks the
+12. **Upload the source PDFs and finish the split viewer.** Unlocks the
     `SplitViewer`'s real panes instead of placeholders.
-12. **Payments**, once there's a live audience to charge.
-13. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
+13. **Payments**, once there's a live audience to charge.
+14. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
     signed in.
-14. **Speed**: reserve crop space from `bbox` (the dashboard payload is done).
-15. **Ingest examiner reports** (the site no longer promises them, but the UI
+15. **Speed**: reserve crop space from `bbox` (the dashboard payload is done).
+16. **Ingest examiner reports** (the site no longer promises them, but the UI
     is ready): needs the source documents acquired first.

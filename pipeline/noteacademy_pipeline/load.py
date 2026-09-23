@@ -191,6 +191,13 @@ def upsert_question(
               -- extraction's to clear. Replacing the whole array here once
               -- silently took 18 below-floor structured questions out of the
               -- review queue during a mark-scheme re-ingest (2026-09-23).
+              --
+              -- unmatched_mark_scheme means "this question has no mark
+              -- scheme text", so it is dropped when the question already has
+              -- one: a mark scheme a reviewer attached by hand (the matcher
+              -- can't read that paper's layout) is kept by the coalesce
+              -- above, and must not be re-flagged by a re-run that still
+              -- cannot match it.
               review_flags          = case
                 when questions.extraction_status in ('approved', 'rejected')
                   then questions.review_flags
@@ -200,14 +207,22 @@ def upsert_question(
                            where k <> 'unmatched_mark_scheme'::review_flag)
                     || excluded.review_flags
                   ) f
+                  where not (f = 'unmatched_mark_scheme'::review_flag
+                             and coalesce(questions.mark_scheme_text, '') <> '')
                 )
               end,
               extraction_status     = case
                 when questions.extraction_status in ('approved', 'rejected')
                   then questions.extraction_status
-                when cardinality(excluded.review_flags) > 0
-                  or exists (select 1 from unnest(questions.review_flags) k
-                              where k <> 'unmatched_mark_scheme'::review_flag)
+                when exists (
+                  select 1 from unnest(
+                    array(select k from unnest(questions.review_flags) k
+                           where k <> 'unmatched_mark_scheme'::review_flag)
+                    || excluded.review_flags
+                  ) f
+                  where not (f = 'unmatched_mark_scheme'::review_flag
+                             and coalesce(questions.mark_scheme_text, '') <> '')
+                )
                   then 'needs_review'::extraction_status
                 else 'extracted'::extraction_status
               end
