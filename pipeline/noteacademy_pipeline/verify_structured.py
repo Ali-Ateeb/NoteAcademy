@@ -542,9 +542,10 @@ def apply_structured_one(
                     """
                     insert into question_topics
                       (question_id, topic_id, confidence, source, is_primary)
-                    values (%s, %s, %s, 'model', false)
+                    values (%s, %s, %s, 'verifier', false)
                     on conflict (question_id, topic_id) do update set
-                      confidence = excluded.confidence
+                      confidence = excluded.confidence,
+                      source     = excluded.source
                     """,
                     (question.id, topic_ids[model.primary.topic_code], 0.6),
                 )

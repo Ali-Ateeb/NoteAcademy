@@ -103,6 +103,54 @@ class TestLocalCropPath:
         assert _local_crop_path(work, paper_question()) == preferred
 
 
+class TestGroupDuplicates:
+    """Duplicates are matched on the printed text of the whole crop — and on
+    the answer key, which is the only thing that tells two drawn-option
+    questions apart when their words are identical."""
+
+    STEM = "Alkanes are saturated compounds. Structures 1, 2, 3 and 4 are shown. Which are alkanes?"
+
+    def _group(self, monkeypatch, tmp_path, questions):
+        from noteacademy_pipeline import verify
+
+        (tmp_path / "5070").mkdir()
+        for q in questions:
+            name = verify.caie_filename(
+                q.syllabus_code, q.year, q.season, "qp", q.component, q.variant
+            )
+            (tmp_path / "5070" / name).write_bytes(b"%PDF")
+
+        class _Doc:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(verify.pymupdf, "open", lambda path: _Doc())
+        monkeypatch.setattr(verify, "question_text", lambda doc, page, bbox: self.STEM)
+        return verify.group_duplicates(questions, tmp_path)
+
+    def _q(self, qid, year, key):
+        return paper_question(
+            id=qid, syllabus_code="5070", year=year, season="oct_nov",
+            paper_slug=f"chemistry-5070-{year}-oct-nov-p11", correct_option=key,
+        )
+
+    def test_identical_text_and_key_is_one_question(self, monkeypatch, tmp_path):
+        canonical, groups = self._group(
+            monkeypatch, tmp_path, [self._q("old", 2019, "A"), self._q("new", 2024, "A")]
+        )
+        assert [c.id for c in canonical] == ["new"]
+        assert sorted(groups["new"]) == ["new", "old"]
+
+    def test_identical_text_but_a_different_key_is_two_questions(self, monkeypatch, tmp_path):
+        # chemistry 2019 O/N Q33 (A) and 2024 M/J Q33 (D): same words, different
+        # drawn structures. Grouped, the 2019 question would vanish from drills.
+        canonical, groups = self._group(
+            monkeypatch, tmp_path, [self._q("old", 2019, "A"), self._q("new", 2024, "D")]
+        )
+        assert sorted(c.id for c in canonical) == ["new", "old"]
+        assert groups["new"] == ["new"] and groups["old"] == ["old"]
+
+
 # --------------------------------------------------------------------------
 # bulk-approve-structured reports the tag quality it is publishing
 # --------------------------------------------------------------------------

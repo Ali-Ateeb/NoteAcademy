@@ -13,6 +13,14 @@
  * function a real subscription tier will check against once payments land —
  * this route does not know or care which plan the caller is on, only that
  * something already decided the day's limit for them.
+ *
+ * consume_quota is charged before the Gemini call, not after: the call the
+ * student is paying a unit for is that one, and there is no way to know its
+ * outcome without making it. So every failure between there and the cache
+ * write — the fetch itself throwing, or a reply with nothing usable in it —
+ * calls refund_quota (0035_refund_quota.sql) before returning an error,
+ * rather than leaving a student down one of five daily solves for an answer
+ * they never got.
  */
 
 import { GoogleGenAI } from "@google/genai";
@@ -156,16 +164,28 @@ export async function POST(request: Request) {
     options = (data as OptionRow[] | null) ?? [];
   }
 
-  const genai = new GoogleGenAI({ apiKey: googleApiKey });
-  const response = await genai.models.generateContent({
-    model: SOLVER_MODEL,
-    contents: buildPrompt(question, options),
-    config: { maxOutputTokens: 2000 },
-  });
-
-  const solution = (response.text ?? "").trim();
+  // The quota unit above is already spent by this point. Everything from
+  // here to the cache write can fail — a network error calling Gemini, or a
+  // reply with nothing usable in it — and every one of those failures has to
+  // give the unit back: the student is not the one who can retry a call that
+  // never produced an answer, and consume_quota's own rollback only covers
+  // going over the daily limit, not a request that later came to nothing.
+  let solution: string;
+  try {
+    const genai = new GoogleGenAI({ apiKey: googleApiKey });
+    const response = await genai.models.generateContent({
+      model: SOLVER_MODEL,
+      contents: buildPrompt(question, options),
+      config: { maxOutputTokens: 2000 },
+    });
+    solution = (response.text ?? "").trim();
+  } catch {
+    await service.rpc("refund_quota", { p_user_id: user.id, p_metric: "ai_query" });
+    return NextResponse.json({ error: "The solver is unavailable right now." }, { status: 502 });
+  }
 
   if (!solution) {
+    await service.rpc("refund_quota", { p_user_id: user.id, p_metric: "ai_query" });
     return NextResponse.json({ error: "The solver returned nothing usable." }, { status: 502 });
   }
 

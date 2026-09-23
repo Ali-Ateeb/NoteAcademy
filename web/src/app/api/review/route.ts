@@ -253,6 +253,25 @@ export async function POST(request: Request) {
     );
   }
 
+  // A rejected second opinion (verify.py, verify_structured.py: a non-primary
+  // row at exactly 0.6, source 'verifier') must not survive approval — with
+  // it still attached, v_topics.question_count and v_mcq_questions.topic_codes
+  // go on listing the question under a topic nobody chose. This runs whether
+  // or not the reviewer overrides the topic: `assignTopic` below only ever
+  // clears `is_primary` rows, and a plain approve touches question_topics not
+  // at all otherwise. Scoped to `source = 'verifier'` specifically — never a
+  // blanket delete of every non-primary row, since a genuine editorial
+  // secondary topic (source 'model', written by the original tagger) has to
+  // survive approval exactly as it is.
+  if (decision === "approved") {
+    await client
+      .from("question_topics")
+      .delete()
+      .in("question_id", group.map((row) => row.id))
+      .eq("is_primary", false)
+      .eq("source", "verifier");
+  }
+
   let previousTopicSlug: string | null = null;
   let topicWarning: NextResponse | null = null;
   if (topicCode && decision === "approved") {

@@ -220,10 +220,15 @@ def test_a_disagreement_on_an_unapproved_question_returns_it_to_the_queue():
     writes = " | ".join(conn.writes())
     assert "insert into question_topics" in writes
     assert "needs_review" in writes and "low_tag_confidence" in writes
-    insert_params = next(
-        p for s, p in conn.statements if s.startswith("insert into question_topics")
+    insert_sql, insert_params = next(
+        (s, p) for s, p in conn.statements if s.startswith("insert into question_topics")
     )
     assert insert_params == ("q-1", "id-3.1", 0.6)
+    # source = 'verifier', not 'model': the review route's approve path
+    # deletes exactly this row by that column, and must never catch a
+    # genuine editorial secondary topic (source 'model') in the same sweep.
+    assert "'verifier'" in insert_sql
+    assert "'model'" not in insert_sql
 
 
 def test_a_first_pass_already_below_the_floor_is_not_raised_by_a_disagreement():

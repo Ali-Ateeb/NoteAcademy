@@ -1,0 +1,19 @@
+-- 0033_verifier_tag_source.sql
+-- Add 'verifier' as its own tag_source, distinct from 'model'.
+--
+-- verify.py and verify_structured.py record a second, disagreeing opinion
+-- as a non-primary question_topics row at exactly confidence 0.6, tagged
+-- source = 'model' -- indistinguishable, by that column alone, from a
+-- genuine editorial secondary topic the original tagger wrote (also
+-- source = 'model', but at 0.80-0.90 and meant to stay attached even after
+-- the question is approved). The review route's approve path cannot tell
+-- these apart without hard-coding the magic 0.6, so today it clears
+-- neither: a verifier's rejected second opinion survives approval and goes
+-- on being counted by v_topics.question_count and listed by
+-- v_mcq_questions.topic_codes under a topic nobody chose.
+--
+-- This migration only widens the enum; it changes no data and needs its
+-- own transaction, separate from the backfill in 0034, because Postgres
+-- will not let a newly added enum value be used in the same transaction
+-- that added it.
+alter type tag_source add value if not exists 'verifier';

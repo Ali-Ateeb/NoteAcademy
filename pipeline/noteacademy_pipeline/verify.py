@@ -76,6 +76,7 @@ class TaggedQuestion:
     bbox: tuple[float, float, float, float] | None
     primary_code: str | None
     primary_confidence: float | None
+    correct_option: str | None = None
 
 
 def _load_mcq_questions(
@@ -90,7 +91,7 @@ def _load_mcq_questions(
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            select q.id, q.display_label, q.ordinal,
+            select q.id, q.display_label, q.ordinal, q.correct_option,
                    p.slug as paper_slug, p.component, p.variant,
                    es.year, es.season, sub.syllabus_code,
                    qa.page_number as crop_page, qa.bbox,
@@ -129,6 +130,7 @@ def _load_mcq_questions(
                 if row["primary_confidence"] is not None
                 else None
             ),
+            correct_option=row["correct_option"],
         )
         for row in rows
     ]
@@ -210,13 +212,20 @@ def group_duplicates(
         for doc in opened.values():
             doc.close()
 
-    by_text: dict[str, list[TaggedQuestion]] = {}
+    by_text: dict[tuple[str, str | None], list[TaggedQuestion]] = {}
     for question in questions:
         text = texts.get(question.id, "")
         # Below the threshold, or missing entirely (no crop on disk): treated
         # as its own group of one, never merged with anything.
         key = text if len(text) >= DEDUPE_MIN_LENGTH else f"__solo__{question.id}"
-        by_text.setdefault(key, []).append(question)
+        # The answer key is part of the identity too. A question whose options
+        # are drawn — "Structures 1, 2, 3 and 4 ...", "Which diagram ..." —
+        # prints identical text across sittings while its figures differ, and
+        # only the key gives that away: chemistry 2019 O/N Q33 (answer A) and
+        # 2024 M/J Q33 (answer D) read word for word the same. Merging them
+        # would fold the older question away behind the newer one in every
+        # topic drill.
+        by_text.setdefault((key, question.correct_option), []).append(question)
 
     canonical: list[TaggedQuestion] = []
     groups: dict[str, list[str]] = {}
@@ -550,9 +559,10 @@ def _apply_one(
                 """
                 insert into question_topics
                   (question_id, topic_id, confidence, source, is_primary)
-                values (%s, %s, %s, 'model', false)
+                values (%s, %s, %s, 'verifier', false)
                 on conflict (question_id, topic_id) do update set
-                  confidence = excluded.confidence
+                  confidence = excluded.confidence,
+                  source     = excluded.source
                 """,
                 (question_id, topic_ids[pass2_code], 0.6),
             )
@@ -745,35 +755,43 @@ def apply_dedupe(
     tagging pass already relies on to avoid showing a reviewer the same
     question twice — but persists the result instead of holding it in memory
     for one export. Idempotent and re-derived from scratch on every run: every
-    question that was ever in a group with more than one member has its
-    `canonical_question_id` cleared and reset together, so a later paper that
-    breaks up an old match (or turns a duplicate into the newest sitting,
-    which `group_duplicates` prefers as canonical) does not leave a stale
-    pointer behind.
+    `canonical_question_id` in the subject is cleared, then set again from
+    this run's groups, so a later paper that breaks up an old match (or turns
+    a duplicate into the newest sitting, which `group_duplicates` prefers as
+    canonical) does not leave a stale pointer behind.
     """
     questions = load_mcq_questions(conn, subject_slug)
     canonical, groups = group_duplicates(questions, papers_dir)
     report = DedupeReport(subject=subject_slug)
 
-    involved: list[str] = []
     updates: list[tuple[str, str]] = []
     for head in canonical:
         members = groups[head.id]
         if len(members) < 2:
             continue
         report.groups_with_duplicates += 1
-        involved.extend(members)
         for member_id in members:
             if member_id != head.id:
                 updates.append((head.id, member_id))
 
     report.duplicates_marked = len(updates)
 
-    if not dry_run and involved:
+    if not dry_run:
         with conn.cursor() as cur:
+            # Every pointer in the subject, not only this run's groups: a
+            # question an earlier run grouped that no longer matches anything
+            # would otherwise keep a pointer nothing re-derives, folded away
+            # behind a question it is no longer a copy of (chemistry 2020 M/J
+            # P12 Q40 did, after CAIE's one-word edit between variants).
             cur.execute(
-                "update questions set canonical_question_id = null where id = any(%s)",
-                (involved,),
+                """
+                update questions q set canonical_question_id = null
+                  from papers p, subjects s
+                 where p.id = q.paper_id and s.id = p.subject_id
+                   and s.slug = %s and q.question_type = 'mcq'
+                   and q.canonical_question_id is not null
+                """,
+                (subject_slug,),
             )
             cur.executemany(
                 "update questions set canonical_question_id = %s where id = %s",

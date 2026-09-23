@@ -181,14 +181,35 @@ def upsert_question(
               -- re-deriving the same "no match" from the same mark scheme
               -- text would otherwise silently reinstate a flag on a
               -- question already approved without it, which is exactly
-              -- what happened here before this guard existed.
+              -- what happened here before this guard existed. A rejection
+              -- is a human decision too, and is kept the same way.
+              --
+              -- On an undecided question, re-ingestion replaces only the
+              -- flag it owns (unmatched_mark_scheme — the only one either
+              -- ingest path ever writes) and keeps every other: a
+              -- low_tag_confidence set by tagging or verification is not
+              -- extraction's to clear. Replacing the whole array here once
+              -- silently took 18 below-floor structured questions out of the
+              -- review queue during a mark-scheme re-ingest (2026-09-23).
               review_flags          = case
-                when questions.extraction_status = 'approved' then questions.review_flags
-                else excluded.review_flags
+                when questions.extraction_status in ('approved', 'rejected')
+                  then questions.review_flags
+                else array(
+                  select distinct f from unnest(
+                    array(select k from unnest(questions.review_flags) k
+                           where k <> 'unmatched_mark_scheme'::review_flag)
+                    || excluded.review_flags
+                  ) f
+                )
               end,
               extraction_status     = case
-                when questions.extraction_status = 'approved' then 'approved'
-                else excluded.extraction_status
+                when questions.extraction_status in ('approved', 'rejected')
+                  then questions.extraction_status
+                when cardinality(excluded.review_flags) > 0
+                  or exists (select 1 from unnest(questions.review_flags) k
+                              where k <> 'unmatched_mark_scheme'::review_flag)
+                  then 'needs_review'::extraction_status
+                else 'extracted'::extraction_status
               end
             returning id
             """,

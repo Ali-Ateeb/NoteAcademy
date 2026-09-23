@@ -19,17 +19,16 @@ work lands without a matching edit here, same as last time.
 
 | Subject | Published | Approved MCQs | Approved structured | Papers with approved content |
 |---|---|---:|---:|---:|
-| Physics 5054 | yes | 525 | 669 | 116 |
-| Chemistry 5070 | yes | 386 | 572 | 108 |
+| Physics 5054 | yes | 1,802 | 669 | 121 |
+| Chemistry 5070 | yes | 1,462 | 572 | 108 |
 | Biology 5090 | yes | 265 | 527 | 73 |
 | Mathematics 4024 | no | 0 | 0 | 0 |
 
-Measured 2026-09-22. **MCQs are counted deduplicated** (`canonical_question_id
-is null`) — the number a student can actually meet, since the topical browser
-folds cross-paper repeats. Counting every approved row instead gives 684 /
-434 / 312, which is what an earlier version of this table reported and why
-physics appears to have gone down. Structured is top-level questions, not
-leaf parts.
+Measured 2026-09-23, after the bulk-approve and re-run dedupe below. **MCQs are counted
+deduplicated** (`canonical_question_id is null`) — the number a student can
+actually meet, since the topical browser folds cross-paper repeats.
+Structured is top-level questions, not leaf parts. Every revisable topic in
+physics (63) and chemistry (49) now has at least one approved MCQ.
 
 All three published subjects have a current 2026–2028 syllabus loaded, which
 is what topic tagging and the topical browser are tagged against.
@@ -795,25 +794,104 @@ needs to respect PyMuPDF's own block boundaries rather than discarding them.
 
 ---
 
+## Bulk-approve, the second-opinion leak, and the solver refund (2026-09-23)
+
+**2,748 MCQs bulk-approved** after a person read a 60-question stratified
+sample (one question per topic, spread across sittings) and found nothing
+wrong. Physics 525 -> 2,041 approved MCQ rows, chemistry 386 -> 1,618 (1,802
+and 1,462 distinct once dedupe was re-run — see below), and every
+revisable topic in both subjects now has questions — the three physics topics
+that were empty (2.1.1, 2.3.4, 6.1.1) filled from this pool, as expected.
+`bulk_approve` only takes a question with empty `review_flags` and a primary
+tag at or above the floor, so none of them could have carried a verifier
+second opinion (that write always sets `low_tag_confidence`).
+
+**The verifier's second opinion is now its own `tag_source`.** 0033 adds
+`'verifier'`; 0034 relabels the 7 existing rows (non-primary, `model`,
+confidence 0.6 — a value nothing else writes) and touches none of the 167
+genuine editorial secondaries. `verify.py` and `verify_structured.py` now
+write `'verifier'` directly, including on the `on conflict` update. The
+review route deletes `source = 'verifier'` non-primary rows for the whole
+question group on every approval — with or without a topic override — so a
+rejected suggestion can no longer be published under a topic nobody chose.
+The MCQ path (`verify._apply_one`) still has no direct unit test; the
+structured one now asserts the literal.
+
+**`/api/solve` refunds a quota unit it charged for nothing.** `consume_quota`
+runs before the Gemini call, so a thrown request or an empty reply used to
+cost a student one of five daily solves for no answer. 0035 adds
+`refund_quota` (floored at 0, so it can only return units the day's row
+holds); the route calls it on both failure paths. A cache-write failure after
+a real answer is still charged — the student got the solution.
+
+**A regression from the mark-scheme re-ingest, found and fixed.**
+`upsert_question` replaced an undecided question's whole `review_flags` array
+with whatever ingest derived, and ingest only ever derives
+`unmatched_mark_scheme`. So re-ingesting 58 papers to recover mark schemes
+also wiped `low_tag_confidence` from **18 top-level structured questions**
+(11 chemistry, 7 biology, first-pass tags at 0.40–0.70, never reviewed),
+dropping them out of the review queue as unflagged `extracted` rows a later
+`bulk-approve-structured` would have published. All 18 were put back
+(`needs_review`, flag restored), and the upsert now replaces only the flag
+ingest owns, keeps every other, and keeps a `rejected` decision the same way
+it already kept `approved`. Proved against the live database inside
+rolled-back transactions on two papers: a restored `low_tag_confidence`
+survives a re-ingest, and a still-unmatched leaf keeps exactly one
+`unmatched_mark_scheme`. No MCQ papers were re-ingested, so the 8 rejected
+MCQs were never at risk. The chemistry structured queue (133) settles at 52
+for the right reason: leaves whose mark schemes were recovered left it; the
+11 restored ones are back in it.
+
+**Option text for the last 21 Paper 1s.** 13 physics papers (2010-2012, 2015
+M/J P11) and 8 biology papers (2019-2020) had approved MCQs with no stem or
+option text — playable from the crop, but invisible to search and giving the
+solver nothing to work from. `mcq-options` on DeepSeek `deepseek-flash`, the
+same path as the 2016-2026 batch, p11 before p12: every run exited cleanly.
+Approved MCQs without text: physics 380 -> 30, biology 265 -> 5; what is left
+is questions whose options are diagrams. Most runs "failed cross-check" on a
+page or two — the same rate as the earlier batch (74 of 84 logs), and it only
+reports, it does not block the write. So the written data was checked
+independently against each PDF's own text layer: **of 813 extracted stems,
+795 sit immediately after their own question number**; every one of the 18
+exceptions opens "The diagram shows ...", where the text layer interleaves
+diagram labels or the check finds an earlier question with the same opening,
+and read by eye each one matches its question.
+
+**Dedupe had never been re-run after the 2016-2026 Paper 1 backfill.** 159
+physics and 48 chemistry MCQs were marked as cross-variant repeats; a fresh
+run finds 398 and 205. So roughly 400 reused questions were appearing twice in
+topic drills and double-counted in every topic badge. Two fixes to
+`apply_dedupe` / `group_duplicates` first, then a real run on all three
+subjects:
+
+  * **The answer key is part of a duplicate's identity.** Chemistry 2019 O/N
+    Q33 (key A) and 2024 M/J Q33 (key D) print word for word the same, because
+    the four alkane structures they ask about are drawn, not written. Grouped,
+    the newer one would have hidden the older from every drill. Now
+    `(text, correct_option)`; two tests.
+  * **Every pointer in the subject is cleared before re-deriving**, not just
+    those in this run's groups — the docstring already promised this.
+    Chemistry 2020 M/J P12 Q40 held a pointer from an older run to its P11
+    twin, which CAIE had edited by one word ("contain **the** amide
+    linkages"); nothing would ever have re-derived it.
+
+Checked before running: no group has a canonical (newest sitting) that is
+unapproved while a member is approved, so nothing approved is hidden behind
+something students cannot see. Every physics and chemistry topic still has
+questions.
+
+---
+
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
 2. ~~**Commit and push the outstanding pipeline work.**~~ Done.
-3. **Finish the topic tags.** The structured banks are done (841 below-floor
-   tags -> 21), the figure-only MCQs are tagged from their crops, the 12 failed
-   verification calls are finished, and the **physics MCQ queue is empty**.
-   A 60-question stratified sample (35 physics, 25 chemistry, one question per
-   topic) of the 2,748 tagged-but-unapproved MCQs is sent for a person to spot
-   check; `bulk-approve` on a clean sample moves physics from 525 approved
-   MCQs to ~2,000 and fills its three empty topics.
-4. **Stop the review route publishing rejected second opinions.** Approving a
-   flagged question leaves the verifier's 0.6 non-primary row attached, and
-   both `v_topics.question_count` and `v_mcq_questions.topic_codes` then list
-   the question under it. Add a `verifier` value to the `tag_source` enum, have
-   `verify.py`/`verify_structured.py` write second opinions with it, backfill
-   the 7 existing rows, and drop those (and only those — 167 genuine editorial
-   secondaries must survive) on approve. Cheap, and it protects the 234
-   questions still in the queue.
+3. ~~**Finish the topic tags.**~~ Done: 2,748 MCQs bulk-approved after a
+   clean sample; every physics and chemistry topic has questions. What is left
+   in the review queue (14 chemistry MCQs; 52 chemistry, 87 biology and 16
+   physics structured) is deliberately flagged and needs a person.
+4. ~~**Stop the review route publishing rejected second opinions.**~~ Done
+   (0033/0034, `source = 'verifier'`).
 5. **Support the older, no-mark-code mark-scheme grammar.** 136 structured
    leaf questions remain without a mark scheme after this session's fix (down
    from 262) — mostly biology, where marking points are semicolon-separated
@@ -824,12 +902,10 @@ needs to respect PyMuPDF's own block boundaries rather than discarding them.
    physics-5054.** Fully built and tested; blocked only by the free-tier rate
    limit. Turns on the AI solver's real `match_question()` path and unblocks
    similar-question nudges.
-7. **Finish `mcq-options` for the remaining 14 physics-5054 papers**, once
-   a reliable vision provider is wired up.
+7. ~~**Finish `mcq-options`.**~~ Done for every paper (see 2026-09-23); 35
+   approved MCQs stay crop-only because their options are diagrams.
 8. ~~**Provision at least one reviewer account.**~~ Done.
-9. **Patch the `/api/solve` quota-refund gap.** Small, self-contained, and
-   the failure mode (silently charging a student for a solve that never
-   happened) is the kind of thing that erodes trust quietly.
+9. ~~**Patch the `/api/solve` quota-refund gap.**~~ Done (0035 `refund_quota`).
 10. **Run tagging verification at scale for chemistry-5070, biology-5090,
     and physics's own structured bank**, once #3 lands. The tool works
     (proven on real data); it just needs a provider it can run unattended
