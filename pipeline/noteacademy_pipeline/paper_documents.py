@@ -105,9 +105,14 @@ def upload_missing_documents(
     report = UploadReport(found_missing=len(missing))
 
     for item in missing:
+        # A grade-threshold PDF covers a whole session, not one component --
+        # every paper in the session gets its own `paper_documents` row (and
+        # its own copy in the bucket, at that paper's own prefix), but there
+        # is only one local source file, named with no component at all.
+        component = None if item.doc_type == "gt" else item.component
+        variant = None if item.doc_type == "gt" else item.variant
         name = caie_filename(
-            item.syllabus_code, item.year, item.season, item.doc_type,
-            item.component, item.variant,
+            item.syllabus_code, item.year, item.season, item.doc_type, component, variant,
         )
         path = papers_dir / item.syllabus_code / name
         if not path.is_file():

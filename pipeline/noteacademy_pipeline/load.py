@@ -121,6 +121,74 @@ def record_document(
         return cur.fetchone()["id"]
 
 
+def find_subject_id(conn: psycopg.Connection, syllabus_code: str) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute("select id from subjects where syllabus_code = %s", (syllabus_code,))
+        row = cur.fetchone()
+        return row["id"] if row else None
+
+
+def find_exam_session_id(conn: psycopg.Connection, year: int, season: str) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "select id from exam_sessions where year = %s and season = %s", (year, season)
+        )
+        row = cur.fetchone()
+        return row["id"] if row else None
+
+
+def record_grade_thresholds(
+    conn: psycopg.Connection,
+    subject_id: str,
+    exam_session_id: str,
+    *,
+    combination: str,
+    components: str,
+    rows: Sequence[tuple[str, int, int]],
+) -> None:
+    """One combination-of-components' worth of thresholds (grade, min_mark,
+    max_mark) -- what actually determines a candidate's overall grade. See
+    `grade_thresholds.py` for why this and per-component thresholds are two
+    different tables."""
+    with conn.cursor() as cur:
+        for grade, min_mark, max_mark in rows:
+            cur.execute(
+                """
+                insert into grade_thresholds
+                  (subject_id, exam_session_id, combination, components, grade, min_mark, max_mark)
+                values (%s, %s, %s, %s, %s, %s, %s)
+                on conflict (subject_id, exam_session_id, combination, grade) do update set
+                  components = excluded.components,
+                  min_mark   = excluded.min_mark,
+                  max_mark   = excluded.max_mark
+                """,
+                (subject_id, exam_session_id, combination, components, grade, min_mark, max_mark),
+            )
+
+
+def record_component_grade_thresholds(
+    conn: psycopg.Connection,
+    subject_id: str,
+    exam_session_id: str,
+    component: int,
+    variant: int | None,
+    rows: Sequence[tuple[str, int, int]],
+) -> None:
+    with conn.cursor() as cur:
+        for grade, min_mark, max_mark in rows:
+            cur.execute(
+                """
+                insert into component_grade_thresholds
+                  (subject_id, exam_session_id, component, variant, grade, min_mark, max_mark)
+                values (%s, %s, %s, %s, %s, %s, %s)
+                on conflict (subject_id, exam_session_id, component, variant, grade) do update set
+                  min_mark = excluded.min_mark,
+                  max_mark = excluded.max_mark
+                """,
+                (subject_id, exam_session_id, component, variant, grade, min_mark, max_mark),
+            )
+
+
 def _strip_nul(text: str | None) -> str | None:
     """Postgres text columns reject a NUL byte outright — rare, but a PDF's
     own text layer occasionally has one baked into a font's glyph mapping,

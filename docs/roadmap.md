@@ -1060,13 +1060,81 @@ from all session.
     timeout generating a chemistry topic page; a second run built clean,
     confirming it was transient load, not a regression.
 
-**Not done**: examiner reports and grade thresholds — no `er`/`gt` files
-exist locally for any of the three subjects yet, so those secondary panes
-still show "not available" until that content is acquired (roadmap item on
-examiner reports already tracks this separately). Chemistry and biology
-still show "Ingestion in progress" on `/subjects` (`is_published = false`),
-unrelated to this work — the viewer is ready for them the moment that flag
-flips.
+**Not done at the time**: examiner reports and grade thresholds — no `er`/`gt`
+files existed locally for any of the three subjects yet (grade thresholds
+landed the same day, see below; examiner reports have not). Chemistry and
+biology still show "Ingestion in progress" on `/subjects`
+(`is_published = false`), unrelated to this work — the viewer is ready for
+them the moment that flag flips.
+
+---
+
+## Grade thresholds: a first-party source, a schema that didn't fit, two bugs caught before they wrote bad data (2026-09-23)
+
+**Examiner reports and grade thresholds are different problems, not one.**
+Cambridge does not publish examiner reports publicly — they sit behind the
+School Support Hub's school login, the same embargo past papers carry — so
+there is no legitimate source to script against for those; the user will
+supply files directly when adding that content, the same `papers/` +
+`upload-papers` path as everything else. Grade thresholds are the opposite:
+Cambridge publishes them directly at cambridgeinternational.org, no login,
+one ~90-130KB PDF per subject per exam series — a genuine first-party
+source, unlike the third-party mirror `fetch_papers.py` already uses for
+past papers.
+
+**Reading two real threshold PDFs before writing a schema change showed the
+existing `grade_thresholds` table (`0003_papers.sql`) could not hold what
+Cambridge actually publishes.** Each PDF has two tables: per-component
+(grades A-E) and per-*combination*-of-components (grades A\*-E) — a
+candidate's real grade depends on which combination they sat, and a subject
+publishes several (physics has 4, chemistry has 6). The table's
+`unique (subject_id, exam_session_id, grade)` assumed one threshold set per
+subject per session; a second combination's numbers would have silently
+overwritten the first. Fixed with migration `0036` (table was empty, so
+altered in place): added `combination`/`components` columns, widened the
+unique constraint, and split per-component thresholds into their own new
+`component_grade_thresholds` table.
+
+**Built, in order**: `grade_thresholds.py` (parser — position-based, since
+PyMuPDF puts every table cell on its own line, confirmed against real
+extracted text, not assumed), `scripts/fetch_grade_thresholds.py` (reads
+session links from Cambridge's own index page rather than guessing URLs —
+its slugs are inconsistent, `nov-2024` beside `november-2023` beside
+`june2022` with no hyphen), and `noteacademy load-grade-thresholds` (parses
+every local `*_gt.pdf`, loads both tables, and registers the PDF itself
+against every paper in its session so `upload-papers` picks it up the same
+way as every question paper and mark scheme).
+
+**Two more bugs, both caught by real data before anything wrong was
+committed, neither by inspection:**
+  * `component_grade_thresholds.component` copied `papers.component`'s own
+    check constraint (1-9) without noticing Cambridge's "Component 11" label
+    is a component *and* variant printed together (component 1, variant 1) —
+    the same pair `papers.component`/`papers.variant` already store
+    separately. The first real load tripped the constraint immediately;
+    table had never held a row, so migration `0037` dropped and recreated it
+    with a `variant` column rather than patching around the mistake.
+  * Cambridge changed the combination table's layout starting with the June
+    2026 series — the two-letter option code (`AX`, `BY`) is gone, rows are
+    now keyed directly by their own component list (`11, 21, 41`). Found by
+    parsing all nine currently-published series, not assumed from one
+    sample; the parser now handles both layouts, and both are pinned down in
+    `test_grade_thresholds.py` against text extracted from real PDFs.
+  * A smaller third bug in `upload-papers` itself: it reconstructed a grade
+    threshold's expected local filename with that *paper's* component and
+    variant, but a `gt` file is one per session with no component suffix at
+    all — every other paper in the session was looking for a file that only
+    ever existed under one paper's name. Fixed before any upload was
+    attempted, not after a wrong one succeeded.
+
+**Coverage gap that is not fixable from here**: Cambridge's public site only
+lists series back to June 2022; 2016-2021 grade thresholds are not published
+there and were not loaded. 27 PDFs downloaded (3 subjects × 9 series,
+2022-2026), all 27 parsed and loaded: 690 `grade_thresholds` rows, 1,090
+`component_grade_thresholds` rows, 90 `paper_documents` rows uploaded.
+Verified in the browser — the split viewer's "Grade Thresholds" pane
+(`DOC_LABELS` already had the `gt` label from the start) renders the real
+table for a live paper. 347 tests passing (3 new), lint clean.
 
 ---
 
@@ -1107,12 +1175,21 @@ flips.
     doing.
 12. ~~**Upload the source PDFs and finish the split viewer.**~~ Done (see
     2026-09-23 write-up): 606 documents uploaded, `SplitViewer`'s panes
-    render real PDFs via signed URLs and `pdfjs-dist`. Examiner reports and
-    grade thresholds remain unavailable — no local source files for either
-    yet.
+    render real PDFs via signed URLs and `pdfjs-dist`.
 13. **Payments**, once there's a live audience to charge.
 14. ~~**Finish the redesign.**~~ Done, apart from viewing the reviewer queue
     signed in.
 15. **Speed**: reserve crop space from `bbox` (the dashboard payload is done).
-16. **Ingest examiner reports** (the site no longer promises them, but the UI
-    is ready): needs the source documents acquired first.
+16. ~~**Grade thresholds.**~~ Done (see 2026-09-23 write-up): fetched from
+    Cambridge's own public site, new schema, split viewer's "Grade
+    Thresholds" pane renders real tables. 2016-2021 unavailable — Cambridge
+    only publicly lists series back to June 2022.
+17. **Ingest examiner reports** (the site no longer promises them, but the UI
+    is ready): no legitimate public source found (unlike grade thresholds,
+    these sit behind Cambridge's School Support Hub login). The user will
+    supply source files directly; `scripts/fetch_papers.py` already supports
+    `--doc-types er` against `ivyonline.co` (the same third-party mirror the
+    2016-2026 Paper 1 backfill used) but that source's terms of use were
+    never reviewed (flagged at the time, 2026-09-21) — worth a second look
+    before using it for anything new rather than assuming the earlier use
+    settled the question.

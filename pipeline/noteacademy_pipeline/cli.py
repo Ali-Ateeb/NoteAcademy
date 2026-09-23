@@ -1503,6 +1503,119 @@ def upload_papers(
             console.print(f"[red]{label}:[/red] {keys[:10]}" + (" ..." if len(keys) > 10 else ""))
 
 
+@app.command(name="load-grade-thresholds")
+def load_grade_thresholds_cmd(
+    papers: Path = typer.Option(Path("papers"), help="Where the downloaded PDFs live."),
+    dry_run: bool = typer.Option(False, help="Parse and report, write nothing."),
+) -> None:
+    """Parse every local `{code}_{season}{yy}_gt.pdf` and load its thresholds.
+
+    A grade-threshold PDF publishes two tables (see `grade_thresholds.py` for
+    why they are two separate database tables): thresholds per component,
+    and thresholds per combination of components -- the one that actually
+    determines a candidate's overall grade. The PDF itself is also
+    registered as a `paper_documents` row against every paper in its session
+    (one file covers every component), so `upload-papers` picks it up the
+    same way it picks up every question paper and mark scheme.
+
+    Fetch the source files first with `scripts/fetch_grade_thresholds.py`,
+    which downloads them from Cambridge's own public site.
+    """
+    from .grade_thresholds import parse_grade_threshold_pdf
+    from .ingest import file_digest, page_count
+    from .load import (
+        connect,
+        find_exam_session_id,
+        find_subject_id,
+        record_component_grade_thresholds,
+        record_document,
+        record_grade_thresholds,
+    )
+    from .naming import document_key, parse_paper_filename, storage_prefix
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    gt_files = sorted(papers.glob("*/*_gt.pdf"))
+    if not gt_files:
+        console.print("[yellow]No local *_gt.pdf files found.[/yellow]")
+        return
+
+    loaded = skipped = failed = 0
+    with connect(settings.database_url) as conn:
+        for path in gt_files:
+            try:
+                parsed = parse_paper_filename(path.stem)
+            except ValueError as error:
+                console.print(f"[red]{path.name}: {error}[/red]")
+                failed += 1
+                continue
+
+            subject_id = find_subject_id(conn, parsed.syllabus_code)
+            session_id = find_exam_session_id(conn, parsed.year, parsed.season)
+            if not subject_id or not session_id:
+                console.print(f"[yellow]{path.name}: unknown subject or session[/yellow]")
+                skipped += 1
+                continue
+
+            try:
+                components, combinations = parse_grade_threshold_pdf(path)
+            except ValueError as error:
+                console.print(f"[red]{path.name}: {error}[/red]")
+                failed += 1
+                continue
+
+            if dry_run:
+                console.print(
+                    f"{path.name}: {len(components)} component(s), "
+                    f"{len(combinations)} combination(s)"
+                )
+                loaded += 1
+                continue
+
+            for comp in components:
+                record_component_grade_thresholds(
+                    conn, subject_id, session_id, comp.component, comp.variant,
+                    [(r.grade, r.min_mark, r.max_mark) for r in comp.rows],
+                )
+            for combo in combinations:
+                record_grade_thresholds(
+                    conn, subject_id, session_id,
+                    combination=combo.combination, components=combo.components,
+                    rows=[(r.grade, r.min_mark, r.max_mark) for r in combo.rows],
+                )
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    "select id, component, variant from papers "
+                    "where subject_id = %s and exam_session_id = %s",
+                    (subject_id, session_id),
+                )
+                paper_rows = cur.fetchall()
+            for paper_row in paper_rows:
+                prefix = storage_prefix(
+                    parsed.syllabus_code, parsed.year, parsed.season,
+                    paper_row["component"], paper_row["variant"],
+                )
+                record_document(
+                    conn, paper_row["id"], doc_type="gt",
+                    storage_key=document_key(prefix, "gt"),
+                    page_count=page_count(path),
+                    byte_size=path.stat().st_size,
+                    checksum=file_digest(path),
+                )
+            conn.commit()
+            loaded += 1
+
+    table = Table("", "", title="Grade thresholds" + (" (dry run)" if dry_run else ""))
+    table.add_row("PDFs found", str(len(gt_files)))
+    table.add_row("loaded", str(loaded))
+    table.add_row("skipped (unknown subject/session)", str(skipped))
+    table.add_row("failed to parse", str(failed))
+    console.print(table)
+
+
 @app.command(name="fix-spurious-crops")
 def fix_spurious_crops(
     min_height_pt: float = typer.Option(
