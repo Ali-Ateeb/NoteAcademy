@@ -945,6 +945,78 @@ the 2013 paper, out of scope. 344 tests passing, lint clean.
 
 ---
 
+## Tagging verification run at scale: chemistry, biology, and physics structured (2026-09-23)
+
+**All three targets from item #11 run against DeepSeek**, the "unattended
+provider" the tool needed. Every question with a printed crop or page image
+got a second, independent model read of that crop, compared against its
+existing tag.
+
+  * **Biology MCQs — never verified before, the real gap.** 289 agreed
+    (confidence raised), 8 disagreed. All 8 disagreements were the same
+    question, "Q24", on 2019 and 2020 sittings (both variants): skeletal
+    anatomy (humerus, radius, ulna, ball-and-socket and hinge joints,
+    antagonistic muscle pairs). A full-text search of the current 2026–2028
+    syllabus's learning objectives for those exact terms turned up nothing —
+    this content was examined for two sittings and then dropped from the
+    specification entirely. Rather than force either the original tag or the
+    model's guess onto a topic that doesn't actually cover this material,
+    all 8 were rejected. They had never been approved in the first place
+    (still sitting `extracted` from the original tagging pass), so nothing
+    live to students changed — this just stops them from being force-tagged
+    into a wrong topic later. 312 already-approved MCQs were left untouched
+    (23 flagged as model-disagreed-but-approved, reported only; the verifier
+    doesn't persist which specific questions those are, so resolving that
+    population individually is future work, not done here).
+  * **Chemistry MCQs — re-run to confirm the original backfill.** Crashed
+    once mid-write on a Supavisor connection drop (`server closed the
+    connection unexpectedly`); psycopg's default `autocommit=False` meant
+    the whole write transaction rolled back cleanly with zero partial
+    writes, confirmed against the DB before simply retrying. Second attempt:
+    1569 agreed, 0 sent to review, 7 individual model calls failed outright
+    (thinking-mode token cutoffs, the same known failure mode as earlier
+    chemistry retries this session) — retried individually with thinking
+    off and all 7 resolved (6 agreed, 1 genuine disagreement). That one
+    disagreement (2024 O/N P11 Q35, an alcohol-oxidation product) was read
+    by hand: the file's 11.6 is correct, the model's 11.7 was a low-
+    confidence guess. Left as-is. 1670 already-approved MCQs untouched (102
+    flagged disagreed-but-approved, same reporting-only caveat as biology).
+  * **Physics structured bank — re-checked to confirm, not assume, prior
+    coverage.** A dry run first, since this bank's "1,858 structured
+    questions" figure from the 2026-09-22 write-up implied it was already
+    comprehensively done; the dry run surfaced one live disagreement, so a
+    real run followed rather than trusting the figure blind. Two
+    disagreements total, both read from the actual mark scheme and resolved
+    by hand: 2024 O/N P22 Q6 (a relay) was retagged from 4.3.3 to 4.5.3 —
+    the model was right, 4.3.3's real objectives are thermistors/LDRs/
+    potential-dividers only, nothing about relays, and 4.5.3 covers the
+    magnetic-effect mechanism that makes a relay work. 2016 M/J P21 Q7 (a
+    loudspeaker) had its confidence restored to 0.85 at 4.5.4 — the model's
+    own stated reasoning ("force on a current-carrying coil... causing the
+    cone to move") matched 4.5.4 exactly, it had just cited the wrong code
+    (4.5.3) in its answer, so the auto-run's knockdown to 0.74 was reverted.
+    One call (2020 M/J P22 Q4, two mirrors at 60°) failed twice with a
+    JSON-parse error on the same crop; read by hand instead — already
+    correctly tagged 3.2.1 at reflection, no action needed, model call was
+    just flaky for that specific crop.
+  * **A real asymmetry found in `verify_structured.py` vs `verify.py`**: on
+    a disagreement against an *already-approved* question, the MCQ verifier
+    (`leave_approved`) does nothing to the database at all — pure ephemeral
+    count. The structured verifier's equivalent branch still lowers that
+    question's confidence (`min(file_confidence, floor - 0.01)`) *before*
+    checking whether it's approved, so an approved structured question's
+    confidence genuinely does drop on disagreement (confirmed live — that's
+    what had knocked Q7 above down to 0.74). Not changed here; noted because
+    it means the two verifiers' "approved and disagreed" counts don't mean
+    the same thing.
+
+**Nothing in the repo changed.** All of this was existing, unmodified CLI
+commands (`tag-verify-auto`, `tag-verify-structured`) run against the live
+database, plus small scratch scripts for the individual hand-resolved
+questions. 344 tests still passing, lint clean (no code touched).
+
+---
+
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.
@@ -973,10 +1045,13 @@ the 2013 paper, out of scope. 344 tests passing, lint clean.
    approved MCQs stay crop-only because their options are diagrams.
 9. ~~**Provision at least one reviewer account.**~~ Done.
 10. ~~**Patch the `/api/solve` quota-refund gap.**~~ Done (0035 `refund_quota`).
-11. **Run tagging verification at scale for chemistry-5070, biology-5090,
-    and physics's own structured bank**, once #3 lands. The tool works
-    (proven on real data); it just needs a provider it can run unattended
-    against.
+11. ~~**Run tagging verification at scale for chemistry-5070, biology-5090,
+    and physics's own structured bank.**~~ Done (see 2026-09-23 write-up):
+    8 biology MCQs rejected as genuinely out-of-syllabus, 2 physics
+    structured disagreements resolved by hand, chemistry re-confirmed. ~125
+    approved-but-model-disagreed questions across biology/chemistry remain
+    unresolved (reported only, no persisted list) — future work if worth
+    doing.
 12. **Upload the source PDFs and finish the split viewer.** Unlocks the
     `SplitViewer`'s real panes instead of placeholders.
 13. **Payments**, once there's a live audience to charge.
