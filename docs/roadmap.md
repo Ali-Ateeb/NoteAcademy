@@ -1303,6 +1303,75 @@ survived it (a drop can land at `commit()`, after the tally).
 
 ---
 
+## An audit of the whole app, and four fixes from it (2026-09-24)
+
+Static checks, all tests, a live-data production build crawled with a browser
+(31 pages, 15 route patterns, phone width too), direct probes of every API
+route, database queries for states the UI renders badly, and a basic
+accessibility pass. Clean: type-check, lint, 373 tests, migrations, every auth
+gate (401), accessibility, all 164 topic counts matching their pages, no
+approved question blank or missing its answer/topic. What it found, and what
+was done:
+
+**1. Broken images on 51 approved structured questions -- fixed, at the
+source and in the data.** A page's header strip (19-30pt: a page number and a
+*barcode, which is a font and so extracts as text* -- `6 ,` followed by
+control characters) was being kept as a continuation crop of "the question",
+its file was never uploaded, and a student saw a broken-image glyph after the
+last part. The segmenter's guard only recognised a *bare* page number, so "6 ,"
+plus barcode residue counted as content. `is_page_furniture` now strips control
+characters, commas and whitespace first (and printed "BLANK PAGE" sheets, one
+of which sat in the middle of biology 2024 O/N P22 Q5, just over the cleanup
+tool's 30pt cutoff and not its last crop, so it was missed twice). 61 rows
+removed with `fix-spurious-crops` and 1 by hand; `fix-crops` now reports
+nothing missing. Not `fix-crops` itself: that would have *uploaded* the junk
+strips. The first regression test for this passed against the old code too --
+its synthetic gap was 3.2pt, under the segmenter's own 5pt floor, so the text
+check never ran; the existing bare-page-number test has the same weakness. The
+new one sits the next question lower and fails on the old check. It should
+also stop new ingests carrying the barcode's control characters into
+`question_text` (334 approved questions have them; the AI solver puts that text
+in its prompt) -- expected, not yet verified on a fresh ingest, and the
+existing 334 are not cleaned.
+
+**2. `/api/revision-queue` returned a 500 for a quote, brace or backslash in a
+topic** (and echoed the raw Postgres error back) -- fixed: subject and topic
+codes are checked against their real shape (`1.5.2`, `physics-5054`) and
+refused with a 400. Checked against every real code and slug in the database
+(156 + 4): none rejected.
+
+**3. Security headers -- added, on every response.** `frame-ancestors 'none'`
+and `X-Frame-Options: DENY` (the reviewer queue's approve/reject buttons could
+otherwise be framed under another origin; verified with a real iframe: it
+refuses to load), `base-uri`/`form-action`/`object-src`, `nosniff`,
+`Referrer-Policy`, `Permissions-Policy` (camera/mic/location only -- payment is
+deliberately left open, it is roadmap), HSTS without `includeSubDomains`, and
+`X-Powered-By` removed. Deliberately *not* a script/style CSP: it would have to
+allow Next's inline hydration and Supabase, and one that allows
+`'unsafe-inline'` scripts buys little.
+
+**4. `robots.txt` and `sitemap.xml` -- added.** 467 URLs: the landing page,
+the subject directory, and per published subject its hub, every paper, and
+every topic that has questions (the five empty biology topics are excluded).
+Arenas, accounts, the reviewer queue and the API are disallowed. New
+`NEXT_PUBLIC_SITE_URL` (documented in `.env.example`) gives the absolute URLs;
+**it must be set in the deployment or the sitemap names `localhost`** (it
+falls back to Vercel's production hostname, and the sitemap route logs a
+warning if it is using localhost). Setting `metadataBase` from it also ended
+the "metadataBase is not set" build warning.
+
+**Open, from the same audit, not done:** raw database error text returned to
+the public by `question-meta`, `revision-queue` and `review-queue` (500s carry
+`error.message`); the solver's cache lookup runs before its approved-only
+check; the 334 approved structured questions whose text carries barcode control
+characters; 134 in-scope approved parts with no `max_marks` (85 print the mark
+as `[n]` right in the text -- the known "136 missing" item); `next`'s nested
+`postcss` advisory (only fixable by a breaking upgrade to Next 16); and
+biology/chemistry, which the sitemap now lists in full, still read "Ingestion
+in progress" on `/subjects`.
+
+---
+
 ## Next steps, in priority order
 
 1. ~~**Fix the `/auth/callback` open redirect.**~~ Done.

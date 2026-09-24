@@ -7,6 +7,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 import { LogoLong } from "@/components/Brand";
 import { NavLinks } from "@/components/NavLinks";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { SITE_URL } from "@/lib/siteUrl";
 import "./globals.css";
 
 /* Two voices. Raleway is the Note Academy typeface — the same family the
@@ -30,6 +31,9 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
+  // Makes the relative Open Graph / icon paths absolute, which social cards
+  // require -- and stops every build warning that it was unset.
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "Note Academy — Cambridge past papers, by topic",
     template: "%s · Note Academy",
