@@ -107,6 +107,45 @@ export function McqArena({
 
   const current = state ? questions[state.currentIndex] : undefined;
 
+  // Warm the browser cache with every crop in the paper, nearest first. The
+  // first read of an object from storage is slow (~2s, measured; repeat reads
+  // are ~0.1s), and that cost lands on whichever crop a student happens to
+  // reach first. Fetched in the background while they read the question in
+  // front of them, each one is already local by the time they press Next or
+  // jump to it from the grid. A few at a time: 40 small images, not 40
+  // simultaneous requests competing with the one being read right now. The
+  // route sends a cacheable response, so these are the same requests the
+  // <img> tags would have made, just earlier.
+  const startIndex = state?.currentIndex;
+  const started = startIndex !== undefined;
+  const startAt = useRef(0);
+  startAt.current = startIndex ?? 0;
+  useEffect(() => {
+    if (!started) return;
+    const urls: string[] = [];
+    for (let offset = 1; offset < questions.length; offset++) {
+      const url = questions[(startAt.current + offset) % questions.length]?.cropUrl;
+      if (url) urls.push(url);
+    }
+
+    let cancelled = false;
+    const worker = async () => {
+      while (!cancelled) {
+        const url = urls.shift();
+        if (!url) return;
+        await new Promise<void>((resolve) => {
+          const image = new Image();
+          image.onload = image.onerror = () => resolve();
+          image.src = url;
+        });
+      }
+    };
+    for (let i = 0; i < 3; i++) void worker();
+    return () => {
+      cancelled = true;
+    };
+  }, [started, questions]);
+
   const chargeTime = useCallback((questionId: string) => {
     const elapsed = Date.now() - questionEnteredAt.current;
     timeSpent.current.set(
@@ -310,6 +349,7 @@ export function McqArena({
               <img
                 src={current.cropUrl}
                 alt={`Question ${current.displayLabel}, as printed`}
+                fetchPriority="high"
                 className="w-full"
               />
             </div>

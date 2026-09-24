@@ -57,7 +57,17 @@ export async function GET(
     return new NextResponse("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
 
-  if (!(await assetIsPublic(storageKey))) {
+  // Started together, not one after the other: they are independent round
+  // trips to Supabase, and waiting for the gate before starting the download
+  // put both latencies in every first view of a crop. The bytes are held back
+  // until the gate has answered, so an unapproved crop is fetched and then
+  // discarded, never returned.
+  const [isPublic, asset] = await Promise.all([
+    assetIsPublic(storageKey),
+    downloadAsset(storageKey),
+  ]);
+
+  if (!isPublic) {
     // Deliberately indistinguishable from a key that does not exist: whether a
     // question is merely awaiting review is not something to leak either. Not
     // cached either way: an unapproved question can be approved at any
@@ -65,7 +75,6 @@ export async function GET(
     return new NextResponse("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
 
-  const asset = await downloadAsset(storageKey);
   if (!asset) {
     return new NextResponse("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
   }

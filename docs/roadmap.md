@@ -1170,6 +1170,32 @@ attempt). `McqArena`, the topic page, and `StructuredArena` all now set
 the container's computed height is correct immediately, before the image
 byte one ever arrives.
 
+**Slow first view of a crop (~3s), measured and mostly not ours.** A
+production build serves a fresh crop in 0.45-2s, and the same crop again in
+~0.2s. Timed straight against Supabase Storage, bypassing this app entirely:
+the *first* read of any object costs 1.6-2s, and repeats cost 50-100ms — a
+cold-object penalty on their side, which no route change can remove. What
+this app can do is keep a student from ever waiting on it. The
+approval check and the download in `/api/asset` now run in parallel
+instead of back to back (~0.2s saved on a cold instance), and `McqArena`
+warms every crop in the paper in the background, nearest question first,
+three at a time — so the cost lands on the first image only, not on every
+Next press. Verified in the browser: all 40 crops of a paper cached within
+seconds of opening it. In production the platform CDN adds a second layer
+(the response is `public`), so only the very first viewer of a crop pays
+the cold read at all.
+
+**A lesson worth keeping: never run `next build` while a dev server is up.**
+Both write to `.next`; a build in the middle of a dev session leaves the dev
+server referencing chunk files that no longer exist (`Cannot find module
+'./611.js'`), and every page and every crop 500s until `.next` is deleted
+and the server restarted. This is what broke the arena's images right after
+the previous change — not the change itself. Separately, the first
+`next build` after a pause keeps hitting a Postgres statement timeout on a
+chemistry topic page and passes on retry; the topic-questions query is
+heavy enough to time out under build-time parallelism and is worth its own
+look.
+
 **A stale e2e test, found but not fixed.** Running `e2e/smoke.mjs` against a
 production build turned up a run of failures — but every one traced back to
 the test's own hardcoded expectations having drifted from live data, not a
