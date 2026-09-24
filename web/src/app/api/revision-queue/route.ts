@@ -19,6 +19,15 @@ import { getQuestionsByTopics } from "@/lib/data/catalog";
 // here too so the route can't be asked to assemble an unbounded query.
 const MAX_TOPICS = 5;
 
+// What a syllabus code and a subject slug actually look like ("1.5.2",
+// "physics-5054"). Checked before the query is built: the codes go into a
+// Postgres array literal, and one holding a quote, brace or backslash used to
+// reach the database as a malformed literal -- a 500 that also handed the
+// caller the raw Postgres error. Anything that is not one of these cannot name
+// a topic, so it is refused rather than passed on to fail.
+const TOPIC_CODE = /^[0-9A-Za-z][0-9A-Za-z.-]{0,15}$/;
+const SUBJECT_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const subject = searchParams.get("subject");
@@ -39,6 +48,12 @@ export async function GET(request: Request) {
 
   if (topics.length === 0) {
     return NextResponse.json({ error: "topics must name at least one topic code." }, { status: 400 });
+  }
+  if (!SUBJECT_SLUG.test(subject) || !topics.every((code) => TOPIC_CODE.test(code))) {
+    return NextResponse.json(
+      { error: "subject or topics is not a valid slug or topic code." },
+      { status: 400 },
+    );
   }
 
   try {
