@@ -1,0 +1,15 @@
+-- 0041_drop_unused_topic_function.sql
+-- Remove the function 0039 added and nothing ever called.
+--
+-- 0039 diagnosed the build's topic-page timeouts as the topic filter forcing
+-- `v_mcq_questions` to compute every question's topics before it could
+-- filter, and added `mcq_questions_by_topics` to select the rows first. The
+-- diagnosis was wrong: measured as the `postgres` role that looked like the
+-- cost, but that role bypasses row level security, and the app reads as
+-- `anon`. As anon the real cost was the `also_in` subquery sequentially
+-- scanning `questions` once per row (fixed in 0040: ~400ms -> ~10ms on the
+-- largest topic). With that fixed, the plain view filter's worst case over
+-- all 215 topics is 32ms, and this function's gain over it is small enough
+-- that a second query path is not worth keeping. Nothing in the app ever
+-- called it.
+drop function if exists mcq_questions_by_topics(text, text[]);

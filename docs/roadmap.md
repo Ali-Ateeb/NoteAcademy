@@ -1190,11 +1190,34 @@ Both write to `.next`; a build in the middle of a dev session leaves the dev
 server referencing chunk files that no longer exist (`Cannot find module
 './611.js'`), and every page and every crop 500s until `.next` is deleted
 and the server restarted. This is what broke the arena's images right after
-the previous change — not the change itself. Separately, the first
-`next build` after a pause keeps hitting a Postgres statement timeout on a
-chemistry topic page and passes on retry; the topic-questions query is
-heavy enough to time out under build-time parallelism and is worth its own
-look.
+the previous change — not the change itself. 
+
+**The intermittent build failure, root-caused and fixed (2026-09-24).** The
+first `next build` after a pause kept dying with a Postgres statement timeout
+on a chemistry topic page (always a big topic, e.g. 3.3 with 98 questions)
+and passing on retry. The cause was not the build's concurrency and not the
+topic filter — it was `v_mcq_questions`' `also_in` subquery, which for the
+`anon` role (every student page and every build) did a **sequential scan of
+all 16,848 questions once per returned row**: 480 of 501ms on that topic.
+`0027` had fixed exactly this with an expression index, and it worked — for
+the `postgres` role. Row level security wraps `questions` in a policy filter,
+and the planner will not use an index on an expression over a row that is
+itself under RLS, so every measurement taken as `postgres` (mine included,
+at first) said the view was fast, and it was ~30x slower for the role that
+mattered. `anon` also has a 3-second statement timeout, so a build firing
+~330 of these at once tipped the slowest few over it. Migration `0040` writes
+the same match with the outer row's columns passed through bare; compared
+against the old form for all 4,199 MCQs, both ways (0 differ), and measured
+as `anon`: 400ms -> 10ms on the worst topic, worst case across all 215 topics
+now 32ms. Three cold builds in a row now pass first try. Every topic page,
+topical drill, and the "revise your weakest topics" queue reads this view, so
+this speeds up live pages too, not only the build.
+
+**A wrong turn, kept honest.** `0039` first added a function
+(`mcq_questions_by_topics`) on the theory that the topic filter forced the
+view to compute every question's topics before it could filter. Measured as
+`postgres` that looked plausible; measured as `anon` it made no difference.
+Nothing ever called it, and `0041` drops it.
 
 **A stale e2e test, found but not fixed.** Running `e2e/smoke.mjs` against a
 production build turned up a run of failures — but every one traced back to
