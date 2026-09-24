@@ -6,8 +6,16 @@
  * against the answer key, and the dashboard reading the attempt log. The resume
  * path in particular is the one students notice when it regresses.
  *
- *   npm run build && npm run start -- -p 3210
- *   node e2e/smoke.mjs                       # override with BASE_URL
+ *   npm run e2e        # builds in fixture mode, serves, runs this, tears down
+ *
+ * Written against the seed fixtures (src/lib/data/seed.ts), NOT live data:
+ * a 12-question paper, a three-question "dynamics" drill, fixed review-queue
+ * items. Against a database-backed build none of those are true -- and the
+ * review-queue section presses "approve", which would write to the database.
+ * The guard below refuses to run in that case. To point it at a server you
+ * started yourself (it must be a fixture-mode build):
+ *
+ *   BASE_URL=http://localhost:3210 node e2e/smoke.mjs
  *
  * Exits non-zero if any check fails.
  */
@@ -31,8 +39,34 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 const jsErrors = [];
 page.on("pageerror", (e) => jsErrors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => {
-  if (m.type() === "error") jsErrors.push(`console: ${m.text()}`);
+  if (m.type() !== "error") return;
+  // Chromium logs every 404 as a console error. In fixture mode there is no
+  // storage, so the split viewer's requests for a paper's documents come back
+  // 404 by design and the panes say "isn't available" -- not an app error.
+  // Matched by URL so a 404 on anything else still counts.
+  if (m.text().includes("404") && m.location().url.includes("/api/paper-doc/")) return;
+  jsErrors.push(`console: ${m.text()}`);
 });
+
+// ---- guard: fixtures only ----
+// Before anything that writes. If the seed's 12-question paper is not what
+// this server is serving, it is serving live data and this test must not run.
+// The paper's own page, not its practice arena: opening the arena starts a
+// timer and saves it, which the "timer starts at 15:00" check would inherit.
+await page.goto(`${BASE}/papers/physics-5054-2019-may-june-p12`, { waitUntil: "load" });
+if ((await page.getByText("12 questions").count()) === 0) {
+  console.error(
+    [
+      "",
+      "This server is not serving the seed fixtures (no '12 questions' on the seed paper),",
+      "so it is database-backed. The smoke test is written against fixtures and its",
+      "review-queue section approves questions. Refusing to run.",
+      "Use `npm run e2e`, which builds and serves a fixture-mode copy itself.",
+    ].join("\n"),
+  );
+  await browser.close();
+  process.exit(2);
+}
 
 // ---- landing ----
 await page.goto(BASE, { waitUntil: "networkidle" });
@@ -103,7 +137,12 @@ check(
 );
 
 // ---- split viewer ----
-await page.goto(`${BASE}/papers/physics-5054-2019-may-june-p22`, { waitUntil: "networkidle" });
+// Not "networkidle": each pane fetches its own signed URL from /api/paper-doc,
+// and Chromium never reports those responses finished, so idle never comes.
+// In fixture mode there is no storage, so each pane settles on "isn't
+// available" -- which is the state to wait for.
+await page.goto(`${BASE}/papers/physics-5054-2019-may-june-p22`, { waitUntil: "load" });
+await page.waitForSelector("text=isn't available");
 check("viewer shows the question paper pane", (await page.getByText("Question Paper").count()) > 0);
 await page.keyboard.press("e");
 check(
