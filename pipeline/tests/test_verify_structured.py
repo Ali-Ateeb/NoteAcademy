@@ -329,6 +329,9 @@ def run(world, **kw):
     kw.setdefault("year_from", 2016)
     kw.setdefault("year_to", 2026)
     kw.setdefault("confidence_floor", 0.75)
+    # Never the real work directory: the default path is a tracked file that a
+    # test run would silently overwrite.
+    kw.setdefault("results_path", world["crop_dir"].parent / "results.jsonl")
     return verify_structured_with_model(
         "physics-5054", world["papers"], crop_dir=world["crop_dir"], **kw
     )

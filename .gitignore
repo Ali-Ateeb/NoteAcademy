@@ -25,6 +25,9 @@ venv/
 # `papers/` also matched web/src/app/papers/, a real tracked Next.js route,
 # and made `git add` on anything under it warn that it was ignored.
 pipeline/work/
+# ...and where it lands when a command is run from inside pipeline/ (the path
+# is relative to the working directory).
+pipeline/pipeline/work/
 pipeline/out/
 /papers/
 *.pdf
