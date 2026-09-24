@@ -38,6 +38,54 @@ const SOLVER_MODEL = process.env.SOLVER_MODEL || "gemini-3.6-flash";
 // change when pricing exists.
 const FREE_DAILY_LIMIT = 5;
 
+// Used when the main model is overloaded. Google returns 503 "high demand" for
+// whole model families in bursts; a smaller model usually still answers.
+// Comma-separated, tried in order. Two different families, because the 503s
+// come per model and the lite models are not always spared together.
+const FALLBACK_MODELS = (process.env.SOLVER_FALLBACK_MODEL || "gemini-3.1-flash-lite,gemini-3.5-flash-lite")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+// Thinking tokens count against this cap (~850 of them on a typical question),
+// so a tight cap can leave an empty answer.
+const MAX_OUTPUT_TOKENS = 6000;
+
+function isTransient(error: unknown): boolean {
+  const status = (error as { status?: number })?.status;
+  return status === 429 || status === 500 || status === 503 || status === 504;
+}
+
+/** Main model twice (the second try after a short pause), then each fallback.
+ *  A non-transient error (bad key, unknown model) is not retried. */
+async function generateWithFallback(
+  genai: GoogleGenAI,
+  contents: string,
+): Promise<{ solution: string; model: string }> {
+  const attempts = [SOLVER_MODEL, SOLVER_MODEL, ...FALLBACK_MODELS];
+  let skipMain = false;
+  let lastError: unknown;
+  for (const [i, model] of attempts.entries()) {
+    if (skipMain && model === SOLVER_MODEL) continue;
+    if (i === 1) await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      const response = await genai.models.generateContent({
+        model,
+        contents,
+        config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+      });
+      const text = (response.text ?? "").trim();
+      if (text) return { solution: text, model };
+      lastError = new Error(`${model} returned no text`);
+    } catch (error) {
+      lastError = error;
+      console.warn(`solve: ${model} failed:`, (error as Error)?.message?.slice(0, 160));
+      if (!isTransient(error)) skipMain = true;
+    }
+  }
+  throw lastError;
+}
+
 function serviceClient(): SupabaseClient | null {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
   if (!SUPABASE_URL || !key) return null;
@@ -175,30 +223,26 @@ export async function POST(request: Request) {
   // give the unit back: the student is not the one who can retry a call that
   // never produced an answer, and consume_quota's own rollback only covers
   // going over the daily limit, not a request that later came to nothing.
-  let solution: string;
+  let solution = "";
+  let usedModel = SOLVER_MODEL;
   try {
     const genai = new GoogleGenAI({ apiKey: googleApiKey });
-    const response = await genai.models.generateContent({
-      model: SOLVER_MODEL,
-      contents: buildPrompt(question, options),
-      config: { maxOutputTokens: 2000 },
-    });
-    solution = (response.text ?? "").trim();
-  } catch {
+    const prompt = buildPrompt(question, options);
+    ({ solution, model: usedModel } = await generateWithFallback(genai, prompt));
+  } catch (error) {
+    console.error("solve: every model failed:", error);
     await service.rpc("refund_quota", { p_user_id: user.id, p_metric: "ai_query" });
-    return NextResponse.json({ error: "The solver is unavailable right now." }, { status: 502 });
-  }
-
-  if (!solution) {
-    await service.rpc("refund_quota", { p_user_id: user.id, p_metric: "ai_query" });
-    return NextResponse.json({ error: "The solver returned nothing usable." }, { status: 502 });
+    return NextResponse.json(
+      { error: "The solver is busy right now. Please try again in a minute." },
+      { status: 503 },
+    );
   }
 
   // Best-effort: a caching failure should not cost the student the answer
   // they just paid a quota unit for.
   await service
     .from("question_solutions")
-    .upsert({ question_id: questionId, solution, model: SOLVER_MODEL });
+    .upsert({ question_id: questionId, solution, model: usedModel });
 
   return NextResponse.json({ solution, cached: false });
 }
