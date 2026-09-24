@@ -55,6 +55,7 @@ from .parallel import map_concurrently
 from .schemas import TopicAssignment, TopicTagging
 from .tagging import MAX_STRUCTURED_PAGES, TopicOption, tag_structured_from_crops
 from .verify import confirm_primary
+from .verify_write import commit_each
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +120,18 @@ class StructuredVerifyReport:
     # Replay only: rows another session still holds, and rows that would not write.
     skipped_locked: int = 0
     failed_writes: list[str] = field(default_factory=list)
+    # How many times the connection had to be re-opened mid-write.
+    reconnects: int = 0
+
+
+_COUNTERS = ("agreed", "reordered", "disagreed", "disagreed_approved", "skipped_changed")
+
+
+def _merge_counts(into: StructuredVerifyReport, part: StructuredVerifyReport) -> None:
+    """Fold one committed question's outcome into the run's report."""
+    for name in _COUNTERS:
+        setattr(into, name, getattr(into, name) + getattr(part, name))
+    into.findings.extend(part.findings)
 
 
 def _save_results(
@@ -339,32 +352,44 @@ def verify_structured_with_model(
     report.results_path = _save_results(subject_slug, results, results_path)
     log.info("model results saved to %s", report.results_path)
 
-    # Phase 2: every write, in one short connection.
-    with connect(settings.database_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                select t.code, t.id
-                  from topics t
-                  join syllabus_versions sv on sv.id = t.syllabus_version_id
-                  join subjects s on s.id = sv.subject_id
-                 where s.slug = %s and sv.is_current
-                """,
-                (subject_slug,),
-            )
-            topic_ids = {row["code"]: row["id"] for row in cur.fetchall()}
+    # Phase 2: every write -- each question its own transaction, reconnecting
+    # if the link drops (`commit_each`). The answers are already on disk, so
+    # even if the database stays down what was not written replays with
+    # `--from-results`.
+    from .load import connect
 
-        for question, pages, tagging in results:
-            apply_structured_one(
-                conn, question, pages, tagging, topic_ids, confidence_floor, report
-            )
+    conn = connect(settings.database_url)
+    try:
+        topic_ids = _load_topic_ids(conn, subject_slug)
+    except BaseException:
+        conn.close()
+        raise
 
-        if dry_run:
-            conn.rollback()
-        else:
-            conn.commit()
-
+    commit_each(
+        conn, results,
+        apply_unit=lambda c, item, part: apply_structured_one(
+            c, item[0], item[1], item[2], topic_ids, confidence_floor, part
+        ),
+        new_part=StructuredVerifyReport, merge=_merge_counts,
+        label=lambda item: f"{item[0].paper_slug} {item[0].display_label}",
+        report=report, dry_run=dry_run,
+    )
     return report
+
+
+def _load_topic_ids(conn: psycopg.Connection, subject_slug: str) -> dict[str, str]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select t.code, t.id
+              from topics t
+              join syllabus_versions sv on sv.id = t.syllabus_version_id
+              join subjects s on s.id = sv.subject_id
+             where s.slug = %s and sv.is_current
+            """,
+            (subject_slug,),
+        )
+        return {row["code"]: row["id"] for row in cur.fetchall()}
 
 
 def resume_structured_from_results(
@@ -403,65 +428,46 @@ def resume_structured_from_results(
     report = StructuredVerifyReport(results_path=results_path)
     report.findings = []
 
-    with connect(settings.database_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                select t.code, t.id
-                  from topics t
-                  join syllabus_versions sv on sv.id = t.syllabus_version_id
-                  join subjects s on s.id = sv.subject_id
-                 where s.slug = %s and sv.is_current
-                """,
-                (subject_slug,),
-            )
-            topic_ids = {row["code"]: row["id"] for row in cur.fetchall()}
+    conn = connect(settings.database_url)
+    try:
+        topic_ids = _load_topic_ids(conn, subject_slug)
+    except BaseException:
+        conn.close()
+        raise
 
-        for row in rows:
-            if row["primary"] not in topic_ids:
-                report.unknown_codes.append(row["primary"])
-                continue
-            question = StructuredQuestion(
-                id=row["question_id"], paper_slug=row["paper_slug"],
-                display_label=row["display_label"], ordinal=0, syllabus_code="",
-                year=0, season="", component=0, variant=None, crops=[],
-            )
-            tagging = TopicTagging(
-                primary=TopicAssignment(
-                    topic_code=row["primary"], confidence=row["confidence"],
-                    reasoning=row.get("reasoning", ""),
-                ),
-                secondary=[
-                    TopicAssignment(topic_code=code, confidence=0.6, reasoning="")
-                    for code in row.get("secondary", [])
-                ],
-            )
-            try:
-                with conn.cursor() as cur:
-                    # SET takes no bind parameters, hence the interpolation;
-                    # the value is an int this function's own caller chose.
-                    cur.execute(f"set local lock_timeout = {int(lock_timeout_ms)}")
-                apply_structured_one(
-                    conn, question, row.get("pages", 1), tagging,
-                    topic_ids, confidence_floor, report,
-                )
-                if dry_run:
-                    conn.rollback()
-                else:
-                    conn.commit()
-            except psycopg.errors.LockNotAvailable:
-                conn.rollback()
-                report.skipped_locked += 1
-                log.warning(
-                    "%s %s is locked by another session; skipped",
-                    row["paper_slug"], row["display_label"],
-                )
-            except psycopg.Error as error:
-                conn.rollback()
-                report.failed_writes.append(f"{row['paper_slug']} {row['display_label']}")
-                log.warning("%s %s failed to write: %s",
-                            row["paper_slug"], row["display_label"], error)
+    units = []
+    for row in rows:
+        if row["primary"] not in topic_ids:
+            report.unknown_codes.append(row["primary"])
+        else:
+            units.append(row)
 
+    def apply_row(c: psycopg.Connection, row: dict, part: StructuredVerifyReport) -> None:
+        question = StructuredQuestion(
+            id=row["question_id"], paper_slug=row["paper_slug"],
+            display_label=row["display_label"], ordinal=0, syllabus_code="",
+            year=0, season="", component=0, variant=None, crops=[],
+        )
+        tagging = TopicTagging(
+            primary=TopicAssignment(
+                topic_code=row["primary"], confidence=row["confidence"],
+                reasoning=row.get("reasoning", ""),
+            ),
+            secondary=[
+                TopicAssignment(topic_code=code, confidence=0.6, reasoning="")
+                for code in row.get("secondary", [])
+            ],
+        )
+        apply_structured_one(
+            c, question, row.get("pages", 1), tagging, topic_ids, confidence_floor, part
+        )
+
+    commit_each(
+        conn, units,
+        apply_unit=apply_row, new_part=StructuredVerifyReport, merge=_merge_counts,
+        label=lambda row: f"{row['paper_slug']} {row['display_label']}",
+        report=report, dry_run=dry_run, lock_timeout_ms=lock_timeout_ms,
+    )
     return report
 
 

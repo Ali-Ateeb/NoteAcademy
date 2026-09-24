@@ -68,11 +68,17 @@ class FakeCursor:
 
 
 class FakeConn:
+    closed = False
+    broken = False
+
     def __init__(self, respond):
         self.respond = respond
         self.statements: list[tuple[str, tuple | None]] = []
         self.committed = False
         self.rolled_back = False
+
+    def close(self):
+        pass
 
     def __enter__(self):
         return self
@@ -530,3 +536,154 @@ def test_the_model_results_are_on_disk_before_any_write_is_attempted(
     assert len(saved) == 1
     assert saved[0]["primary"] == "1.1"
     assert saved[0]["question_id"] and saved[0]["paper_slug"]
+
+
+# --------------------------------------------------------------------------
+# the write pass and the replay: surviving a dropped connection
+# --------------------------------------------------------------------------
+#
+# The replay used to catch a lost connection like any other error, roll back on
+# the dead link, and then fail every remaining row against it. These drive both
+# write passes through `commit_each` with a scripted `apply_structured_one`.
+
+
+def _replay_file(tmp_path, names):
+    path = tmp_path / "results.jsonl"
+    path.write_text("\n".join(
+        json.dumps({
+            "question_id": n, "paper_slug": f"paper-{n}", "display_label": "1", "pages": 1,
+            "primary": "1.1", "confidence": 0.9, "reasoning": "r", "secondary": [],
+        }) for n in names
+    ) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def link(monkeypatch):
+    """Fake connections, and an `apply_structured_one` that fails on cue.
+
+    `script` maps the Nth call (1-based, across reconnects) to "drop" -- the
+    OperationalError a severed socket really raises, with the connection's own
+    `closed`/`broken` flags left False -- or "timeout".
+    """
+    import psycopg
+
+    import noteacademy_pipeline.load as load
+
+    state = {"script": {}, "calls": 0}
+    conns: list[FakeConn] = []
+    applied: list[str] = []
+
+    def connect(_url):
+        conns.append(FakeConn(responder(topics=["1.1", "2.1"])))
+        return conns[-1]
+
+    def fake_apply(conn, question, pages, model, topic_ids, floor, report):
+        state["calls"] += 1
+        action = state["script"].get(state["calls"])
+        # Counted before anything can go wrong, as the real applier does: it has
+        # tallied a question by the time `commit()` -- which can also die -- runs.
+        report.agreed += 1
+        report.findings.append(question.id)
+        if action == "drop":
+            raise psycopg.OperationalError("SSL SYSCALL error: Cannot send after socket shutdown")
+        if action == "timeout":
+            raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+        applied.append(question.id)
+
+    monkeypatch.setattr(load, "connect", connect)
+    monkeypatch.setattr(verify_structured, "apply_structured_one", fake_apply)
+    monkeypatch.setattr("noteacademy_pipeline.verify_write.time.sleep", lambda s: None)
+    return {"state": state, "conns": conns, "applied": applied}
+
+
+def replay(tmp_path, names, **kw):
+    return verify_structured.resume_structured_from_results(
+        "physics-5054", _replay_file(tmp_path, names), confidence_floor=0.75, **kw
+    )
+
+
+def test_each_replayed_question_commits_on_its_own(link, tmp_path):
+    report = replay(tmp_path, ["a", "b", "c"])
+
+    assert report.agreed == 3
+    assert link["applied"] == ["a", "b", "c"]
+
+
+def test_a_replay_reconnects_after_a_dropped_link_and_finishes(link, tmp_path):
+    link["state"]["script"] = {2: "drop"}
+    report = replay(tmp_path, ["a", "b", "c"])
+
+    assert report.reconnects == 1
+    assert report.failed_writes == []
+    assert link["applied"] == ["a", "b", "c"]  # b was retried on the new connection
+    assert len(link["conns"]) == 2
+
+
+def test_a_retried_question_is_counted_and_reported_once(link, tmp_path):
+    link["state"]["script"] = {2: "drop"}
+    report = replay(tmp_path, ["a", "b", "c"])
+
+    assert report.agreed == 3
+    assert report.findings == ["a", "b", "c"]  # the triage CSV must not repeat a row
+
+
+def test_a_replay_against_a_database_that_stays_down_lists_what_it_did_not_write(
+    link, tmp_path, monkeypatch
+):
+    link["state"]["script"] = {n: "drop" for n in range(2, 40)}
+    report = replay(tmp_path, ["a", "b", "c", "d"])
+
+    assert report.agreed == 1  # "a", committed before the link failed
+    assert report.failed_writes == [
+        "paper-b 1", "paper-c 1", "paper-d 1",
+    ]  # and it ended rather than failing each against a dead connection or raising
+
+
+def test_a_statement_timeout_costs_one_question_not_the_replay(link, tmp_path):
+    link["state"]["script"] = {2: "timeout"}
+    report = replay(tmp_path, ["a", "b", "c"])
+
+    assert report.failed_writes == ["paper-b 1"]
+    assert report.agreed == 2
+    assert report.reconnects == 0
+
+
+def test_a_replayed_code_outside_the_syllabus_is_reported_not_applied(link, tmp_path):
+    path = tmp_path / "r.jsonl"
+    path.write_text(json.dumps({
+        "question_id": "x", "paper_slug": "p", "display_label": "1", "pages": 1,
+        "primary": "9.9", "confidence": 0.9, "secondary": [],
+    }) + "\n", encoding="utf-8")
+    report = verify_structured.resume_structured_from_results(
+        "physics-5054", path, confidence_floor=0.75
+    )
+
+    assert report.unknown_codes == ["9.9"]
+    assert link["applied"] == []
+
+
+def test_a_dry_replay_rolls_every_question_back(link, tmp_path):
+    report = replay(tmp_path, ["a", "b"], dry_run=True)
+
+    assert report.agreed == 2
+    (conn,) = link["conns"]
+    assert conn.rolled_back and not conn.committed
+
+
+def test_the_main_write_pass_reconnects_too(link, world):
+    # Not only the replay: the run's own write pass shares the same code, so a
+    # drop during a fresh run no longer costs the whole batch either.
+    with_pdf = world["with_pdf"]
+    world["state"]["questions"] = [
+        with_pdf(question(id="a", display_label="1")),
+        with_pdf(question(id="b", display_label="2")),
+        with_pdf(question(id="c", display_label="3")),
+    ]
+    link["state"]["script"] = {2: "drop"}
+
+    report = run(world, dry_run=False)
+
+    assert report.agreed == 3
+    assert report.reconnects == 1
+    assert report.failed_writes == []

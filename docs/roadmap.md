@@ -1284,10 +1284,22 @@ now writes `verify-mcq-<subject>-approved-disagreements.csv` (paper, label,
 tag on file, model's tag) — going forward; the existing ~125 need a re-run to
 be listed.
 
-**Not done, deliberately:** `resume_structured_from_results` has the same
-weakness the MCQ replay just lost — on a dropped connection it fails every
-remaining row against the dead link rather than reconnecting. It wasn't part
-of this ask, so it is flagged, not changed.
+**The structured verifier's replay fixed the same way (2026-09-24, later).**
+`resume_structured_from_results` had the weakness the MCQ replay had just
+lost: a dropped connection was caught like any other error, rolled back on
+the dead link, and then *every remaining row failed against it*. It also had
+no tests at all. The retry logic now lives once, in `commit_each`
+(`verify_write.py`), and both verifiers' write passes -- MCQ, and structured
+(its fresh-run write pass as well as its replay) -- go through it: one
+transaction per unit, reconnect-and-retry-the-same-unit, a `lock_timeout`, and
+a scratch report merged only after a commit. The structured merge has to carry
+its `findings` too, or a retried question would appear twice in the triage
+CSV. Re-tested against the real database with a socket severed mid-replay:
+one reconnect, six of six written, six findings, none duplicated. Eight new
+tests (the replay had none); three mutations of the wiring are each caught --
+after making the test fake count *before* it fails, as the real applier does,
+because the first version raised before counting and two of those mutants
+survived it (a drop can land at `commit()`, after the tally).
 
 ---
 

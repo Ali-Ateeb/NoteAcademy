@@ -25,6 +25,7 @@ import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import psycopg
 
@@ -99,98 +100,82 @@ def _close_quietly(conn: psycopg.Connection) -> None:
         pass
 
 
-def write_mcq_decisions(
-    subject_slug: str,
-    answers: list[dict],
-    confidence_floor: float,
-    report: VerifyReport,
+def commit_each(
+    conn: psycopg.Connection,
+    units: list,
     *,
+    apply_unit: Callable[[psycopg.Connection, Any, Any], None],
+    new_part: Callable[[], Any],
+    merge: Callable[[Any, Any], None],
+    label: Callable[[Any], str],
+    report: Any,
     dry_run: bool = False,
     lock_timeout_ms: int = 4000,
     max_reconnects: int = 5,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] | None = None,
 ) -> None:
-    """Apply saved answers to the database, one canonical question (and its
-    duplicates) per transaction.
+    """Apply each unit of work in its own transaction, surviving a dropped link.
 
-      * each group commits on its own, so a failure costs that group, not the
-        run -- and `_apply_one` re-reads current state, so replaying a group
+    Shared by both automated verifiers' write passes. Takes ownership of
+    `conn` and closes it -- or whichever connection replaced it -- when done.
+
+      * each unit commits on its own, so a failure costs that unit, not the
+        run -- and the appliers re-read current state, so replaying a unit
         that already landed just reads as agreement with itself;
-      * a lost connection is re-opened and *the same group retried*, up to
+      * a lost connection is re-opened and *the same unit retried*, up to
         `max_reconnects` times in all, with a backoff between;
       * a short `lock_timeout` skips a row another session is holding instead
         of stalling the pass until the statement timeout kills it;
-      * counts are kept per group and merged only once the group has
-        committed, so a retried group is never counted twice.
+      * an applier writes into a fresh scratch report, merged into `report`
+        only once the unit has committed, so a retried unit is never counted
+        twice.
 
     If the database stays unreachable past `max_reconnects`, the remaining
-    groups are listed in `report.failed_writes` and the pass ends; the saved
-    results file is what replays them.
+    units are listed in `report.failed_writes` and the pass ends; the saved
+    results file is what replays them. `report` needs `skipped_locked`,
+    `failed_writes` and `reconnects`.
     """
     from .load import connect
 
-    def label(answer: dict) -> str:
-        return f"{answer['paper_slug']} {answer['display_label']}"
+    # Looked up now, not as a default argument, so it can be substituted.
+    sleep = sleep or time.sleep
 
-    conn = connect(settings.database_url)
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                select t.code, t.id
-                  from topics t
-                  join syllabus_versions sv on sv.id = t.syllabus_version_id
-                  join subjects s on s.id = sv.subject_id
-                 where s.slug = %s and sv.is_current
-                """,
-                (subject_slug,),
-            )
-            topic_ids = {row["code"]: row["id"] for row in cur.fetchall()}
-        conn.rollback()  # end the read's transaction; each group opens its own
-
-        for index, answer in enumerate(answers):
-            if answer["topic_code"] not in topic_ids:
-                report.unknown_codes.append(answer["topic_code"])
-                continue
-
+        for index, unit in enumerate(units):
             while True:
-                part = VerifyReport()
+                part = new_part()
                 try:
                     with conn.cursor() as cur:
                         # SET takes no bind parameters; the value is an int.
                         cur.execute(f"set local lock_timeout = {int(lock_timeout_ms)}")
-                    for question_id in answer["group"]:
-                        _apply_one(
-                            conn, question_id, answer["topic_code"], topic_ids,
-                            confidence_floor, part, leave_approved=True,
-                        )
+                    apply_unit(conn, unit, part)
                     if dry_run:
                         conn.rollback()
                     else:
                         conn.commit()
-                    _merge_counts(report, part)
+                    merge(report, part)
                     break
                 except psycopg.errors.LockNotAvailable:
                     _rollback_quietly(conn)
                     report.skipped_locked += 1
-                    log.warning("%s is locked by another session; skipped", label(answer))
+                    log.warning("%s is locked by another session; skipped", label(unit))
                     break
                 except psycopg.OperationalError as error:
                     if not _link_lost(error, conn):
                         # The server refused (a statement timeout, say) but the
-                        # link is fine: this group's failure, nobody else's.
+                        # link is fine: this unit's failure, nobody else's.
                         _rollback_quietly(conn)
-                        report.failed_writes.append(label(answer))
-                        log.warning("%s failed to write: %s", label(answer), error)
+                        report.failed_writes.append(label(unit))
+                        log.warning("%s failed to write: %s", label(unit), error)
                         break
 
-                    # The link itself is gone. Re-open it and retry this group.
+                    # The link itself is gone. Re-open it and retry this unit.
                     if report.reconnects >= max_reconnects:
-                        report.failed_writes.extend(label(a) for a in answers[index:])
+                        report.failed_writes.extend(label(u) for u in units[index:])
                         log.error(
-                            "database unreachable after %d reconnects; %d group(s) not "
+                            "database unreachable after %d reconnects; %d unit(s) not "
                             "written. Replay them from the saved results file.",
-                            max_reconnects, len(answers) - index,
+                            max_reconnects, len(units) - index,
                         )
                         return
                     report.reconnects += 1
@@ -208,11 +193,67 @@ def write_mcq_decisions(
                         log.warning("reconnect failed: %s", reconnect_error)
                 except psycopg.Error as error:
                     _rollback_quietly(conn)
-                    report.failed_writes.append(label(answer))
-                    log.warning("%s failed to write: %s", label(answer), error)
+                    report.failed_writes.append(label(unit))
+                    log.warning("%s failed to write: %s", label(unit), error)
                     break
     finally:
         _close_quietly(conn)
+
+
+def write_mcq_decisions(
+    subject_slug: str,
+    answers: list[dict],
+    confidence_floor: float,
+    report: VerifyReport,
+    *,
+    dry_run: bool = False,
+    lock_timeout_ms: int = 4000,
+    max_reconnects: int = 5,
+    sleep: Callable[[float], None] | None = None,
+) -> None:
+    """Apply saved multiple-choice answers, one canonical question (and its
+    duplicates) per transaction. See `commit_each`."""
+    from .load import connect
+
+    conn = connect(settings.database_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select t.code, t.id
+                  from topics t
+                  join syllabus_versions sv on sv.id = t.syllabus_version_id
+                  join subjects s on s.id = sv.subject_id
+                 where s.slug = %s and sv.is_current
+                """,
+                (subject_slug,),
+            )
+            topic_ids = {row["code"]: row["id"] for row in cur.fetchall()}
+    except BaseException:
+        _close_quietly(conn)
+        raise
+
+    units = []
+    for answer in answers:
+        if answer["topic_code"] not in topic_ids:
+            report.unknown_codes.append(answer["topic_code"])
+        else:
+            units.append(answer)
+
+    def apply_group(conn: psycopg.Connection, answer: dict, part: VerifyReport) -> None:
+        for question_id in answer["group"]:
+            _apply_one(
+                conn, question_id, answer["topic_code"], topic_ids,
+                confidence_floor, part, leave_approved=True,
+            )
+
+    commit_each(
+        conn, units,
+        apply_unit=apply_group, new_part=VerifyReport, merge=_merge_counts,
+        label=lambda a: f"{a['paper_slug']} {a['display_label']}", report=report,
+        dry_run=dry_run, lock_timeout_ms=lock_timeout_ms,
+        max_reconnects=max_reconnects, sleep=sleep,
+    )
 
 
 def resume_mcqs_from_results(

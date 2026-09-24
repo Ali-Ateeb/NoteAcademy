@@ -1099,16 +1099,18 @@ def tag_verify_structured(
         table.add_row("gone or changed since the run", str(result.skipped_changed))
         table.add_row("locked by another session, skipped", str(result.skipped_locked))
         table.add_row("write failed", str(len(result.failed_writes)))
+        table.add_row("connection re-opened", str(result.reconnects))
         console.print(table)
         if result.findings:
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             path = report_path or settings.work_dir / f"verify-structured-{subject}-{stamp}.csv"
             write_findings_csv(result.findings, path)
             console.print(f"triage report: {path}")
-        if result.skipped_locked:
+        if result.skipped_locked or result.failed_writes:
             console.print(
-                "[yellow]Some rows were held by another session. Re-run this same "
-                "command once it has gone to pick them up.[/yellow]"
+                "[yellow]Some rows were not written (held by another session, or the "
+                "database was unreachable). Re-run this same command to pick them "
+                "up; ones that already landed are harmless.[/yellow]"
             )
         if dry_run:
             console.print("[yellow]dry run: rolled back[/yellow]")
@@ -1147,7 +1149,18 @@ def tag_verify_structured(
     table.add_row("source PDF missing, skipped", str(report.skipped_no_pdf))
     table.add_row("changed while running, skipped", str(report.skipped_changed))
     table.add_row("call failed, skipped", str(len(report.failed_calls)))
+    table.add_row("locked by another session, skipped", str(report.skipped_locked))
+    table.add_row("write failed", str(len(report.failed_writes)))
+    table.add_row("connection re-opened", str(report.reconnects))
     console.print(table)
+    if report.results_path:
+        console.print(f"model answers saved: {report.results_path}")
+    if report.failed_writes or report.skipped_locked:
+        console.print(
+            "[yellow]Some questions were not written. Re-run with "
+            f"--from-results {report.results_path} to pick them up; ones that already "
+            "landed are harmless.[/yellow]"
+        )
 
     shown = [f for f in report.findings if verbose or f.outcome == "disagreed"]
     for f in shown:
