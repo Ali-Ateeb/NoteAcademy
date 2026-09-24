@@ -60,6 +60,7 @@ export async function GET(request: Request) {
     const questions = await getQuestionsByTopics(subject, topics);
     return NextResponse.json({ questions });
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    console.error("revision-queue failed:", error);
+    return NextResponse.json({ error: "Could not load revision questions." }, { status: 500 });
   }
 }

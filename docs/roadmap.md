@@ -1360,15 +1360,47 @@ falls back to Vercel's production hostname, and the sitemap route logs a
 warning if it is using localhost). Setting `metadataBase` from it also ended
 the "metadataBase is not set" build warning.
 
-**Open, from the same audit, not done:** raw database error text returned to
-the public by `question-meta`, `revision-queue` and `review-queue` (500s carry
-`error.message`); the solver's cache lookup runs before its approved-only
-check; the 334 approved structured questions whose text carries barcode control
-characters; 134 in-scope approved parts with no `max_marks` (85 print the mark
-as `[n]` right in the text -- the known "136 missing" item); `next`'s nested
-`postcss` advisory (only fixable by a breaking upgrade to Next 16); and
-biology/chemistry, which the sitemap now lists in full, still read "Ingestion
-in progress" on `/subjects`.
+**Open, from the same audit, not done:** `next`'s nested `postcss` advisory
+(only fixable by a breaking upgrade to Next 16). The rest of the audit's open
+items are closed below.
+
+### The rest of the audit, closed (2026-09-24)
+
+- **Raw database errors.** `question-meta`, `revision-queue` and `review-queue`
+  now log the error server-side and return a fixed message; none echoes
+  `error.message` any more. (`/api/review` still does, but only to a signed-in
+  reviewer.)
+- **Solver cache.** `/api/solve` looked in `question_solutions` before checking
+  the question was approved, so a cached solution for a since-unapproved
+  question was still served. Both lookups now run together and the approved
+  check comes first. Not exercised end to end here (it needs a signed-in
+  session); the change is the order of two checks.
+- **Control characters.** 354 question texts and 35 mark schemes carried them,
+  in two kinds. The page header's barcode (a font) had been glued to the end of
+  the question above it, sometimes with a "BLANK PAGE" label; that is removed.
+  In mark schemes `\x01` is a symbol-font glyph: the reaction arrow in
+  chemistry equations (33 of 35) and a tick in a tick-box table (2), so those
+  become `→` and `✓` rather than vanishing (dropping the arrow would leave
+  "2H2O2   2H2O + O2"). `text_clean.py` does this at ingest (`upsert_question`)
+  and `noteacademy clean-control-characters` brought the existing rows into
+  line (idempotent; dry-run by default). Not fixed: 34 diagram labels come out
+  of the PDF as glyph ids ("ILODPHQW HOHFWURQ EHDP" is "filament electron
+  beam", shifted by three). They are inside a figure the crop already shows,
+  so they were left alone.
+- **`max_marks`.** 133 of the 134 in-scope approved leaves without one now have
+  it: the mark is printed as `[n]` at the end of the leaf's own text, exactly
+  one per leaf. Cross-checked two ways: 98 of the 103 questions whose totals
+  could be checked sum exactly to their printed `[Total: N]`, and the mark
+  scheme's own `[max N]` agrees where it has one (the 3 that differ are
+  per-section caps). Three questions do not sum (chemistry 5070 2024 O/N P21
+  and P22 Q7, physics 5054 2026 M/J P22 Q7, each short by 1-2 marks); the
+  likelier cause is a part the segmenter lost, not a wrong bracket, and they
+  are worth a look. One leaf is left: physics 5054 2017 O/N P22 `11(a)(ii)`
+  ("magnetic screening"), whose text has no bracket and whose siblings' stored
+  marks look wrong too. That is the known "510 leaves disagree" item.
+- **"Ingestion in progress".** Not a bug: that text is fixture mode's. The live
+  database has biology, chemistry and physics published (mathematics is not),
+  so the sitemap and `/subjects` agree.
 
 ---
 

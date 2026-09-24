@@ -46,6 +46,7 @@ export async function POST(request: Request) {
   try {
     return NextResponse.json({ questions: await getQuestionMetaByIds(ids) });
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    console.error("question-meta failed:", error);
+    return NextResponse.json({ error: "Could not load question details." }, { status: 500 });
   }
 }

@@ -1742,6 +1742,56 @@ def fix_spurious_crops(
             console.print(f"[green]removed {removed}[/green]")
 
 
+@app.command(name="clean-control-characters")
+def clean_control_characters_cmd(
+    dry_run: bool = typer.Option(
+        True, help="Report what would change, but write nothing. Pass --no-dry-run to apply."
+    ),
+) -> None:
+    """Remove barcode and symbol-font control characters from stored question
+    text and mark schemes.
+
+    Ingest now cleans this as it loads (`text_clean.py`); this brings the rows
+    loaded before that up to the same state. Idempotent: a row with nothing
+    left to clean is not touched, so running it twice changes nothing.
+    """
+    from .load import connect
+    from .text_clean import clean_extracted_text
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+
+    # (column, is it a mark scheme -- where the glyph is a symbol to keep)
+    columns = (("question_text", False), ("mark_scheme_text", True), ("examiner_comment", False))
+    control = "[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]"
+
+    with connect(settings.database_url) as conn:
+        changed = 0
+        for column, symbols in columns:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"select id, {column} as text from questions where {column} ~ %s",
+                    (control,),
+                )
+                rows = cur.fetchall()
+                for row in rows:
+                    cleaned = clean_extracted_text(row["text"], symbols=symbols)
+                    cur.execute(
+                        f"update questions set {column} = %s where id = %s",
+                        (cleaned or None, row["id"]),
+                    )
+                changed += len(rows)
+            console.print(f"{column}: {len(rows)} row(s) with control characters")
+
+        if dry_run:
+            conn.rollback()
+            console.print(f"[yellow]dry run: would clean {changed} value(s), rolled back[/yellow]")
+        else:
+            conn.commit()
+            console.print(f"[green]cleaned {changed} value(s)[/green]")
+
+
 @app.command(name="audit-mcq-crops")
 def audit_mcq_crops_cmd(
     papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),

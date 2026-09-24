@@ -57,6 +57,7 @@ export async function GET(request: Request) {
     const page = await getReviewQueue({ subjectSlug, flag }, offset, limit);
     return NextResponse.json(page);
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    console.error("review-queue failed:", error);
+    return NextResponse.json({ error: "Could not load the review queue." }, { status: 500 });
   }
 }

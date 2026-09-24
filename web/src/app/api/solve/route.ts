@@ -119,25 +119,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "questionId is required." }, { status: 400 });
   }
 
-  const { data: cached } = await service
-    .from("question_solutions")
-    .select("solution")
-    .eq("question_id", questionId)
-    .maybeSingle();
-  if (cached) {
-    return NextResponse.json({ solution: cached.solution as string, cached: true });
-  }
-
-  const { data: question } = await service
-    .from("questions")
-    .select(
-      "id,display_label,question_type,question_text,mark_scheme_text,examiner_comment,correct_option,extraction_status",
-    )
-    .eq("id", questionId)
-    .maybeSingle<QuestionRow>();
+  // Both looked up together, but the approved check comes first: a cached
+  // solution for a question that was later un-approved (or never was) must not
+  // be served just because it exists -- the solution is derived from the
+  // question's text and mark scheme, which are what the gate protects.
+  const [{ data: cached }, { data: question }] = await Promise.all([
+    service
+      .from("question_solutions")
+      .select("solution")
+      .eq("question_id", questionId)
+      .maybeSingle(),
+    service
+      .from("questions")
+      .select(
+        "id,display_label,question_type,question_text,mark_scheme_text,examiner_comment,correct_option,extraction_status",
+      )
+      .eq("id", questionId)
+      .maybeSingle<QuestionRow>(),
+  ]);
   // Same gate as everything else served to students: unapproved leaks nothing.
   if (!question || question.extraction_status !== "approved") {
     return NextResponse.json({ error: "Question not found." }, { status: 404 });
+  }
+  if (cached) {
+    return NextResponse.json({ solution: cached.solution as string, cached: true });
   }
 
   const { data: withinQuota } = await service.rpc("consume_quota", {
