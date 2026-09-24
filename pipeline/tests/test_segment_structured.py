@@ -15,6 +15,7 @@ from noteacademy_pipeline.segment_structured import (
     _fill_missing_roots,
     _unconfirmed_roots,
     find_markers,
+    is_page_furniture,
     segment_structured_paper,
     validate_items,
 )
@@ -186,6 +187,50 @@ class TestSegmentStructuredPaper:
         items, _ = segment_structured_paper(out)
         item_one = next(item for item in items if item.display_label == "1")
         assert [page for page, _ in item_one.regions] == [1]
+
+    def test_a_page_number_with_barcode_residue_is_not_pulled_into_the_crop(self, tmp_path):
+        # The same gap, but the strip is the real header: page number and the
+        # barcode's commas, not a bare digit. It used to survive as a 19pt crop.
+        doc = pymupdf.open()
+        page1 = doc.new_page(width=595.0, height=842.0)
+        _insert_label(page1, QUESTION_X, 700.0, "1")
+        _insert_body(page1, BODY_X, 700.0, "Long question continues onto page 2.")
+        page2 = doc.new_page(width=595.0, height=842.0)
+        page2.insert_text((296.0, 55.0), "6 ,", fontsize=10)
+        page2.insert_text((330.0, 55.0), ", ,", fontsize=10)
+        # Low enough that the gap above it is taller than the segmenter's own
+        # 5pt floor -- a gap shorter than that never reaches the text check at
+        # all, and a test placed there proves nothing.
+        _insert_label(page2, QUESTION_X, 100.0, "2")
+        _insert_body(page2, BODY_X, 100.0, "Next question.")
+        out = tmp_path / "barcode-gap.pdf"
+        doc.save(out)
+        doc.close()
+
+        items, _ = segment_structured_paper(out)
+        item_one = next(item for item in items if item.display_label == "1")
+        assert [page for page, _ in item_one.regions] == [1]
+
+
+class TestPageFurniture:
+    def test_the_exact_strip_text_from_a_real_paper(self):
+        assert is_page_furniture("6 ,\x01\x01\x01\x01 \x01\x01\x01\x01\x01\x01\x01\x07,")
+
+    def test_a_bare_page_number_and_nothing_at_all(self):
+        assert is_page_furniture("12")
+        assert is_page_furniture("")
+        assert is_page_furniture(" , \x01 ")
+
+    def test_a_printed_blank_page_with_its_barcode_and_number(self):
+        assert is_page_furniture("13 BLANK PAGE")
+        assert is_page_furniture("BLANK\n PAGE ,")
+        assert is_page_furniture("13 , blank page")
+
+    def test_real_content_is_never_furniture(self):
+        assert not is_page_furniture("BLANK PAGE. Now answer part (b) here.")
+        assert not is_page_furniture("Explain why the pressure increases.")
+        assert not is_page_furniture("6 (b) State the unit")
+        assert not is_page_furniture("P,")  # a genuine one-letter answer
 
 
 class TestValidateItems:

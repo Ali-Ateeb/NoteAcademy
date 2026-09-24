@@ -67,6 +67,32 @@ _OWN_LABEL_RE = (
 # item's marker on the following page — real content, but not this item's.
 PAGE_NUMBER_ONLY_RE = re.compile(r"^\d+$")
 
+# What a page's header strip leaves behind besides its page number. The
+# barcode there is a font, so it extracts as text: control characters, and
+# commas between the glyph runs -- a real one reads "6 ,\x01\x01\x01\x01
+# \x01\x01\x01\x07,". None of it is content.
+_FURNITURE_NOISE_RE = re.compile(r"[\x00-\x1f\x7f,\s]")
+
+# Papers pad out to a whole sheet with pages that say only this (plus the same
+# barcode and page number). One turned up as a 30pt crop in the middle of a
+# real question -- 5 of biology 2024 O/N P22 -- just over the cleanup tool's
+# 30pt cutoff, and not the question's last crop, so it was missed twice over.
+_BLANK_PAGE_RE = re.compile(r"BLANK\s+PAGE", re.IGNORECASE)
+
+
+def is_page_furniture(text: str) -> bool:
+    """Is this slice of a page nothing but its page number and barcode?
+
+    The check used to be `PAGE_NUMBER_ONLY_RE` alone, which a bare "6"
+    satisfies and "6 ,<barcode>" does not -- so the header strip of a
+    continuation page counted as content, was kept as a 19pt crop of "the
+    question", and the crop's file was later found missing. It came up on
+    every structured paper loaded after the last cleanup: 61 crops.
+    """
+    significant = _BLANK_PAGE_RE.sub("", _FURNITURE_NOISE_RE.sub(" ", text))
+    significant = _FURNITURE_NOISE_RE.sub("", significant)
+    return not significant or bool(PAGE_NUMBER_ONLY_RE.match(significant))
+
 # "Section A" / "Section B", centred rather than in any gutter. Not part of
 # any question, but sitting between one question's last part and the next
 # question's first one — extending a region straight through to the next
@@ -523,7 +549,7 @@ def segment_structured_paper(
                 candidate = (CROP_LEFT, top, CROP_RIGHT, y1)
                 if y1 - top > 5.0:
                     candidate_text = extract_text(doc, page_no, candidate).strip()
-                    if candidate_text and not PAGE_NUMBER_ONLY_RE.match(candidate_text):
+                    if candidate_text and not is_page_furniture(candidate_text):
                         regions.append((page_no, candidate))
 
                 spans_to_next_page = (
