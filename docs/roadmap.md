@@ -1405,11 +1405,19 @@ items are closed below.
   `pipeline/work/max-marks-before-2026-09-24.json`, git-ignored). Biology 2022
   M/J P21 `3(c)` (33) was set to 5 by hand: an inner bracket had inflated the
   sum, but 3+2+4+5 is its 14. 961 questions now sum to their printed total.
-  **Still unreconciled, 6:** four are EITHER/OR questions (the printed total
-  counts one branch, so the sums cannot match) -- physics 2021 M/J P22 Q8,
-  2021 O/N P21 Q7, 2021 O/N P22 Q5; physics 2021 M/J P21 Q9 (17 vs 15) and
-  chemistry 2017 M/J P22 B9 (9 vs 10) are unexplained, and physics 2022 M/J
-  P21 `6(b)(ii)` has two brackets summing to 4 but a total that needs 2.
+  **The 6 that did not reconcile, resolved:** three are EITHER/OR questions
+  (the printed total counts one branch, so the sums cannot match): physics
+  2021 M/J P22 Q8, 2021 O/N P21 Q7, 2021 O/N P22 Q5. Physics 2021 M/J P21 Q9
+  was a real error: the `[3]` printed at the end of (d) covers both (d)(i) and
+  (d)(ii), and the bracket rule had given (d)(ii) all 3; the mark scheme says
+  C1+A1 for (i) and one B1 for (ii), so (d)(ii) is now 1 and Q9 sums to 15.
+  Two were false alarms: physics 2022 M/J P21 `6(b)(ii)` already had the right
+  2 (its text just begins with the tail of part (i), "[2] (ii) ..."), and
+  chemistry 2017 M/J P22 B9 does sum to 10 once its `B9(e)` row is counted --
+  that row holds part (e)(i)'s own text and mark, with (ii) and (iii) as its
+  children, which the leaf-only check skipped. Worth knowing when reading the
+  data: a bracket at the end of a part that closes a group can cover the whole
+  group, so a sum check per question is the guard, not the bracket alone.
   Another 148 questions print no single total (or one per branch), so this
   check cannot reach them.
 - **"Ingestion in progress".** Not a bug: that text is fixture mode's. The live
