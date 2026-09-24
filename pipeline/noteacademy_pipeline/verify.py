@@ -422,6 +422,18 @@ class VerifyReport:
     # equivalent failure mode since a person's decision either exists or the
     # position was left blank.
     failed_calls: list[str] = field(default_factory=list)
+    # Where the model's answers were saved, before any write was attempted.
+    results_path: Path | None = None
+    # Approved questions the model disagreed with: (question id, the tag on
+    # file, the model's tag). Reported, never written -- but the count alone
+    # left no way to find *which* questions they were.
+    approved_disagreements: list[tuple[str, str, str]] = field(default_factory=list)
+    # Write pass only. Rows another session held past the lock timeout, groups
+    # that would not write (or were never reached), and how many times the
+    # connection had to be re-opened along the way.
+    skipped_locked: int = 0
+    failed_writes: list[str] = field(default_factory=list)
+    reconnects: int = 0
 
 
 def apply_verification(
@@ -545,6 +557,7 @@ def _apply_one(
             report.agreed += 1
         elif approved and leave_approved:
             report.disagreed_approved += 1
+            report.approved_disagreements.append((question_id, pass1_code, pass2_code))
         else:
             # Below the floor regardless of how confident the first pass was:
             # a second independent method landing somewhere else is new
@@ -598,6 +611,7 @@ def verify_mcqs_with_model(
     thinking: bool | None = None,
     workers: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
+    results_path: Path | None = None,
 ) -> VerifyReport:
     """The automated counterpart to `tag-verify-export`/`tag-verify-apply`:
     a vision-capable model reads each canonical MCQ's own crop and chooses a
@@ -653,8 +667,6 @@ def verify_mcqs_with_model(
     crop_dir.mkdir(parents=True, exist_ok=True)
 
     # Phase 1: every model call. No database connection open at all.
-    decisions: dict[str, str] = {}  # canonical question id -> topic_code
-
     # Rendering is local and quick, and PyMuPDF is not something to share
     # between threads, so every crop is made here, in order, before any call.
     work: list[tuple[TaggedQuestion, Path]] = []
@@ -691,6 +703,7 @@ def verify_mcqs_with_model(
         on_done=on_progress,
     )
 
+    answers: list[dict] = []
     for (question, _crop_path), assignment, error in outcomes:
         if error is not None:
             log.warning(
@@ -703,35 +716,33 @@ def verify_mcqs_with_model(
             report.unknown_codes.append(assignment.topic_code)
             continue
 
-        decisions[question.id] = assignment.topic_code
+        answers.append({
+            "question_id": question.id,
+            "paper_slug": question.paper_slug,
+            "display_label": question.display_label,
+            "topic_code": assignment.topic_code,
+            "confidence": assignment.confidence,
+            # The duplicates this answer is applied to, as they stand now, so a
+            # replay needs neither the PDFs nor the grouping.
+            "group": list(groups[question.id]),
+        })
 
-    # Phase 2: every write, in one connection's worth of fast queries with no
-    # model call — and therefore no multi-second gap — between any two of
-    # them.
-    with connect(settings.database_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                select t.code, t.id
-                  from topics t
-                  join syllabus_versions sv on sv.id = t.syllabus_version_id
-                  join subjects s on s.id = sv.subject_id
-                 where s.slug = %s and sv.is_current
-                """,
-                (subject_slug,),
-            )
-            topic_ids = {row["code"]: row["id"] for row in cur.fetchall()}
+    # Phase 1c: the model's answers, on disk, before anything is written.
+    #
+    # Everything above is the expensive part -- hundreds of vision calls -- and
+    # everything below is the fragile part: hundreds of statements over a link
+    # that does drop. The chemistry run (1,474 questions) lost every answer to
+    # `server closed the connection unexpectedly` partway through the write
+    # pass and had to pay for the model again. Saved here, a failed write costs
+    # a retry of the writes, not of the spend (`resume_mcqs_from_results`).
+    from .verify_write import save_mcq_results, write_mcq_decisions
 
-        for canonical_id, topic_code in decisions.items():
-            for question_id in groups[canonical_id]:
-                _apply_one(conn, question_id, topic_code, topic_ids, confidence_floor, report,
-                           leave_approved=True)
+    report.results_path = save_mcq_results(subject_slug, answers, results_path)
+    log.info("model results saved to %s", report.results_path)
 
-        if dry_run:
-            conn.rollback()
-        else:
-            conn.commit()
-
+    # Phase 2: every write -- per question group, each its own transaction,
+    # reconnecting if the link drops. See `write_mcq_decisions`.
+    write_mcq_decisions(subject_slug, answers, confidence_floor, report, dry_run=dry_run)
     return report
 
 

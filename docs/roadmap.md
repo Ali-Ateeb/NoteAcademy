@@ -1185,7 +1185,7 @@ seconds of opening it. In production the platform CDN adds a second layer
 (the response is `public`), so only the very first viewer of a crop pays
 the cold read at all.
 
-**A lesson worth keeping: never run `next build` while a dev server is up.**
+**A lesson worth keeping: `next build` and `next dev` share `.next`.** (`NEXT_DIST_DIR` already existed for exactly this; use it.)
 Both write to `.next`; a build in the middle of a dev session leaves the dev
 server referencing chunk files that no longer exist (`Cannot find module
 './611.js'`), and every page and every crop 500s until `.next` is deleted
@@ -1219,17 +1219,75 @@ view to compute every question's topics before it could filter. Measured as
 `postgres` that looked plausible; measured as `anon` it made no difference.
 Nothing ever called it, and `0041` drops it.
 
-**A stale e2e test, found but not fixed.** Running `e2e/smoke.mjs` against a
-production build turned up a run of failures — but every one traced back to
-the test's own hardcoded expectations having drifted from live data, not a
-regression: `physics-5054-2019-may-june-p12` has 40 questions now, not the
-12 the test still expects, and `/topics/physics-5054/dynamics/practice`
-404s outright because `dynamics` is no longer a real topic slug in the
-current syllabus (real ones include `motion`, `pressure`, ...). Confirmed
-by hand that both pages work correctly against current data. Left as found
-— refreshing the smoke test's fixtures against the current syllabus and
-database is its own piece of work, not something to fold into this one
-silently.
+**The e2e smoke test — first misdiagnosed here, corrected below.** This
+section originally said `e2e/smoke.mjs` had "drifted from live data" (a
+12-question paper that now has 40; a `dynamics` topic that no longer exists).
+That was wrong. The test was written for the seed fixtures and those numbers
+are exactly the fixtures' (12 seed MCQs, a seed `dynamics` topic); it failed
+because the build I ran had picked up `.env.local` and was serving the live
+database. Fixed in 2026-09-24's write-up below.
+
+---
+
+## The smoke test made safe, and the MCQ verifier made crash-survivable (2026-09-24)
+
+**`npm run e2e` is now the only way to run the smoke test, and it can't touch
+live data.** The test is written against the seed fixtures, and its
+review-queue section presses "approve" — against a database-backed build that
+is a real write. `e2e/run.mjs` builds in fixture mode (every Supabase and
+solver variable blanked; an empty value beats `.env.local`, and `NEXT_PUBLIC_`
+ones are inlined at build time so it has to happen there), into its own
+`.next-e2e` directory so it can run beside `npm run dev`, serves it, runs the
+test, and tears both down. `smoke.mjs` itself now refuses to run (exit 2,
+before anything writes) if the seed's 12-question paper isn't what it is being
+served — checked against a live-data server. All 28 checks pass. Two real
+drifts did turn up once it ran in the right mode, both from the split viewer:
+its panes fetch `/api/paper-doc`, and Chromium never reports those responses
+finished, so `networkidle` never comes on a paper page (the test now waits for
+the panes' own "isn't available" state); and the 404s those requests get in
+fixture mode were being counted as JS errors (filtered by URL, so a 404
+anywhere else still fails the test).
+
+**The MCQ verifier no longer loses its work to a dropped connection.** The
+chemistry run's ~1,500 model answers were lost when `server closed the
+connection unexpectedly` rolled back its single write transaction, because the
+answers lived only in memory. Now (`verify_write.py`):
+  * the model's answers are saved to `verify-mcq-<subject>-results.jsonl`
+    before the first write;
+  * each canonical question and its duplicates commit as their own
+    transaction, with counts merged only after a commit, so a retried group is
+    never counted twice;
+  * a lost connection is re-opened (backoff, up to 5) and *the same group
+    retried*; if the database stays down the pass ends cleanly and lists what
+    wasn't written instead of raising;
+  * `tag-verify-auto --from-results <file>` replays a saved file without
+    calling the model, and is safe to repeat;
+  * a short `lock_timeout` skips a row another session holds.
+
+**Found only by testing against the real database:** the first version judged
+"is the link dead?" by `conn.closed`/`conn.broken`. With a socket severed under
+a live connection psycopg raises `OperationalError` but leaves both `False`, so
+a dead link read as "the server refused one statement" — it rolled back on the
+dead connection and lost every remaining group. All the fake-connection tests
+passed. It now classifies by the error: a server refusal always carries a
+SQLSTATE (statement timeout `57014`, lock `55P03`); a failure of the link
+itself has none. Re-tested live (six real questions, socket severed mid-run):
+one reconnect, all six written, none double-counted. (Terminating the backend
+with `pg_terminate_backend` does nothing here — the pooler swaps it and the
+client never notices — so it is not a way to test this.) Each of five
+deliberate mutations of the write pass is caught by a test.
+
+**Also new: the approved-questions-the-model-disagreed-with list is now
+persisted.** The report used to carry only a count (roughly 125 across biology
+and chemistry, unresolved) and the count vanished with the process. Every run
+now writes `verify-mcq-<subject>-approved-disagreements.csv` (paper, label,
+tag on file, model's tag) — going forward; the existing ~125 need a re-run to
+be listed.
+
+**Not done, deliberately:** `resume_structured_from_results` has the same
+weakness the MCQ replay just lost — on a dropped connection it fails every
+remaining row against the dead link rather than reconnecting. It wasn't part
+of this ask, so it is flagged, not changed.
 
 ---
 
@@ -1266,8 +1324,8 @@ silently.
     8 biology MCQs rejected as genuinely out-of-syllabus, 2 physics
     structured disagreements resolved by hand, chemistry re-confirmed. ~125
     approved-but-model-disagreed questions across biology/chemistry remain
-    unresolved (reported only, no persisted list) — future work if worth
-    doing.
+    unresolved (reported only). Every run now writes them to a CSV (see
+    2026-09-24), so a re-run of `tag-verify-auto` lists which they are.
 12. ~~**Upload the source PDFs and finish the split viewer.**~~ Done (see
     2026-09-23 write-up): 606 documents uploaded, `SplitViewer`'s panes
     render real PDFs via signed URLs and `pdfjs-dist`.

@@ -9,7 +9,7 @@ import json
 import httpx
 import pytest
 
-from noteacademy_pipeline import deepseek, verify
+from noteacademy_pipeline import deepseek, verify, verify_write
 from noteacademy_pipeline.config import Settings
 from noteacademy_pipeline.deepseek import DeepSeekAccountError
 from noteacademy_pipeline.naming import caie_filename
@@ -180,6 +180,9 @@ def test_tag_from_crop_passes_thinking_through(calls, tmp_path):
 
 
 class _Conn:
+    closed = False
+    broken = False
+
     def __init__(self):
         self.committed = self.rolled_back = False
 
@@ -196,13 +199,17 @@ class _Conn:
         pass
 
     def fetchall(self):
-        return []
+        # The one read the write pass makes: the subject's topic codes.
+        return [{"code": "1.1", "id": "topic-1"}]
 
     def commit(self):
         self.committed = True
 
     def rollback(self):
         self.rolled_back = True
+
+    def close(self):
+        pass
 
 
 def mcq(year, label="1", qid=None) -> TaggedQuestion:
@@ -235,6 +242,7 @@ def mcq_world(monkeypatch, tmp_path):
     monkeypatch.setattr(verify, "group_duplicates",
                         lambda qs, papers: (qs, {q.id: [q.id] for q in qs}))
     monkeypatch.setattr(verify, "_apply_one", lambda *a, **k: None)
+    monkeypatch.setattr(verify_write, "_apply_one", lambda *a, **k: None)
 
     def fake_tag(path, topics, *, thinking=None):
         tagged.append({"path": path.name, "thinking": thinking})

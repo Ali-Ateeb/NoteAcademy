@@ -904,6 +904,11 @@ def tag_verify_auto(
              "it was tried on, for about a tenth of a cent a question.",
     ),
     workers: int = typer.Option(8, help="Model calls in flight at once (1 = one at a time)."),
+    from_results: Path = typer.Option(
+        None, "--from-results", exists=True,
+        help="Replay the model answers saved by an earlier run instead of calling the model "
+             "again. For when the calls succeeded but the write pass did not.",
+    ),
 ) -> None:
     """The automated counterpart to tag-verify-export/tag-verify-apply: a
     vision-capable model reads each MCQ's own printed crop and chooses a
@@ -918,35 +923,82 @@ def tag_verify_auto(
 
     Only sittings from --from-year to --to-year are read (default: the
     pipeline's current scope, NOTEACADEMY_YEAR_FROM/TO).
+
+    The model's answers are saved to pipeline/work/verify-mcq-<subject>-
+    results.jsonl before anything is written, and each question commits on its
+    own (reconnecting if the link drops), so a failed write costs a retry of
+    the writes rather than of the model calls -- `--from-results` is that
+    retry. Approved questions the model disagreed with are listed in a CSV,
+    since they are reported and never edited.
     """
+    import psycopg
+
     from .verify import verify_mcqs_with_model
+    from .verify_write import resume_mcqs_from_results, write_approved_disagreements_csv
 
-    _require_verify_setup(from_year, to_year)
+    if from_results is not None:
+        # A replay needs the database, but no key and no year range: the
+        # questions it touches are whichever ones the saved file names.
+        if not settings.database_url:
+            console.print("[red]DATABASE_URL is not set.[/red]")
+            raise typer.Exit(code=2)
+        report = resume_mcqs_from_results(
+            subject, from_results, confidence_floor=floor, dry_run=dry_run
+        )
+        title = f"{subject} — replayed from {from_results.name}"
+    else:
+        _require_verify_setup(from_year, to_year)
 
-    label = f"verifying {subject} {from_year}-{to_year} against {settings.deepseek_vision_model}"
-    with console.status(label + "...") as status:
-        try:
-            report = verify_mcqs_with_model(
-                subject, papers, confidence_floor=floor, dry_run=dry_run,
-                year_from=from_year, year_to=to_year, thinking=thinking, workers=workers,
-                on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
-            )
-        except DeepSeekAccountError as error:
-            console.print(f"[red]{error}. Nothing was written.[/red]")
-            raise typer.Exit(code=2) from error
+        label = (
+            f"verifying {subject} {from_year}-{to_year} against {settings.deepseek_vision_model}"
+        )
+        with console.status(label + "...") as status:
+            try:
+                report = verify_mcqs_with_model(
+                    subject, papers, confidence_floor=floor, dry_run=dry_run,
+                    year_from=from_year, year_to=to_year, thinking=thinking, workers=workers,
+                    on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
+                )
+            except DeepSeekAccountError as error:
+                console.print(f"[red]{error}. Nothing was written.[/red]")
+                raise typer.Exit(code=2) from error
+        title = f"{subject} — automated second pass"
     if dry_run:
         console.print("[yellow]dry run: rolled back[/yellow]")
 
-    table = Table(
-        "", "", title=f"{subject} — automated second pass" + (" (dry run)" if dry_run else "")
-    )
+    table = Table("", "", title=title + (" (dry run)" if dry_run else ""))
     table.add_row("agreed (confidence raised)", str(report.agreed))
     table.add_row("disagreed (sent to review)", str(report.disagreed))
     table.add_row("already approved (agreed or not), not edited", str(report.skipped_approved))
     table.add_row("  of which the model disagreed, reported only", str(report.disagreed_approved))
     table.add_row("no crop available, skipped", str(report.skipped_no_decision))
     table.add_row("call failed, skipped", str(len(report.failed_calls)))
+    table.add_row("locked by another session, skipped", str(report.skipped_locked))
+    table.add_row("write failed", str(len(report.failed_writes)))
+    table.add_row("connection re-opened", str(report.reconnects))
     console.print(table)
+
+    if report.results_path and from_results is None:
+        console.print(f"model answers saved: {report.results_path}")
+    try:
+        disagreements = write_approved_disagreements_csv(
+            report, settings.work_dir / f"verify-mcq-{subject}-approved-disagreements.csv"
+        )
+    except psycopg.Error as error:
+        console.print(f"[yellow]could not write the disagreements list: {error}[/yellow]")
+        disagreements = None
+    if disagreements:
+        console.print(
+            f"approved questions the model disagreed with ({len(report.approved_disagreements)}): "
+            f"{disagreements}"
+        )
+    if report.failed_writes or report.skipped_locked:
+        console.print(
+            "[yellow]Some groups were not written. Re-run with "
+            f"--from-results {report.results_path} to pick them up -- each question is "
+            "compared against its current tag, so ones that already landed are harmless."
+            "[/yellow]"
+        )
 
     if report.unknown_codes:
         console.print(
