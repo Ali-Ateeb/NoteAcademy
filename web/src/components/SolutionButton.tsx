@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { MathMarkdown } from "@/components/MathMarkdown";
 
 /**
  * Reveals a full worked solution for one question, fetched from /api/solve on
@@ -47,9 +48,9 @@ export function SolutionButton({ questionId }: { questionId: string }) {
         <p className="text-xs font-bold uppercase tracking-widest text-accent">
           Worked solution
         </p>
-        <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-ink">
-          {state.solution}
-        </p>
+        <div className="mt-2 text-sm leading-relaxed text-ink">
+          <MathMarkdown>{state.solution}</MathMarkdown>
+        </div>
       </div>
     );
   }
