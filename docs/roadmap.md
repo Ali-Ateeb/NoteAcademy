@@ -1392,12 +1392,26 @@ items are closed below.
   one per leaf. Cross-checked two ways: 98 of the 103 questions whose totals
   could be checked sum exactly to their printed `[Total: N]`, and the mark
   scheme's own `[max N]` agrees where it has one (the 3 that differ are
-  per-section caps). Three questions do not sum (chemistry 5070 2024 O/N P21
-  and P22 Q7, physics 5054 2026 M/J P22 Q7, each short by 1-2 marks); the
-  likelier cause is a part the segmenter lost, not a wrong bracket, and they
-  are worth a look. One leaf is left: physics 5054 2017 O/N P22 `11(a)(ii)`
-  ("magnetic screening"), whose text has no bracket and whose siblings' stored
-  marks look wrong too. That is the known "510 leaves disagree" item.
+  per-section caps). One leaf is left: physics 5054 2017 O/N P22 `11(a)(ii)`
+  ("magnetic screening"), whose text has no bracket.
+- **Stored marks that disagreed with the page (the "510 leaves" item).** Three
+  questions did not sum to their printed total. It was not a lost part (all
+  parts were there); the *siblings'* stored `max_marks` were wrong, e.g.
+  chemistry 7(b)(i) prints `[3]` and stored 1. Measured over every in-scope
+  approved structured question with one printed `[Total: N]`: 827 already
+  summed to it; for 134 more, setting each leaf to the sum of its own
+  printed `[n]` brackets summed to it exactly, so those 136 leaves were
+  corrected (values like 65, 50 and 33 among them; old values saved to
+  `pipeline/work/max-marks-before-2026-09-24.json`, git-ignored). Biology 2022
+  M/J P21 `3(c)` (33) was set to 5 by hand: an inner bracket had inflated the
+  sum, but 3+2+4+5 is its 14. 961 questions now sum to their printed total.
+  **Still unreconciled, 6:** four are EITHER/OR questions (the printed total
+  counts one branch, so the sums cannot match) -- physics 2021 M/J P22 Q8,
+  2021 O/N P21 Q7, 2021 O/N P22 Q5; physics 2021 M/J P21 Q9 (17 vs 15) and
+  chemistry 2017 M/J P22 B9 (9 vs 10) are unexplained, and physics 2022 M/J
+  P21 `6(b)(ii)` has two brackets summing to 4 but a total that needs 2.
+  Another 148 questions print no single total (or one per branch), so this
+  check cannot reach them.
 - **"Ingestion in progress".** Not a bug: that text is fixture mode's. The live
   database has biology, chemistry and physics published (mathematics is not),
   so the sitemap and `/subjects` agree.
