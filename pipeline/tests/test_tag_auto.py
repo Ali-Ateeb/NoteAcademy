@@ -283,3 +283,91 @@ def test_a_rejected_key_stops_the_crop_run_before_any_write(crop_world):
     with pytest.raises(DeepSeekAccountError):
         run_crops(crop_world, workers=2)
     assert len(crop_world["conns"]) == 1 and crop_world["decisions"] is None
+
+
+# ---------------------------------------------------------------------------
+# Structured questions: one tag per top-level question, from its whole text.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def structured_world(monkeypatch):
+    from noteacademy_pipeline import worksheet
+    from noteacademy_pipeline.worksheet import Worksheet, WorksheetQuestion
+
+    state = {"questions": [], "conns": [], "sent": [], "decisions": None, "confidence": 0.9}
+
+    monkeypatch.setattr("noteacademy_pipeline.load.connect",
+                        lambda url: (state["conns"].append(_Conn()) or state["conns"][-1]))
+    monkeypatch.setattr(
+        worksheet, "build_structured_worksheet",
+        lambda conn, slug, **k: Worksheet(
+            subject_slug=slug,
+            topics=[{"code": "8.1", "title": "T", "learning_objectives": ["o"]}],
+            questions=[
+                WorksheetQuestion(id=f"q{n}", paper_slug="maths-2024", display_label=str(n),
+                                  text=text, correct_option=None)
+                for n, text in enumerate(state["questions"], start=1)
+            ],
+        ),
+    )
+
+    def fake_tag(text, topics, *, mark_scheme=None):
+        state["sent"].append((text, mark_scheme))
+        return TopicTagging(
+            primary=TopicAssignment(topic_code="8.1", confidence=state["confidence"],
+                                    reasoning="r"), secondary=[])
+
+    def fake_apply(conn, slug, decisions, *, confidence_floor):
+        state["decisions"] = decisions
+        held = sum(1 for d in decisions if d["confidence"] < confidence_floor)
+        return ApplyReport(tagged=len(decisions), flagged=held)
+
+    monkeypatch.setattr(tag_auto, "tag_question", fake_tag)
+    monkeypatch.setattr(tag_auto, "apply_worksheet", fake_apply)
+    return state
+
+
+def run_structured(**kw):
+    return tag_auto.tag_structured_with_model("mathematics-4024", confidence_floor=0.75, **kw)
+
+
+def test_a_structured_question_is_read_from_its_whole_text(structured_world):
+    structured_world["questions"] = ["Fig. 1 shows a graph. (a) Find the gradient. (b) Solve."]
+    run_structured()
+    assert structured_world["sent"][0][0].startswith("Fig. 1 shows a graph. (a) Find the gradient")
+    assert [d["id"] for d in structured_world["decisions"]] == ["q1"]
+
+
+def test_a_structured_question_with_no_text_is_skipped_not_guessed_at(structured_world):
+    structured_world["questions"] = ["Find the mean.", "   "]
+    report = run_structured()
+    assert report.skipped_no_text == 1 and len(structured_world["sent"]) == 1
+
+
+def test_structured_low_confidence_is_held(structured_world):
+    structured_world["questions"] = ["Find the mean.", "Solve x + 1 = 3."]
+    structured_world["confidence"] = 0.5
+    report = run_structured()
+    assert (report.tagged, report.held_for_review) == (2, 2)
+    assert report.by_topic == {"8.1": 2}
+
+
+def test_a_structured_dry_run_rolls_back_and_a_real_run_commits(structured_world):
+    structured_world["questions"] = ["Find the mean."]
+    run_structured(dry_run=True)
+    assert structured_world["conns"][-1].rolled_back and not structured_world["conns"][-1].committed
+    run_structured(dry_run=False)
+    assert structured_world["conns"][-1].committed
+
+
+def test_a_rejected_key_stops_the_structured_run_before_any_write(structured_world, monkeypatch):
+    structured_world["questions"] = ["Find the mean."]
+
+    def refuse(text, topics, *, mark_scheme=None):
+        raise DeepSeekAccountError("bad key")
+
+    monkeypatch.setattr(tag_auto, "tag_question", refuse)
+    with pytest.raises(DeepSeekAccountError):
+        run_structured()
+    assert structured_world["decisions"] is None

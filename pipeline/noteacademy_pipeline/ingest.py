@@ -39,6 +39,7 @@ from .markscheme import (
     parse_structured_mark_scheme,
     validate_answer_grid,
 )
+from .markscheme_maths import is_mathematics_mark_scheme, parse_mathematics_mark_scheme
 from .naming import PaperFile, crop_key, document_key, storage_prefix, structured_crop_key
 from .render import crop
 from .segment import segment_mcq_paper
@@ -327,7 +328,13 @@ def ingest_structured_paper(
     # (the branch nests inside it) or only ever appears inside it (the split
     # opened before any part did) — see that function's own docstring.
     known_questions = {item.display_label for item in items}
-    entries = parse_structured_mark_scheme(pages_text, known_questions=known_questions)
+    # Mathematics sets its mark scheme as a four-column table that has to be read
+    # by geometry; the line-based reader mistakes its Marks column for question
+    # numbers. See markscheme_maths.py.
+    if is_mathematics_mark_scheme(ms_pdf):
+        entries = parse_mathematics_mark_scheme(ms_pdf)
+    else:
+        entries = parse_structured_mark_scheme(pages_text, known_questions=known_questions)
 
     leaf_labels = {item.display_label for item in items} - {
         item.parent_label for item in items if item.parent_label

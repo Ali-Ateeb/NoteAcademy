@@ -794,6 +794,11 @@ def tag_auto(
         help="Tag the questions this command otherwise skips -- the ones whose stem and options "
              "are all artwork -- by reading their printed crop with the vision model."),
     papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live (--from-crops)."),
+    structured: bool = typer.Option(
+        False, "--structured",
+        help="Tag structured questions (one tag per top-level question, from its text and "
+             "all its parts) instead of multiple-choice ones.",
+    ),
 ) -> None:
     """First-pass topic tags for multiple-choice questions, read from text.
 
@@ -804,9 +809,37 @@ def tag_auto(
     independent second read from the printed crop. Questions whose text has
     not been read yet are skipped, not guessed at.
     """
-    from .tag_auto import tag_mcqs_from_crops, tag_mcqs_with_model
+    from .tag_auto import tag_mcqs_from_crops, tag_mcqs_with_model, tag_structured_with_model
 
     _require_verify_setup(from_year, to_year)
+
+    if structured:
+        label = f"tagging structured questions for {subject}"
+        with console.status(label + "...") as status:
+            try:
+                outcome = tag_structured_with_model(
+                    subject, confidence_floor=floor, dry_run=dry_run, workers=workers,
+                    paper_slug=paper, limit=limit,
+                    on_progress=lambda done, total: status.update(f"{label}: {done}/{total}"),
+                )
+            except DeepSeekAccountError as error:
+                console.print(f"[red]{error}. Nothing was written.[/red]")
+                raise typer.Exit(code=2) from error
+
+        table = Table("", "", title=f"{subject} - structured first pass"
+                                    + (" (dry run)" if dry_run else ""))
+        table.add_row("untagged top-level questions", str(outcome.candidates))
+        table.add_row("no text, skipped", str(outcome.skipped_no_text))
+        table.add_row("tagged", str(outcome.tagged))
+        table.add_row("held for review (below the floor)", str(outcome.held_for_review))
+        table.add_row("model call failed", str(len(outcome.failed_calls)))
+        console.print(table)
+        if outcome.unknown_codes:
+            unknown = sorted(set(outcome.unknown_codes))[:8]
+            console.print(f"[red]unknown topic codes: {unknown}[/red]")
+        if dry_run:
+            console.print("[yellow]dry run: nothing was written.[/yellow]")
+        return
 
     if from_crops:
         label = f"reading crops for {subject} {from_year}-{to_year}"

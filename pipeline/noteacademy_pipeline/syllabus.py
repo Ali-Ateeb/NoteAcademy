@@ -367,6 +367,13 @@ def page_rows(page: pymupdf.Page) -> tuple[list[Row], int, int]:
 
 def parse_syllabus(pdf_path: Path) -> Syllabus:
     """Read the subject-content chapter of a CAIE syllabus into a topic tree."""
+    from .syllabus_maths import is_mathematics_layout, parse_mathematics_syllabus
+
+    # Mathematics is set as a two-column 'Notes and examples' table, not the
+    # sciences' numbered-objective gutter; it has its own reader.
+    if is_mathematics_layout(pdf_path):
+        return parse_mathematics_syllabus(pdf_path)
+
     result = Syllabus()
 
     with pymupdf.open(pdf_path) as doc:

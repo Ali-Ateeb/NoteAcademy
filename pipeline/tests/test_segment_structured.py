@@ -673,3 +673,53 @@ class TestUnconfirmedRoots:
         with pymupdf.open(out) as reopened:
             found = _unconfirmed_roots(reopened[0])
         assert found == []
+
+
+INNER_X = 117.6
+
+
+def build_paper_with_lettered_items_inside_a_subpart(tmp_path: Path) -> Path:
+    """Mathematics: sub-part (iii) asks "(a) ... [2]" and "(b) ... [3]", the
+    lettered items printed deeper than the sub-part label that contains them."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=595.0, height=842.0)
+    _insert_label(page, QUESTION_X, 100.0, "8")
+    _insert_label(page, PART_X, 130.0, "(a)")
+    _insert_label(page, SUBPART_X, 160.0, "(iii)")
+    _insert_body(page, BODY_X + 30, 160.0, "Look at the graph.")
+    _insert_label(page, INNER_X, 200.0, "(a)")
+    _insert_body(page, INNER_X + 25, 200.0, "Show that it is true. [2]")
+    _insert_label(page, INNER_X, 260.0, "(b)")
+    _insert_body(page, INNER_X + 25, 260.0, "Solve it by drawing. [3]")
+    _insert_label(page, PART_X, 330.0, "(b)")
+    _insert_body(page, BODY_X, 330.0, "Find the value. [1]")
+    out = tmp_path / "inner.pdf"
+    doc.save(out)
+    doc.close()
+    return out
+
+
+class TestLetteredItemsInsideASubpart:
+    def test_they_stay_part_of_the_subpart_and_do_not_duplicate_the_parts(self, tmp_path):
+        items, problems = segment_structured_paper(
+            build_paper_with_lettered_items_inside_a_subpart(tmp_path)
+        )
+        labels = [item.display_label for item in items]
+        assert labels == ["8", "8(a)", "8(a)(iii)", "8(b)"]
+        assert len(labels) == len(set(labels))
+        assert problems == []
+
+    def test_the_subpart_is_worth_every_bracket_in_it(self, tmp_path):
+        items, _ = segment_structured_paper(
+            build_paper_with_lettered_items_inside_a_subpart(tmp_path)
+        )
+        leaf = next(item for item in items if item.display_label == "8(a)(iii)")
+        assert leaf.max_marks == 5
+        assert "Show that it is true" in leaf.question_text
+        assert "Solve it by drawing" in leaf.question_text
+
+    def test_a_part_after_them_is_still_a_part(self, tmp_path):
+        items, _ = segment_structured_paper(
+            build_paper_with_lettered_items_inside_a_subpart(tmp_path)
+        )
+        assert next(i for i in items if i.display_label == "8(b)").max_marks == 1

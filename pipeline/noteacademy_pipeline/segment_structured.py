@@ -42,6 +42,9 @@ SUBPART_RE = re.compile(r"^\((i|ii|iii|iv|v|vi|vii|viii|ix|x)\)$", re.IGNORECASE
 # of a leaf's own text so a bracket used mid-sentence for something else (an
 # ion charge, a chemical formula) is never mistaken for a mark award.
 MARKS_RE = re.compile(r"\[(\d{1,2})\]\s*$")
+# Every bracket in a leaf, not only the last: a sub-part that asks "(a) ... [2]
+# (b) ... [2]" or "1. ... [1] 2. ... [2]" is worth all of them.
+ALL_MARKS_RE = re.compile(r"\[(\d{1,2})\]")
 
 # CAIE's own dotted answer line. Real characters, not a drawn rule, so they
 # come back from the text layer as a run of periods — collapsed here, since
@@ -127,6 +130,9 @@ class Marker:
     page_number: int
     y0: float
     is_branch: bool = False
+    # Matched a shallower level than the indent band it sits in (see
+    # `find_markers`): a part-shaped label printed at sub-part depth.
+    promoted: bool = False
 
 
 @dataclass
@@ -256,7 +262,7 @@ def find_markers(
             if level is None:
                 continue
 
-            for token in text.split():
+            for token_index, token in enumerate(text.split()):
                 if level > 2:
                     break
                 # The band settles which level a label is at most, never
@@ -274,12 +280,22 @@ def find_markers(
                 matched_level = next(
                     (
                         candidate
-                        for candidate in range(level, -1, -1)
+                        # The first token may be promoted from where it sits (see
+                        # above). A later token in the same run is only ever the
+                        # next level down: "(b) 4" is a part label followed by
+                        # a figure, not a part and a new question.
+                        for candidate in (range(level, -1, -1) if token_index == 0 else (level,))
                         if _LEVEL_PATTERNS[candidate].match(token)
                     ),
                     None,
                 )
                 if matched_level is None:
+                    break
+                if matched_level == 0 and _level_for_x0(x0) == 2:
+                    # A bare number in the sub-part indent band is not a question
+                    # number pushed a little right (that lands in the *part*
+                    # band, one step up). It is a bold figure in a table or a
+                    # diagram; the 2025 mathematics papers set many of those.
                     break
                 if matched_level < level and len(spans) > 1 and spans[1]["text"].startswith("."):
                     # An enumerated list item inside an answer's own scaffolding
@@ -292,7 +308,9 @@ def find_markers(
                     # immediately after it, in the very next (unbolded) span.
                     break
                 label = token if matched_level == 0 else token[1:-1].lower()
-                markers.append(Marker(matched_level, label, page_number, y0))
+                markers.append(
+                    Marker(matched_level, label, page_number, y0, promoted=matched_level < level)
+                )
                 level = matched_level + 1
 
     markers.sort(key=lambda m: m.y0)
@@ -498,6 +516,21 @@ def segment_structured_paper(
                     continue
                 path = [marker.label]
                 branch_index = None
+            elif (
+                marker.promoted
+                and marker.level == 1
+                and len(path) >= 3
+                and branch_index is None
+            ):
+                # A lettered item printed *inside* a sub-part -- "(iii)" asks
+                # "(a) Show that ..." and "(b) By drawing ..." -- sits at
+                # sub-part depth, where a part-shaped label is normally a
+                # mis-indented part (see `find_markers`). With a sub-part
+                # already open it is not: a real part would be flush with the
+                # part band, not deeper than the sub-part that contains it.
+                # It stays part of that sub-part's own text, and its marks
+                # are summed with the rest of the leaf's brackets.
+                continue
             else:
                 target = marker.level + (
                     1 if branch_index is not None and branch_index <= marker.level else 0
@@ -566,7 +599,9 @@ def segment_structured_paper(
                 extract_text(doc, page_no, bbox) for page_no, bbox in regions
             )
             marks_match = MARKS_RE.search(raw_text)
-            max_marks = int(marks_match.group(1)) if marks_match else None
+            max_marks = (
+                sum(int(n) for n in ALL_MARKS_RE.findall(raw_text)) if marks_match else None
+            )
             clean_text = DOTS_RE.sub("", raw_text).strip()
             label_re = _BRANCH_LABEL_RE if marker.is_branch else _OWN_LABEL_RE[marker.level]
             clean_text = label_re.sub("", clean_text, count=1).strip()

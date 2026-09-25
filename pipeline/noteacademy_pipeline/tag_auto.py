@@ -380,3 +380,77 @@ def tag_mcqs_with_model(
         code = decision["topic_code"]
         report.by_topic[code] = report.by_topic.get(code, 0) + 1
     return report
+
+
+def tag_structured_with_model(
+    subject_slug: str,
+    *,
+    confidence_floor: float,
+    dry_run: bool = False,
+    workers: int = 1,
+    paper_slug: str | None = None,
+    limit: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> TagAutoReport:
+    """First-pass tags for structured questions with none, read from text.
+
+    The structured counterpart to `tag_mcqs_with_model`: one tag per top-level
+    question, from its own words plus every part beneath it in paper order (the
+    same text `tag-export --structured` hands a person). `tag-verify-structured`
+    then gives each tag an independent second read from the printed page crops.
+
+    A question with no extracted text at all is skipped and counted, not guessed
+    at. Nothing is approved: a tag below the confidence floor is held for review,
+    and even above it the question waits for the verifier and the review queue.
+    """
+    from .load import connect
+    from .worksheet import build_structured_worksheet
+
+    with connect(settings.database_url) as conn:
+        sheet = build_structured_worksheet(conn, subject_slug, paper_slug=paper_slug, limit=limit)
+
+    topics = [TopicOption(**row) for row in sheet.topics]
+    report = TagAutoReport(candidates=len(sheet.questions))
+
+    work = []
+    for question in sheet.questions:
+        if question.text.strip():
+            work.append(question)
+        else:
+            report.skipped_no_text += 1
+
+    outcomes = map_concurrently(
+        work,
+        lambda q: tag_question(q.text, topics),
+        workers=workers,
+        stop_on=(DeepSeekAccountError,),
+        on_done=on_progress,
+    )
+
+    decisions: list[dict] = []
+    for question, tagging, error in outcomes:
+        if error is not None or tagging is None:
+            report.failed_calls.append(f"{question.paper_slug} Q{question.display_label}")
+            log.warning("tagging %s Q%s failed: %s", question.paper_slug,
+                        question.display_label, error)
+            continue
+        decisions.append({
+            "id": question.id,
+            "topic_code": tagging.primary.topic_code,
+            "confidence": tagging.primary.confidence,
+        })
+
+    with connect(settings.database_url) as conn:
+        applied = apply_worksheet(conn, subject_slug, decisions, confidence_floor=confidence_floor)
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+
+    report.tagged = applied.tagged
+    report.held_for_review = applied.flagged
+    report.unknown_codes = applied.unknown_codes
+    for decision in decisions:
+        code = decision["topic_code"]
+        report.by_topic[code] = report.by_topic.get(code, 0) + 1
+    return report
