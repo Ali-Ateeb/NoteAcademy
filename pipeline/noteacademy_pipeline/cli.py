@@ -1792,6 +1792,90 @@ def clean_control_characters_cmd(
             console.print(f"[green]cleaned {changed} value(s)[/green]")
 
 
+@app.command(name="sync-public-crops")
+def sync_public_crops_cmd(
+    dry_run: bool = typer.Option(
+        True, help="Show what would change, but change nothing. Pass --no-dry-run to apply."
+    ),
+    create_bucket: bool = typer.Option(
+        False,
+        "--create-bucket",
+        help="Create the public bucket first if it does not exist. A public bucket is "
+        "readable by anyone with a URL; only pass this if that is what you want.",
+    ),
+    workers: int = typer.Option(8, help="Parallel copies."),
+) -> None:
+    """Make the public crop bucket hold exactly the crops of approved questions.
+
+    Students load crops from that bucket (Supabase's CDN) instead of through
+    the gated /api/asset function -- see web/src/lib/cropUrl.ts. The web app
+    keeps it current as a reviewer approves or undoes a question; run this
+    after any bulk approval or rejection (verify, tag-verify-auto, bulk
+    approve), after fix-crops or fix-spurious-crops, and once to fill the
+    bucket. Idempotent, and safe to re-run after a failure.
+
+    The web app only uses the bucket once NEXT_PUBLIC_CROP_BUCKET is set to
+    its name, and falls back to the gated route for any crop not in it.
+    """
+    from dataclasses import replace
+
+    from .load import connect
+    from .public_crops import apply_plan, make_plan
+    from .storage import SupabaseStorage
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+    private = SupabaseStorage.from_settings(settings)
+    if private is None:
+        console.print("[red]Supabase Storage is not configured.[/red]")
+        raise typer.Exit(code=2)
+    public = replace(private, bucket=settings.storage_public_bucket or "noteacademy-crops")
+
+    if create_bucket:
+        if dry_run:
+            console.print(f"[yellow]dry run: would create public bucket {public.bucket!r}[/yellow]")
+        else:
+            made = public.create_public_bucket()
+            console.print(
+                f"[green]created public bucket {public.bucket!r}[/green]"
+                if made
+                else f"public bucket {public.bucket!r} already exists"
+            )
+
+    with connect(settings.database_url) as conn:
+        plan = make_plan(conn, private.bucket, public.bucket)
+
+    table = Table("", "", title=f"Public crops -> {public.bucket}")
+    table.add_row("already current", str(plan.unchanged))
+    table.add_row("to copy", str(len(plan.to_copy)))
+    table.add_row("to remove (no longer approved)", str(len(plan.to_remove)))
+    if plan.missing_source:
+        table.add_row(
+            "[red]approved but missing from the private bucket[/red]", str(len(plan.missing_source))
+        )
+    console.print(table)
+
+    if dry_run:
+        console.print("[yellow]dry run: nothing changed[/yellow]")
+        return
+
+    with console.status("syncing...") as status:
+        report = apply_plan(
+            private,
+            public,
+            plan,
+            workers=workers,
+            progress=lambda done, total: status.update(f"copied {done}/{total}"),
+        )
+    console.print(f"[green]copied {report.copied}, removed {report.removed}[/green]")
+    if report.failed:
+        console.print(f"[red]{len(report.failed)} failed; run again to retry:[/red]")
+        for key in report.failed[:10]:
+            console.print(f"  {key}")
+        raise typer.Exit(code=1)
+
+
 @app.command(name="audit-mcq-crops")
 def audit_mcq_crops_cmd(
     papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { PencilMark } from "@/components/Brand";
+import { CropImage } from "@/components/CropImage";
 import { SolutionButton } from "@/components/SolutionButton";
 import {
   appendStructuredAttempts,
@@ -269,9 +270,7 @@ export function StructuredArena({ sessionKey, title, questions, backHref, backLa
                   }
                 >
                   {crop.cropUrl ? (
-                    /* eslint-disable-next-line @next/next/no-img-element -- a stable
-                       /api/asset path, resolved per request. */
-                    <img
+                    <CropImage
                       src={crop.cropUrl}
                       alt={`Question ${current.displayLabel}, page ${crop.pageNumber}, as printed`}
                       className="w-full"

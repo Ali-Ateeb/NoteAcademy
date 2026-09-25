@@ -83,6 +83,53 @@ class SupabaseStorage:
             headers={"Content-Type": content_type, "x-upsert": "true"},
         )
 
+    def download(self, key: str) -> bytes:
+        """One object's bytes, read with the service key (the bucket may be
+        private)."""
+        return self._request("GET", f"object/authenticated/{self.bucket}/{key}")
+
+    def put(self, key: str, data: bytes, content_type: str, cache_control: str) -> None:
+        """Upload bytes with an explicit Cache-Control, replacing what is there.
+        The public bucket needs a real cache lifetime: objects stored without
+        one are served `no-cache`, which throws away what a CDN is for."""
+        self._request(
+            "POST",
+            f"object/{self.bucket}/{key}",
+            data=data,
+            headers={
+                "Content-Type": content_type,
+                "cache-control": cache_control,
+                "x-upsert": "true",
+            },
+        )
+
+    def create_public_bucket(self, size_limit_bytes: int = 5 * 1024 * 1024) -> bool:
+        """Create this bucket as a *public* one. False if it already exists.
+
+        Deliberately not called by anything but an explicit `--create-bucket`:
+        a public bucket is readable by anyone with its URL, so making one is a
+        decision, not a side effect."""
+        try:
+            self._request(
+                "POST",
+                "bucket",
+                data=json.dumps(
+                    {
+                        "id": self.bucket,
+                        "name": self.bucket,
+                        "public": True,
+                        "file_size_limit": size_limit_bytes,
+                        "allowed_mime_types": ["image/png"],
+                    }
+                ).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            return True
+        except StorageError as error:
+            if "already exists" in str(error) or " 409" in str(error):
+                return False
+            raise
+
     def remove(self, keys: list[str]) -> None:
         """Delete objects outright — for a crop attached to the wrong question
         entirely, where there is no correct bbox to re-render, only a

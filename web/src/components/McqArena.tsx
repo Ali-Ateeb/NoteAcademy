@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { PencilMark } from "@/components/Brand";
+import { CropImage } from "@/components/CropImage";
 import { SolutionButton } from "@/components/SolutionButton";
 import {
   appendAttempts,
@@ -17,6 +18,7 @@ import {
   syncAttemptsToServer,
   type SessionState,
 } from "@/lib/attempts";
+import { gatedUrlFor } from "@/lib/cropUrl";
 import type { McqOption, McqQuestion } from "@/lib/data/types";
 
 const OPTIONS: McqOption[] = ["A", "B", "C", "D"];
@@ -135,7 +137,15 @@ export function McqArena({
         if (!url) return;
         await new Promise<void>((resolve) => {
           const image = new Image();
-          image.onload = image.onerror = () => resolve();
+          image.onload = () => resolve();
+          // A crop not yet in the public bucket: warm the gated route instead.
+          image.onerror = () => {
+            const gated = gatedUrlFor(url);
+            if (!gated) return resolve();
+            const retry = new Image();
+            retry.onload = retry.onerror = () => resolve();
+            retry.src = gated;
+          };
           image.src = url;
         });
       }
@@ -344,9 +354,7 @@ export function McqArena({
               // below it on every load.
               style={current.cropAspectRatio ? { aspectRatio: current.cropAspectRatio } : undefined}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element -- signed
-                  URL on a bucket host, resolved per request. */}
-              <img
+              <CropImage
                 src={current.cropUrl}
                 alt={`Question ${current.displayLabel}, as printed`}
                 fetchPriority="high"

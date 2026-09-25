@@ -1424,6 +1424,43 @@ items are closed below.
   database has biology, chemistry and physics published (mathematics is not),
   so the sitemap and `/subjects` agree.
 
+### Why the site feels slow, and the public crop bucket (2026-09-25)
+
+Measured, not guessed. **Pages:** a production build serves them in 10-20 ms;
+`npm run dev` takes 1.5-7 s each because it compiles on demand, so most of the
+"slow" was the dev server. **Crops:** through `/api/asset` a first view is
+1.0-2.8 s (a cold read from Supabase Storage in Singapore, plus a round trip
+per Supabase call from here; the approval check itself is 0.6 ms) and repeats
+are ~0.12 s. **JS:** the practice page shipped 318 kB, 160 kB of it the
+Markdown/KaTeX solution renderer, now loaded only when a solution is shown
+(194 kB). Crop responses also gained `s-maxage`/`stale-while-revalidate`, since
+`max-age` alone is a browser-only instruction.
+
+**Built, off by default: serving crops from a public bucket.** A second bucket
+holds copies of *approved* crops only, so the browser fetches a file from
+Supabase's CDN with no function or database check in the way.
+- `web/src/lib/cropUrl.ts` builds the URL: the public one when
+  `NEXT_PUBLIC_CROP_BUCKET` is set, `/api/asset` otherwise. `CropImage` falls
+  back to `/api/asset` once if a file is not in the bucket yet, so a crop
+  approved a moment ago is slow, never missing (checked: with the feature on
+  and no bucket, every image still loaded via the fallback).
+- `noteacademy sync-public-crops` makes the bucket equal "approved crops":
+  copies missing or changed ones (by ETag), removes any that are no longer
+  approved. Dry-run by default; `--create-bucket` makes the bucket, which is
+  public and so has to be asked for. 7,113 approved crops to copy.
+- The review route publishes a question's crops on approve and removes them on
+  undo (best effort). **Bulk changes made outside the review route (verify,
+  tag-verify-auto, bulk approve, fix-crops, fix-spurious-crops) do not update
+  the bucket: run `sync-public-crops` after them.** It is idempotent.
+- **Not done: creating the bucket and running the first sync.** Creating a
+  public bucket was blocked pending an explicit go-ahead. To finish: run
+  `noteacademy sync-public-crops --create-bucket --no-dry-run`, set
+  `NEXT_PUBLIC_CROP_BUCKET` (web) and `STORAGE_PUBLIC_BUCKET` (pipeline) to
+  `noteacademy-crops`, rebuild. The upload path (cache-control header on
+  Supabase's REST API) is written from its documentation and unit-tested with
+  a fake, not yet exercised against the real service: check one public URL's
+  `cache-control` after the first run.
+
 ---
 
 ## Next steps, in priority order

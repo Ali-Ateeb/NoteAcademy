@@ -1,9 +1,10 @@
 /**
  * Access to the private asset bucket, service-role only.
  *
- * The bucket is private and stays that way. A public bucket would put every
- * question crop on a permanent, guessable URL outside row level security
- * entirely — which is the same as publishing the unapproved half of the bank.
+ * The main bucket is private and stays that way. A public bucket that held every
+ * crop would put the unapproved half of the bank on guessable URLs outside row
+ * level security. The optional *second*, public bucket (see the end of this file
+ * and `cropUrl.ts`) holds copies of approved crops only.
  * Nothing here hands out a bucket URL of any kind: `/api/asset` checks
  * whether the caller may see the object (through RLS, via `assetIsPublic`)
  * and, only then, downloads it and returns the bytes itself — see
@@ -115,4 +116,55 @@ export async function signedUrls(
     }
   }
   return signed;
+}
+
+/* ---------------------------------------------------------------------------
+   The public bucket: approved crops only, served straight from Supabase's CDN.
+   See `lib/cropUrl.ts`. Off unless NEXT_PUBLIC_CROP_BUCKET is set.
+   --------------------------------------------------------------------------- */
+
+const PUBLIC_BUCKET = process.env.NEXT_PUBLIC_CROP_BUCKET ?? "";
+
+/** How long a browser or the CDN may reuse a public crop. An hour, like the
+ *  gated route: a corrected re-upload reaches everyone within it. */
+const PUBLIC_CACHE_SECONDS = "3600";
+
+export function publicCropsEnabled(): boolean {
+  return Boolean(PUBLIC_BUCKET) && storageClient() !== null;
+}
+
+/** Copy these crops into the public bucket. Best effort: a crop that fails to
+ *  copy is still served by the gated route (the image falls back to it), so a
+ *  failure here costs speed, never correctness, and must not fail the approval
+ *  that triggered it. Call only for crops of questions that are approved. */
+export async function publishCrops(storageKeys: string[]): Promise<void> {
+  const client = storageClient();
+  if (!client || !PUBLIC_BUCKET) return;
+
+  for (const key of [...new Set(storageKeys)]) {
+    try {
+      const { data, error } = await client.storage.from(BUCKET).download(key);
+      if (error || !data) throw new Error(error?.message ?? "not found");
+      const { error: uploadError } = await client.storage.from(PUBLIC_BUCKET).upload(key, data, {
+        upsert: true,
+        contentType: "image/png",
+        cacheControl: PUBLIC_CACHE_SECONDS,
+      });
+      if (uploadError) throw new Error(uploadError.message);
+    } catch (error) {
+      console.warn(`publishing ${key} failed:`, (error as Error).message);
+    }
+  }
+}
+
+/** Remove these crops from the public bucket, for a question that is no longer
+ *  approved. Best effort, like `publishCrops`; `noteacademy sync-public-crops`
+ *  sweeps up anything this misses. */
+export async function unpublishCrops(storageKeys: string[]): Promise<void> {
+  const client = storageClient();
+  const keys = [...new Set(storageKeys)];
+  if (!client || !PUBLIC_BUCKET || keys.length === 0) return;
+
+  const { error } = await client.storage.from(PUBLIC_BUCKET).remove(keys);
+  if (error) console.warn(`unpublishing ${keys.length} crops failed: ${error.message}`);
 }

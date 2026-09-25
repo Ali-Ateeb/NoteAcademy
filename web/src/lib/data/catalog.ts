@@ -24,6 +24,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import { cropUrl } from "../cropUrl";
 import { signedUrls } from "../storage";
 import { reviewItems, reviewTopicOptions } from "./reviewSeed";
 import * as seed from "./seed";
@@ -251,12 +252,12 @@ const toStructured = (row: StructuredRow): StructuredQuestion => ({
   parts: row.parts.map(toStructuredPart),
 });
 
-/** The stable, unsigned URL a page can carry. /api/asset checks the question is
- *  approved and redirects to a freshly signed one, so a prerendered page never
- *  holds a link that expires. */
+/** The stable, unsigned URL a page can carry: the public bucket's file when one
+ *  is configured, otherwise `/api/asset`, which checks the question is approved
+ *  and serves the bytes. Neither expires, so a prerendered page never holds a
+ *  dead link. See `lib/cropUrl.ts`. */
 function assetUrl(storageKey: string | null): string | null {
-  if (!storageKey) return null;
-  return `/api/asset/${storageKey.split("/").map(encodeURIComponent).join("/")}`;
+  return cropUrl(storageKey);
 }
 
 const SUBJECT_COLUMNS = "slug,level_code,syllabus_code,title,description,is_published";

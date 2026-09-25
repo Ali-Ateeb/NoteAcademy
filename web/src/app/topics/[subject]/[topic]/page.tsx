@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { CropImage } from "@/components/CropImage";
 import {
   getQuestionsByTopic,
   getSubject,
@@ -147,9 +148,7 @@ export default async function TopicPage({ params }: Params) {
                       : undefined
                   }
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element -- signed
-                      URL on a bucket host, resolved per request. */}
-                  <img
+                  <CropImage
                     src={question.cropUrl}
                     alt={`Question ${question.displayLabel}, as printed`}
                     className="w-full"

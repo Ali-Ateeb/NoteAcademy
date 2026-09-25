@@ -33,6 +33,7 @@ import { NextResponse } from "next/server";
 
 import type { ReviewDecision } from "@/lib/data/types";
 import { currentReviewer, type Reviewer } from "@/lib/reviewerAuth";
+import { publicCropsEnabled, publishCrops, unpublishCrops } from "@/lib/storage";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
@@ -84,6 +85,15 @@ interface GroupRow {
  *  after the number, so a plain prefix match cannot cross from one top-level
  *  question into a sibling with a shared leading digit.
  */
+/** The storage keys of every crop attached to these questions. */
+async function cropKeysFor(client: SupabaseClient, questionIds: string[]): Promise<string[]> {
+  const { data } = await client
+    .from("question_assets")
+    .select("storage_key")
+    .in("question_id", questionIds);
+  return (data ?? []).map((row) => (row as { storage_key: string }).storage_key);
+}
+
 async function resolveGroup(
   client: SupabaseClient,
   questionId: string,
@@ -263,6 +273,14 @@ export async function POST(request: Request) {
   // blanket delete of every non-primary row, since a genuine editorial
   // secondary topic (source 'model', written by the original tagger) has to
   // survive approval exactly as it is.
+  // An approved question's crops go to the public bucket so students get them
+  // from the CDN. Awaited (the serverless function may stop once it responds),
+  // but a failure only slows the crop down: the image falls back to the gated
+  // route. See lib/cropUrl.ts.
+  if (decision === "approved" && publicCropsEnabled()) {
+    await publishCrops(await cropKeysFor(client, group.map((row) => row.id)));
+  }
+
   if (decision === "approved") {
     await client
       .from("question_topics")
@@ -523,6 +541,11 @@ export async function DELETE(request: Request) {
   const error = flagged.error ?? clean.error;
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // No longer approved, so no longer public.
+  if (publicCropsEnabled()) {
+    await unpublishCrops(await cropKeysFor(client, group.map((row) => row.id)));
   }
 
   await revalidateForQuestion(client, questionId);

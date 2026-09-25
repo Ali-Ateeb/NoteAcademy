@@ -106,6 +106,8 @@ class Settings:
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     storage_bucket: str = ""
+    # Public copies of approved crops only; see public_crops.py.
+    storage_public_bucket: str = ""
 
     # Keep the most capable model here. A segmentation or tagging error is
     # written to the database once and then silently degrades every feature
@@ -164,6 +166,7 @@ class Settings:
             supabase_url=os.environ.get("SUPABASE_URL", ""),
             supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
             storage_bucket=os.environ.get("STORAGE_BUCKET", ""),
+            storage_public_bucket=os.environ.get("STORAGE_PUBLIC_BUCKET", ""),
             extraction_model=os.environ.get(
                 "NOTEACADEMY_EXTRACTION_MODEL", cls.extraction_model
             ),
