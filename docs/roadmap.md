@@ -1452,14 +1452,15 @@ Supabase's CDN with no function or database check in the way.
   undo (best effort). **Bulk changes made outside the review route (verify,
   tag-verify-auto, bulk approve, fix-crops, fix-spurious-crops) do not update
   the bucket: run `sync-public-crops` after them.** It is idempotent.
-- **Not done: creating the bucket and running the first sync.** Creating a
-  public bucket was blocked pending an explicit go-ahead. To finish: run
-  `noteacademy sync-public-crops --create-bucket --no-dry-run`, set
-  `NEXT_PUBLIC_CROP_BUCKET` (web) and `STORAGE_PUBLIC_BUCKET` (pipeline) to
-  `noteacademy-crops`, rebuild. The upload path (cache-control header on
-  Supabase's REST API) is written from its documentation and unit-tested with
-  a fake, not yet exercised against the real service: check one public URL's
-  `cache-control` after the first run.
+- **Done (2026-09-25): bucket `noteacademy-crops` created, all 7,113 approved crops copied** (23 min, no failures;
+  a follow-up dry run shows all current, ETags matching the private originals). A public crop returns
+  `Cache-Control: public, max-age=3600` (the upload header works). Measured in a production build:
+  all 32 crops on a paper page came from the bucket with no fallbacks; a CDN-warm read is 21-61 ms
+  (through the gated route: ~110-160 ms warm, 1-2.8 s cold). **The first read of a crop at a given CDN
+  edge is still a miss, ~1 s**, so a student's first paper is not instant; every later view, and every
+  other student at that edge, is. `NEXT_PUBLIC_CROP_BUCKET` is set in `web/.env.local`; **set it in the
+  deployment too** (`STORAGE_PUBLIC_BUCKET` defaults to the same name in the pipeline). Pre-warming the CDN by
+  requesting every public URL once is possible (~250 MB of Supabase egress) but only warms one location.
 
 ---
 
