@@ -1462,6 +1462,67 @@ Supabase's CDN with no function or database check in the way.
   deployment too** (`STORAGE_PUBLIC_BUCKET` defaults to the same name in the pipeline). Pre-warming the CDN by
   requesting every public URL once is possible (~250 MB of Supabase egress) but only warms one location.
 
+### Marks for the 148 questions with no printed total, and the tagging disagreements (2026-09-25)
+
+**Marks.** 148 in-scope approved questions (older physics layouts) print no
+`[Total: N]`, so the per-question sum check could not reach them. Reference
+used instead: each leaf's own printed `[n]` brackets. On the 961 validated
+questions that rule agrees with the stored marks for 4,615 of 4,618 leaves
+(the 3 misses are the ones fixed by hand earlier), so it is trustworthy where
+it applies. In the 148 it found 54 disagreements, and 50 were corrected (old
+values in `pipeline/work/max-marks-before-2026-09-25.json`, git-ignored):
+- **46 leaves that hold several numbered sub-questions**, e.g. "1. ... [1]
+  2. ... [2]", stored only the last bracket (or, for biology 3(b)/3(d) and
+  physics 11(d), a garbage value like 18, 31, 7); now the sum.
+- **4 checked against the printed page:** physics 2016 M/J P22 `11(b)(iv)` (one
+  `[4]` for four one-word items: each is 1, so 4 -> 1), 2017 M/J P21 `7(a)(iii)`
+  (one `[3]` for three arrows), 2016 M/J P22 `9(d)(ii)`, and biology 2024 O/N
+  P22 `5(b)(i)` (32 -> 4; the printed `[4]` follows part (i) and had been lost).
+- Two guards stopped wrong "fixes": a leaf whose last numbered item lost its
+  bracket in extraction (physics 2018 O/N P22 `8(b)(ii)`, page shows `[1]` and
+  `[2]`, stored 3 is right), and a sub-part that starts a new stem ("State
+  which spring...") where a bracket on the *next* part is not a group total.
+- **Group brackets** ("state (i) ... (ii) ... (iii) ... [N]", one bracket for
+  parts that share a stem) are the pattern a bracket-sum rule gets wrong. The
+  rule for them: sub-parts that are lowercase fragments of one stem.
+- **Left as is, unresolvable per part:** physics 2017 O/N P22 `11(a)`: three
+  one-word answers, one printed `[2]`, and the mark scheme awards "(i) and (iii)
+  both correct" one mark and "(ii)" the other, so no per-part split exists.
+  `11(a)(i)`/`(iii)` still store 2 each and `(ii)` is null; the question's
+  total is 2. Worth displaying as a group total if it ever matters.
+
+**Tagging disagreements.** The MCQ verifier's disagreements were never saved
+(only counted), so `tag-verify-auto` was re-run as a dry run for biology
+(`--papers ../papers`; the default path is relative to the working directory)
+and each disagreement was read against the syllabus's learning objectives.
+Biology: 26 approved questions disagreed; **4 retagged** where the file tag
+was wrong on content (a question about the hypothalamus reading blood
+concentration is homeostasis 14.4, not temperature control 14.5, x2; urea in
+the hepatic vein is excretion 13.1, not absorption 8.3; evidence for active
+transport is 3.2, not 7.1) and 22 kept, the model's alternative being
+defensible but not better (e.g. heroin sits under drugs 12.2; the iodine test
+is 4.1; a dialysis question is 13.2). Results, replayable, are in
+`pipeline/pipeline/work/verify-mcq-*-results.jsonl` and the CSVs beside them
+(note the doubled `pipeline/`: `settings.work_dir` resolves from the repo root).
+
+Chemistry: 1,470 of 1,679 questions were answered (209 calls came back with
+truncated JSON, worth a re-run); the model disagreed with the tag on 106
+approved ones. **16 retagged, 90 kept.** The syllabus decides where it can:
+- Questions asking for **percentage composition by mass** or a gas-volume ratio
+  belong under 3.3, whose objective says so, not 3.2 (Ar/Mr definitions), 3.1
+  or 10.2 (fertilisers): 12 moved.
+- **The same question printed in two papers had two different tags** in three
+  places; each pair now agrees: "how many structures are unsaturated" (11.5),
+  "no isomers, does not decolourise bromine" (11.4), "which compound is an
+  alcohol" (11.1), "carboxylic acid with the lowest Mr" (11.7).
+- Kept, though the model preferred another topic: anything where the stem
+  frames one topic and the arithmetic or apparatus belongs to another and
+  neither is clearly the target (a rate question asking for apparatus, ions in
+  aqueous CuSO4 under electrolysis). **The syllabus has no objective for the
+  uses of sulfur dioxide or sulfuric acid**, so those questions (bleach, food
+  preservative, battery acid) sit under the nearest topic (6.3, 7.1, 10.3)
+  and no re-tag would be better.
+
 ---
 
 ## Next steps, in priority order
