@@ -1523,6 +1523,41 @@ approved ones. **16 retagged, 90 kept.** The syllabus decides where it can:
   preservative, battery acid) sit under the nearest topic (6.3, 7.1, 10.3)
   and no re-tag would be better.
 
+### Mathematics 4024: papers and syllabus in, tagging blocked (2026-09-25)
+
+The fourth subject. **Loaded, unapproved, unpublished; nothing student-visible.**
+- **Papers:** 168 files (question papers and mark schemes, 2016-2026) fetched from
+  ivyonline.co with `scripts/fetch_papers.py` at the user's direction (its terms
+  were never reviewed; the script honours robots.txt and downloads one file a
+  second). 82 of 84 sittings loaded: 5,546 rows, 1,538 top-level questions, 3,844
+  with mark-scheme text. **Two need a person:** `4024_s26_qp_12` (an "OR" with no
+  EITHER) and `4024_w24_qp_21` (a duplicate `2(a)`).
+- **Syllabus:** Cambridge's own 2025-2027 PDF, read by the new `syllabus_maths.py`
+  (the sciences parser reads a numbered-objective gutter; this one is a two-column
+  "Notes and examples" table): 9 sections, 68 topics, 151 objectives, is_current.
+  Papers from 2016-2024 are tagged against it; no older syllabus was loaded.
+- **Segmenter changes** (all pinned by tests; 204 science structured papers give
+  identical labels before and after): a leaf is worth *every* bracket in it (the
+  physics undercount, fixed at the source); a lettered item inside a sub-part stays
+  in it (mathematics prints "(a) Show that... (b) By drawing..." inside (iii));
+  a bare number in the sub-part indent band is not a question number; later tokens
+  in a merged run are only ever the next level down.
+- **Mark scheme** (`markscheme_maths.py`): four-column table read by geometry, three
+  layouts across the series (column boundary from each page's own header row;
+  split/spaced labels; a rotated 2017 scheme; "2*" and "2ft" marks). Of 4,014 parts,
+  3,238 agree with the paper's printed marks, 257 disagree, 87 have no entry.
+  The paper's own brackets win where present. **The maths in the answer column
+  extracts as scattered fragments ("??" for symbols), so `mark_scheme_text` for
+  this subject is only partly readable**; a rendered image of the mark-scheme row
+  would serve students better and is not built.
+- **Blocked: first-pass tagging.** `noteacademy tag-auto --subject mathematics-4024
+  --structured` (new; a text read per top-level question, same closed topic list)
+  ran a 12-question dry run cleanly, then the full run stopped with **DeepSeek 402,
+  out of balance**, before writing anything. Top up the DeepSeek account and re-run
+  it, then `tag-verify-structured` (independent vision read), review the flagged
+  questions, `bulk-approve-structured`, `sync-public-crops`, and only then set the
+  subject's `is_published`.
+
 ---
 
 ## Next steps, in priority order
