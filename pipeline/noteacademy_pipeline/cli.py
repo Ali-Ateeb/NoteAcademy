@@ -1917,6 +1917,9 @@ def mark_scheme_crops_cmd(
     dpi: int = typer.Option(130, help="Render resolution."),
     workers: int = typer.Option(8, help="Parallel uploads."),
     dry_run: bool = typer.Option(False, help="Render and count, but write and upload nothing."),
+    redo: bool = typer.Option(
+        False, help="Also redo papers that already have row images (default: skip them)."
+    ),
 ) -> None:
     """Attach a picture of each mark-scheme row to the question it marks.
 
@@ -1929,6 +1932,8 @@ def mark_scheme_crops_cmd(
     """
     import tempfile
     from concurrent.futures import ThreadPoolExecutor
+
+    import psycopg
 
     from .load import connect
     from .mark_scheme_crops import attach_mark_scheme_crops
@@ -1943,11 +1948,16 @@ def mark_scheme_crops_cmd(
         console.print("[red]Supabase Storage is not configured.[/red]")
         raise typer.Exit(code=2)
 
-    with connect(settings.database_url) as conn:
-        with conn.cursor() as cur:
+    with connect(settings.database_url) as listing:
+        with listing.cursor() as cur:
             cur.execute(
                 """
-                select p.id, p.slug, p.component, p.variant, e.year, e.season, s.syllabus_code
+                select p.id, p.slug, p.component, p.variant, e.year, e.season, s.syllabus_code,
+                       exists (
+                         select 1 from question_assets qa
+                           join questions q on q.id = qa.question_id
+                          where q.paper_id = p.id and qa.kind = 'mark_scheme_crop'
+                       ) as has_images
                   from papers p
                   join exam_sessions e on e.id = p.exam_session_id
                   join subjects s on s.id = p.subject_id
@@ -1958,38 +1968,50 @@ def mark_scheme_crops_cmd(
             )
             papers_rows = cur.fetchall()
 
-        total = {"papers": 0, "crops": 0, "questions": 0, "unmatched": 0, "no_pdf": 0}
-        failed_uploads: list[str] = []
-        with tempfile.TemporaryDirectory() as tmp, console.status("rendering...") as status:
-            for index, row in enumerate(papers_rows, start=1):
-                status.update(f"rendering {row['slug']} ({index}/{len(papers_rows)})")
-                pdf = papers / row["syllabus_code"] / caie_filename(
-                    row["syllabus_code"], row["year"], row["season"], "ms",
-                    row["component"], row["variant"],
-                )
-                if not pdf.is_file():
-                    total["no_pdf"] += 1
-                    continue
-                prefix = storage_prefix(
-                    row["syllabus_code"], row["year"], row["season"],
-                    row["component"], row["variant"],
-                )
-                report = attach_mark_scheme_crops(
-                    conn, str(row["id"]), pdf, prefix, Path(tmp), dpi=dpi
-                )
-                if dry_run:
-                    conn.rollback()
-                else:
-                    conn.commit()
-                    with ThreadPoolExecutor(max_workers=workers) as pool:
-                        results = list(
-                            pool.map(lambda kf: _upload_one(storage, *kf), report.files)
+    total = {"papers": 0, "crops": 0, "questions": 0, "unmatched": 0, "no_pdf": 0}
+    failed_uploads: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp, console.status("rendering...") as status:
+        for index, row in enumerate(papers_rows, start=1):
+            status.update(f"rendering {row['slug']} ({index}/{len(papers_rows)})")
+            pdf = papers / row["syllabus_code"] / caie_filename(
+                row["syllabus_code"], row["year"], row["season"], "ms",
+                row["component"], row["variant"],
+            )
+            if not pdf.is_file():
+                total["no_pdf"] += 1
+                continue
+            if row["has_images"] and not redo:
+                continue
+            prefix = storage_prefix(
+                row["syllabus_code"], row["year"], row["season"],
+                row["component"], row["variant"],
+            )
+            # The pooler drops connections now and then; a paper is one short
+            # transaction, so it is simply retried on a fresh one.
+            for attempt in range(4):
+                try:
+                    with connect(settings.database_url) as conn:
+                        report = attach_mark_scheme_crops(
+                            conn, str(row["id"]), pdf, prefix, Path(tmp), dpi=dpi
                         )
-                    failed_uploads += [key for key, ok in results if not ok]
-                total["papers"] += 1
-                total["crops"] += report.attached
-                total["questions"] += report.questions
-                total["unmatched"] += len(report.unmatched_labels)
+                        if dry_run:
+                            conn.rollback()
+                        else:
+                            conn.commit()
+                    break
+                except psycopg.OperationalError:
+                    if attempt == 3:
+                        raise
+            if not dry_run:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    results = list(
+                        pool.map(lambda kf: _upload_one(storage, *kf), report.files)
+                    )
+                failed_uploads += [key for key, ok in results if not ok]
+            total["papers"] += 1
+            total["crops"] += report.attached
+            total["questions"] += report.questions
+            total["unmatched"] += len(report.unmatched_labels)
 
     title = f"Mark-scheme row images: {subject}" + (" (dry run)" if dry_run else "")
     table = Table("", "", title=title)

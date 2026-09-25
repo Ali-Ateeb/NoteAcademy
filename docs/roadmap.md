@@ -22,7 +22,7 @@ work lands without a matching edit here, same as last time.
 | Physics 5054 | yes | 1,802 | 669 | 121 |
 | Chemistry 5070 | yes | 1,474 | 583 | 108 |
 | Biology 5090 | yes | 265 | 534 | 74 |
-| Mathematics 4024 | no | 0 | 0 | 0 |
+| Mathematics 4024 | no (held) | 0 | 1,436 | 82 loaded |
 
 Measured 2026-09-23, after the bulk-approve, dedupe re-run and review-queue
 pass below. **MCQs are counted deduplicated** (`canonical_question_id is
@@ -1523,7 +1523,7 @@ approved ones. **16 retagged, 90 kept.** The syllabus decides where it can:
   preservative, battery acid) sit under the nearest topic (6.3, 7.1, 10.3)
   and no re-tag would be better.
 
-### Mathematics 4024: papers and syllabus in, tagging blocked (2026-09-25)
+### Mathematics 4024: ingested, tagged, approved, images synced; unpublished (2026-09-25)
 
 The fourth subject. **Loaded, unapproved, unpublished; nothing student-visible.**
 - **Papers:** 168 files (question papers and mark schemes, 2016-2026) fetched from
@@ -1548,15 +1548,22 @@ The fourth subject. **Loaded, unapproved, unpublished; nothing student-visible.*
   3,238 agree with the paper's printed marks, 257 disagree, 87 have no entry.
   The paper's own brackets win where present. **The maths in the answer column
   extracts as scattered fragments ("??" for symbols), so `mark_scheme_text` for
-  this subject is only partly readable**; a rendered image of the mark-scheme row
-  would serve students better and is not built.
-- **Blocked: first-pass tagging.** `noteacademy tag-auto --subject mathematics-4024
-  --structured` (new; a text read per top-level question, same closed topic list)
-  ran a 12-question dry run cleanly, then the full run stopped with **DeepSeek 402,
-  out of balance**, before writing anything. Top up the DeepSeek account and re-run
-  it, then `tag-verify-structured` (independent vision read), review the flagged
-  questions, `bulk-approve-structured`, `sync-public-crops`, and only then set the
-  subject's `is_published`.
+  this subject is only partly readable**, so students see the row picture instead.
+- **Mark-scheme row images** (`mark-scheme-crops`, migration `0042`): each row of the
+  mark scheme is rendered to a PNG (`{prefix}/crops/ms-{label}.png`), attached to its
+  part as `markSchemeCrops`, and shown by `StructuredArena` in place of the text.
+  82 of 82 papers, 3,909 images. Idempotent; skips finished papers; `--redo` forces.
+- **Tagging:** `tag-auto --structured` then an independent vision read
+  (`tag-verify-structured`); 27 disagreements adopted, 42 matrix questions flagged
+  (matrices are off the current syllabus). **1,436 top-level questions approved**
+  (5,047 rows including parts).
+- **Public bucket:** `sync-public-crops` copied 5,379 images (approved question crops
+  plus mark-scheme row images); a re-run finds 12,492 current and nothing to copy.
+- **Left for a person (102 top-level questions not approved):** 57 in review (the 42
+  matrix questions, 22 ambiguous disagreements, 2 untagged; the counts overlap); 45
+  held because a part has no matching mark-scheme row (81 flagged parts); the two
+  papers that would not segment.
+- **`is_published` is still false.** Flip it only on the user's go-ahead.
 
 ---
 
