@@ -432,22 +432,26 @@ export const structuredQuestions: StructuredQuestion[] = [
     markScheme: null,
     maxMarks: null,
     crops: [{ pageNumber: 2, cropUrl: null, aspectRatio: null }],
+    markSchemeCrops: [],
     parts: [
       {
         displayLabel: "1(a)(i)",
         maxMarks: 1,
         markSchemeText: "weight / gravity acting downwards on the trolley",
+        markSchemeCrops: [],
       },
       {
         displayLabel: "1(a)(ii)",
         maxMarks: 2,
         markSchemeText: "a = F / m or 4.0 / 2.0 2.0 m / s2",
+        markSchemeCrops: [],
       },
       {
         displayLabel: "1(b)",
         maxMarks: 2,
         markSchemeText:
           "straight line from origin with positive gradient any correct reading used to find a consistent gradient",
+        markSchemeCrops: [],
       },
     ],
   },
@@ -460,22 +464,26 @@ export const structuredQuestions: StructuredQuestion[] = [
     markScheme: null,
     maxMarks: null,
     crops: [{ pageNumber: 4, cropUrl: null, aspectRatio: null }],
+    markSchemeCrops: [],
     parts: [
       {
         displayLabel: "2(a)",
         maxMarks: 1,
         markSchemeText: "molecules moving randomly / in all directions colliding with the walls",
+        markSchemeCrops: [],
       },
       {
         displayLabel: "2(b)(i)",
         maxMarks: 1,
         markSchemeText: "pressure increases",
+        markSchemeCrops: [],
       },
       {
         displayLabel: "2(b)(ii)",
         maxMarks: 2,
         markSchemeText:
           "molecules closer together / same number in a smaller volume more frequent collisions with the walls",
+        markSchemeCrops: [],
       },
     ],
   },

@@ -76,7 +76,9 @@ def plan_sync(
 
 
 def approved_crop_keys(conn: psycopg.Connection) -> set[str]:
-    """Every crop key attached to an approved question."""
+    """Every crop key attached to an approved question: its own crops, and for
+    mathematics the pictures of its mark-scheme rows, which are read from the
+    same public bucket."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -84,7 +86,7 @@ def approved_crop_keys(conn: psycopg.Connection) -> set[str]:
               from question_assets qa
               join questions q on q.id = qa.question_id
              where q.extraction_status = 'approved'
-               and qa.kind = 'question_crop'
+               and qa.kind in ('question_crop', 'mark_scheme_crop')
             """
         )
         return {row["storage_key"] for row in cur.fetchall()}

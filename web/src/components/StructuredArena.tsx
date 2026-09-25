@@ -34,8 +34,34 @@ function effectiveParts(question: StructuredQuestion): StructuredPart[] {
       displayLabel: question.displayLabel,
       maxMarks: question.maxMarks,
       markSchemeText: question.markScheme,
+      markSchemeCrops: question.markSchemeCrops,
     },
   ];
+}
+
+/** A mark-scheme row as printed. Used where the scheme is typeset maths whose
+ *  text layer is only a search index; white like every crop, since it is a page
+ *  and not part of the interface. */
+function MarkSchemeImages({ crops, label }: { crops: StructuredPart["markSchemeCrops"]; label: string }) {
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      {crops.map((crop, index) =>
+        crop.cropUrl ? (
+          <div
+            key={crop.cropUrl}
+            className="overflow-hidden rounded-lg border border-line bg-white"
+            style={crop.aspectRatio ? { aspectRatio: crop.aspectRatio } : undefined}
+          >
+            <CropImage
+              src={crop.cropUrl}
+              alt={`Mark scheme for ${label}${crops.length > 1 ? `, part ${index + 1}` : ""}`}
+              className="w-full"
+            />
+          </div>
+        ) : null,
+      )}
+    </div>
+  );
 }
 
 interface Props {
@@ -415,7 +441,9 @@ function PartMarker({
           <span className="font-mono text-xs text-ink-3">[{part.maxMarks}]</span>
         )}
       </div>
-      {part.markSchemeText ? (
+      {part.markSchemeCrops.length > 0 ? (
+        <MarkSchemeImages crops={part.markSchemeCrops} label={part.displayLabel} />
+      ) : part.markSchemeText ? (
         <p className="mt-1 text-sm leading-relaxed text-ink-2">{part.markSchemeText}</p>
       ) : (
         <p className="mt-1 text-sm italic text-ink-3">
@@ -591,11 +619,16 @@ function StructuredResults({
                                 <span className="font-mono text-ink">
                                   {given[part.displayLabel]}/{part.maxMarks}
                                 </span>
-                                {part.markSchemeText ? ` — ${part.markSchemeText}` : null}
+                                {part.markSchemeText && part.markSchemeCrops.length === 0
+                                  ? ` — ${part.markSchemeText}`
+                                  : null}
                               </>
                             ) : (
                               <span className="italic text-ink-3">
-                                Not self-marked{part.markSchemeText ? ` — ${part.markSchemeText}` : ""}
+                                Not self-marked
+                                {part.markSchemeText && part.markSchemeCrops.length === 0
+                                  ? ` — ${part.markSchemeText}`
+                                  : ""}
                               </span>
                             )}
                           </p>

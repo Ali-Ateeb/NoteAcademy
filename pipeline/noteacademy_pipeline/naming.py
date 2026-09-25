@@ -147,3 +147,13 @@ def structured_crop_key(prefix: str, label: str, sort_order: int = 0) -> str:
     """
     suffix = "" if sort_order == 0 else f".{sort_order}"
     return f"{prefix}/crops/{label}{suffix}.png"
+
+
+def mark_scheme_crop_key(prefix: str, label: str, sort_order: int = 0) -> str:
+    """Where a mark-scheme row's picture lives: beside the question crops, under
+    the same `/crops/` folder (so the public-bucket sync and the asset gate treat
+    it exactly like one), with an `ms-` prefix so it cannot collide with a
+    question's own crop. "8(a)(iii)" -> "ms-8-a-iii"."""
+    safe = "-".join(part for part in re.split(r"[()]+", label) if part)
+    suffix = "" if sort_order == 0 else f".{sort_order}"
+    return f"{prefix}/crops/ms-{safe}{suffix}.png"

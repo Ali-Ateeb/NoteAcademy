@@ -12,6 +12,7 @@ import pytest
 
 from noteacademy_pipeline.markscheme_maths import (
     is_mathematics_mark_scheme,
+    mark_scheme_regions,
     parse_mathematics_mark_scheme,
 )
 
@@ -144,3 +145,70 @@ def test_starred_and_follow_through_marks_are_numbers(legacy):
     assert entries["10(b)"].marks == 2           # "2*"
     assert entries["11(c)(i)"].marks == 2        # "2ft"
     assert "M1 for 5 = 4 + 3x" in entries["10(b)"].content
+
+
+# ---------------------------------------------------------------------------
+# Row pictures: where each answer sits on the page.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def paged(tmp_path):
+    """Three rows on page 1 (the last runs on to page 2), and a fourth on page 2."""
+    doc = pymupdf.open()
+    for page_number in (1, 2):
+        page = doc.new_page()
+        write(page, 60, 70, "Question", bold=True)
+        write(page, 176, 70, "Answer", bold=True)
+        write(page, 287, 70, "Marks", bold=True)
+        write(page, 402, 70, "Partial Marks", bold=True)
+        if page_number == 1:
+            write(page, 70, 100, "1(a)")
+            write(page, 150, 100, "25")
+            write(page, 314, 100, "1")
+            write(page, 70, 200, "1(b)")
+            write(page, 150, 200, "first line of a long answer")
+            write(page, 314, 200, "3")
+            write(page, 150, 760, "the answer carries on below the fold")
+        else:
+            write(page, 150, 100, "and finishes at the top of page two")
+            write(page, 70, 300, "2(a)(i)(a)")
+            write(page, 150, 300, "x = 4")
+            write(page, 306, 300, "M1")
+            write(page, 70, 340, "2(a)(i)(b)")
+            write(page, 150, 340, "y = 5")
+            write(page, 306, 340, "A1")
+    path = tmp_path / "4024_paged_ms.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_each_row_gets_its_own_box_in_reading_order(paged):
+    regions = mark_scheme_regions(paged)
+    (page_a, box_a), = regions["1(a)"]
+    page_b, first_b = regions["1(b)"][0]
+    assert page_a == 1 and page_b == 1
+    assert box_a[3] <= first_b[1]                    # 1(a) ends before 1(b) starts
+    assert box_a[1] < box_a[3] and first_b[1] < first_b[3]
+
+
+def test_a_row_that_runs_onto_the_next_page_gets_a_second_box_there(paged):
+    regions = mark_scheme_regions(paged)["1(b)"]
+    assert [page for page, _ in regions] == [1, 2]
+    top_of_second = regions[1][1]
+    # From the top of that page's table down to the row that starts there.
+    assert top_of_second[1] < 100 < top_of_second[3] < 300
+
+
+def test_folded_rows_become_one_region_not_two(paged):
+    regions = mark_scheme_regions(paged)
+    assert "2(a)(i)(a)" not in regions
+    (page, box), = regions["2(a)(i)"]
+    assert page == 2
+    assert box[1] < 300 and box[3] > 340             # spans both folded rows
+
+
+def test_boxes_leave_the_tables_margins_out(paged):
+    for boxes in mark_scheme_regions(paged).values():
+        for _, (left, _top, right, _bottom) in boxes:
+            assert left >= 30 and right <= 595.3 - 30 + 0.5

@@ -1909,6 +1909,113 @@ def sync_public_crops_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command(name="mark-scheme-crops")
+def mark_scheme_crops_cmd(
+    subject: str = typer.Option("mathematics-4024", help="Subject slug."),
+    papers: Path = typer.Option(Path("../papers"), help="Where the source PDFs live."),
+    paper: str = typer.Option(None, help="Only this paper slug."),
+    dpi: int = typer.Option(130, help="Render resolution."),
+    workers: int = typer.Option(8, help="Parallel uploads."),
+    dry_run: bool = typer.Option(False, help="Render and count, but write and upload nothing."),
+) -> None:
+    """Attach a picture of each mark-scheme row to the question it marks.
+
+    Mathematics mark schemes are typeset maths in a table; their extracted text
+    scatters fractions and drops symbols, so the row itself is the answer a
+    student can read. Reads each paper's mark scheme PDF from `--papers`,
+    stores one `mark_scheme_crop` asset per row on the matching question, and
+    uploads the images. Idempotent: a re-run replaces a question's row images.
+    Run `sync-public-crops` afterwards for the approved ones.
+    """
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .load import connect
+    from .mark_scheme_crops import attach_mark_scheme_crops
+    from .naming import caie_filename, storage_prefix
+    from .storage import SupabaseStorage
+
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL is not set.[/red]")
+        raise typer.Exit(code=2)
+    storage = None if dry_run else SupabaseStorage.from_settings(settings)
+    if not dry_run and storage is None:
+        console.print("[red]Supabase Storage is not configured.[/red]")
+        raise typer.Exit(code=2)
+
+    with connect(settings.database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select p.id, p.slug, p.component, p.variant, e.year, e.season, s.syllabus_code
+                  from papers p
+                  join exam_sessions e on e.id = p.exam_session_id
+                  join subjects s on s.id = p.subject_id
+                 where s.slug = %s and (%s::text is null or p.slug = %s)
+                 order by p.slug
+                """,
+                (subject, paper, paper),
+            )
+            papers_rows = cur.fetchall()
+
+        total = {"papers": 0, "crops": 0, "questions": 0, "unmatched": 0, "no_pdf": 0}
+        failed_uploads: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp, console.status("rendering...") as status:
+            for index, row in enumerate(papers_rows, start=1):
+                status.update(f"rendering {row['slug']} ({index}/{len(papers_rows)})")
+                pdf = papers / row["syllabus_code"] / caie_filename(
+                    row["syllabus_code"], row["year"], row["season"], "ms",
+                    row["component"], row["variant"],
+                )
+                if not pdf.is_file():
+                    total["no_pdf"] += 1
+                    continue
+                prefix = storage_prefix(
+                    row["syllabus_code"], row["year"], row["season"],
+                    row["component"], row["variant"],
+                )
+                report = attach_mark_scheme_crops(
+                    conn, str(row["id"]), pdf, prefix, Path(tmp), dpi=dpi
+                )
+                if dry_run:
+                    conn.rollback()
+                else:
+                    conn.commit()
+                    with ThreadPoolExecutor(max_workers=workers) as pool:
+                        results = list(
+                            pool.map(lambda kf: _upload_one(storage, *kf), report.files)
+                        )
+                    failed_uploads += [key for key, ok in results if not ok]
+                total["papers"] += 1
+                total["crops"] += report.attached
+                total["questions"] += report.questions
+                total["unmatched"] += len(report.unmatched_labels)
+
+    title = f"Mark-scheme row images: {subject}" + (" (dry run)" if dry_run else "")
+    table = Table("", "", title=title)
+    table.add_row("papers", str(total["papers"]))
+    table.add_row("questions with a row image", str(total["questions"]))
+    table.add_row("images", str(total["crops"]))
+    table.add_row("rows with no matching question", str(total["unmatched"]))
+    table.add_row("papers with no mark scheme PDF", str(total["no_pdf"]))
+    console.print(table)
+    if failed_uploads:
+        console.print(f"[red]{len(failed_uploads)} upload(s) failed; re-run to retry.[/red]")
+        raise typer.Exit(code=1)
+
+
+def _upload_one(storage, key: str, path: Path) -> tuple[str, bool]:
+    from .storage import StorageError
+
+    for _ in range(3):
+        try:
+            storage.upload(key, path)
+            return key, True
+        except StorageError:
+            continue
+    return key, False
+
+
 @app.command(name="audit-mcq-crops")
 def audit_mcq_crops_cmd(
     papers: Path = typer.Option(Path("papers"), help="Where the source PDFs live."),

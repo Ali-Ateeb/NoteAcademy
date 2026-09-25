@@ -151,6 +151,7 @@ interface StructuredPartRow {
   displayLabel: string;
   maxMarks: number | null;
   markSchemeText: string | null;
+  markSchemeCrops?: StructuredCropRow[];
 }
 
 interface StructuredRow {
@@ -162,6 +163,7 @@ interface StructuredRow {
   max_marks: number | null;
   crops: StructuredCropRow[];
   parts: StructuredPartRow[];
+  mark_scheme_crops?: StructuredCropRow[];
 }
 
 interface McqRow {
@@ -229,10 +231,20 @@ const toMcq = (row: McqRow): McqQuestion => ({
   alsoIn: row.also_in ?? [],
 });
 
+// In the order the pipeline stored them (a row that runs over a page break is
+// two images, top one first), not sorted by page.
+const toSchemeCrops = (crops: StructuredCropRow[] | undefined) =>
+  (crops ?? []).map((crop) => ({
+    pageNumber: crop.pageNumber,
+    cropUrl: assetUrl(crop.storageKey),
+    aspectRatio: crop.aspectRatio,
+  }));
+
 const toStructuredPart = (part: StructuredPartRow): StructuredPart => ({
   displayLabel: part.displayLabel,
   maxMarks: part.maxMarks,
   markSchemeText: part.markSchemeText,
+  markSchemeCrops: toSchemeCrops(part.markSchemeCrops),
 });
 
 const toStructured = (row: StructuredRow): StructuredQuestion => ({
@@ -249,6 +261,7 @@ const toStructured = (row: StructuredRow): StructuredQuestion => ({
       aspectRatio: crop.aspectRatio,
     }))
     .sort((a, b) => a.pageNumber - b.pageNumber),
+  markSchemeCrops: toSchemeCrops(row.mark_scheme_crops),
   parts: row.parts.map(toStructuredPart),
 });
 
@@ -270,7 +283,7 @@ const PAPER_COLUMNS =
 const MCQ_COLUMNS =
   "id,paper_slug,display_label,question_text,options,correct_option,mark_scheme_text,examiner_comment,topic_codes,crop_storage_key,crop_aspect_ratio,also_in";
 const STRUCTURED_COLUMNS =
-  "id,paper_slug,display_label,question_text,mark_scheme,max_marks,crops,parts";
+  "id,paper_slug,display_label,question_text,mark_scheme,max_marks,crops,parts,mark_scheme_crops";
 
 /* ---------------------------------------------------------------------------
    Catalogue

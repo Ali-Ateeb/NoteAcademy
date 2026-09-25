@@ -150,8 +150,12 @@ def _row_marks(marks_lines: list[str]) -> int | None:
     return sum(int(digit) for digit in codes) if codes else None
 
 
-def parse_mathematics_mark_scheme(pdf_path: Path) -> list[MarkSchemeEntry]:
+def _scan(pdf_path: Path) -> tuple[list[dict], dict[int, dict]]:
+    """Every table row in the mark scheme, in order, and the geometry of each
+    page that held any: where its table starts, where its content ends, how
+    wide it is. Both the text and the row images are read from this."""
     rows: list[dict] = []
+    geometry: dict[int, dict] = {}
     path: list[str] = []
     boundary: float | None = None
 
@@ -168,7 +172,7 @@ def parse_mathematics_mark_scheme(pdf_path: Path) -> list[MarkSchemeEntry]:
                         box = box * page.rotation_matrix
                     x0, y0 = box.x0, box.y0
                     if text and HEADER_MAX_Y < y0 < FOOTER_MIN_Y:
-                        lines.append({"x": x0, "y": y0, "text": text})
+                        lines.append({"x": x0, "y": y0, "y1": box.y1, "text": text})
 
             # Where this page's Marks column starts. The general marking
             # principles before the table have no such title, and are a
@@ -179,6 +183,9 @@ def parse_mathematics_mark_scheme(pdf_path: Path) -> list[MarkSchemeEntry]:
                 boundary = found
             if boundary is None:
                 continue
+            header = next(
+                (ln for ln in lines if ln["text"] == "Question" and ln["x"] < LABEL_MAX_X), None
+            )
 
             lines = [
                 line
@@ -186,6 +193,14 @@ def parse_mathematics_mark_scheme(pdf_path: Path) -> list[MarkSchemeEntry]:
                 if line["text"] not in HEADER_WORDS and not PARTIAL_HEADER.search(line["text"])
             ]
             lines.sort(key=lambda line: (round(line["y"] / ROW_TOLERANCE), line["x"]))
+            geometry[page.number + 1] = {
+                # Below the column titles when the page has them, else below the
+                # running header.
+                "top": header["y1"] + 3.0 if header else HEADER_MAX_Y + 4.0,
+                "bottom": min((max(ln["y1"] for ln in lines) if lines else 0) + 4.0,
+                              FOOTER_MIN_Y - 2.0),
+                "width": page.rect.width,
+            }
 
             for line in lines:
                 if line["x"] < LABEL_MAX_X:
@@ -197,12 +212,20 @@ def parse_mathematics_mark_scheme(pdf_path: Path) -> list[MarkSchemeEntry]:
                                 "label": path[0] + "".join(f"({p})" for p in path[1:]),
                                 "answer": [],
                                 "marks": [],
+                                "page": page.number + 1,
+                                "y": line["y"],
                             }
                         )
                         continue
                 if rows:
                     column = "answer" if line["x"] < boundary else "marks"
                     rows[-1][column].append(line["text"])
+
+    return rows, geometry
+
+
+def parse_mathematics_mark_scheme(pdf_path: Path) -> list[MarkSchemeEntry]:
+    rows, _ = _scan(pdf_path)
 
     merged: dict[str, dict] = {}
     order: list[str] = []
@@ -241,3 +264,63 @@ def parse_mathematics_mark_scheme(pdf_path: Path) -> list[MarkSchemeEntry]:
         for label in order
         if merged[label]["content"]
     ]
+
+
+Region = tuple[int, tuple[float, float, float, float]]
+
+CROP_MARGIN_X = 30.0     # keep the table's own left and right edges out of the picture
+ROW_TOP_PAD = 5.0
+ROW_GAP = 6.0
+MIN_ROW_HEIGHT = 8.0
+MERGE_GAP = 3.0
+
+
+def mark_scheme_regions(pdf_path: Path) -> dict[str, list[Region]]:
+    """Where each answer sits on the page, as a picture to show a student.
+
+    The Answer column is typeset maths, and it extracts as scattered fragments
+    ("??" for the symbols), so the text `parse_mathematics_mark_scheme` returns
+    is a search index, not something to read. The row itself, rendered, is the
+    answer.
+
+    Keyed by the same label as the text entries: rows folded into a sub-part
+    (8(a)(iii)(a), 8(a)(iii)(b)) become one entry, and rows that are touching
+    become one region. A row that carries on to the next page gets a second
+    region there, from the top of that page's table to the first row of its own.
+    Boxes are in the page as displayed, which is what a render's `clip` takes.
+    """
+    rows, geometry = _scan(pdf_path)
+
+    by_page: dict[int, list[int]] = {}
+    for index, row in enumerate(rows):
+        by_page.setdefault(row["page"], []).append(index)
+
+    raw: dict[int, list[Region]] = {index: [] for index in range(len(rows))}
+    previous_row: int | None = None
+    for page_number in sorted(by_page):
+        page = geometry[page_number]
+        starts = sorted(by_page[page_number], key=lambda i: rows[i]["y"])
+        left, right = CROP_MARGIN_X, page["width"] - CROP_MARGIN_X
+
+        first_y = rows[starts[0]]["y"]
+        if previous_row is not None and first_y - ROW_GAP - page["top"] >= MIN_ROW_HEIGHT:
+            raw[previous_row].append((page_number, (left, page["top"], right, first_y - ROW_GAP)))
+
+        for position, index in enumerate(starts):
+            top = rows[index]["y"] - ROW_TOP_PAD
+            following = starts[position + 1] if position + 1 < len(starts) else None
+            bottom = rows[following]["y"] - ROW_GAP if following is not None else page["bottom"]
+            if bottom - top >= MIN_ROW_HEIGHT:
+                raw[index].append((page_number, (left, top, right, bottom)))
+        previous_row = starts[-1]
+
+    regions: dict[str, list[Region]] = {}
+    for index, row in enumerate(rows):
+        for page_number, box in raw[index]:
+            merged = regions.setdefault(_fold_label(row["label"]), [])
+            if merged and merged[-1][0] == page_number and box[1] - merged[-1][1][3] <= MERGE_GAP:
+                last = merged[-1][1]
+                merged[-1] = (page_number, (last[0], last[1], last[2], max(last[3], box[3])))
+            else:
+                merged.append((page_number, box))
+    return regions

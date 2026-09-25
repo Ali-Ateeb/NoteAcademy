@@ -121,6 +121,11 @@ export interface StructuredPart {
   displayLabel: string;
   maxMarks: number | null;
   markSchemeText: string | null;
+  /** The mark-scheme row as printed, for subjects whose scheme is typeset maths
+   *  that the text layer cannot carry (mathematics). Empty when there is none,
+   *  in which case `markSchemeText` is what is shown. Shape shared with the
+   *  question's own crops. */
+  markSchemeCrops: StructuredQuestionCrop[];
 }
 
 /** One page of a structured question's crop, in reading order. Always more
@@ -154,6 +159,9 @@ export interface StructuredQuestion {
   markScheme: string | null;
   maxMarks: number | null;
   crops: StructuredQuestionCrop[];
+  /** This question's own mark-scheme row images, for a question with no parts
+   *  (see `markScheme`). Empty otherwise. */
+  markSchemeCrops: StructuredQuestionCrop[];
   parts: StructuredPart[];
 }
 
