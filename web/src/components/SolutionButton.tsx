@@ -1,9 +1,16 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
-import { MathMarkdown } from "@/components/MathMarkdown";
+
+// Markdown + KaTeX is ~160 KB and only needed once a solution exists, so it is
+// not part of the arena's initial download.
+const MathMarkdown = dynamic(() => import("@/components/MathMarkdown").then((m) => m.MathMarkdown), {
+  ssr: false,
+  loading: () => <p className="text-sm text-ink-3">Formatting…</p>,
+});
 
 /**
  * Reveals a full worked solution for one question, fetched from /api/solve on

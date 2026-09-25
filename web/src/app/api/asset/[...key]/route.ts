@@ -41,7 +41,12 @@ import { downloadAsset, SIGNED_URL_TTL_SECONDS } from "@/lib/storage";
  *  popular crop is fetched once per cache rather than once per view, short
  *  enough that re-uploading a corrected crop (a wrong bbox, a bad render)
  *  reaches every viewer within the hour instead of sitting cached forever. */
-const CACHE_CONTROL = `public, max-age=${SIGNED_URL_TTL_SECONDS}`;
+// s-maxage is the shared-cache (CDN) counterpart of max-age: without it a CDN in
+// front of this route is free to ignore the response and call the function for
+// every view. stale-while-revalidate lets it keep serving a crop while it
+// refetches one that has just expired, so no viewer waits on the storage read.
+const CACHE_CONTROL =
+  `public, max-age=${SIGNED_URL_TTL_SECONDS}, s-maxage=${SIGNED_URL_TTL_SECONDS}, stale-while-revalidate=86400`;
 
 export async function GET(
   _request: Request,
