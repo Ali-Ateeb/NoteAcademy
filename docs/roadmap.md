@@ -1565,6 +1565,42 @@ The fourth subject. **Loaded, unapproved, unpublished; nothing student-visible.*
   papers that would not segment.
 - **`is_published` is still false.** Flip it only on the user's go-ahead.
 
+### Mathematics 4024: review queue adjudicated and subject published (2026-09-26)
+
+The user gave the go-ahead to review the outstanding Mathematics queue and
+publish the subject. Every one of the 102 pending top-level questions was read
+against its complete subtree, the 2025-2027 syllabus, the independent vision
+verifier's result, and the presence of a mark-scheme image on every terminal
+part.
+
+- **6 approved** after manual topic adjudication; all 27 rows in their six
+  question trees have complete question and mark-scheme crops:
+  - 2016 O/N P12 Q4 -> 1.5 Ordering (secondary 1.16 Money).
+  - 2017 O/N P22 Q9 -> 5.3 Circles, arcs and sectors (secondaries 5.4
+    Surface area and volume, 6.3 Non-right-angled triangles).
+  - 2019 M/J P11 Q7 -> 1.1 Types of number (secondary 1.16 Money).
+  - 2021 M/J P11 Q15 -> 1.12 Rates (secondaries 1.10 Time, 4.3 Bearings).
+  - 2021 O/N P21 Q4 -> 6.3 Non-right-angled triangles (secondaries 4.3
+    Bearings, 1.12 Rates).
+  - 2023 M/J P22 Q8 -> 5.3 Circles, arcs and sectors (secondaries 5.4
+    Surface area and volume, 1.11 Ratio and proportion).
+- **96 rejected, not relabelled to a merely nearby topic.** The two reasons
+  overlap on one question: 48 of the low-tag set contain matrices, stretches,
+  shears or transformation matrices, none of which is a learning objective in
+  the current syllabus; 49 question trees have at least one terminal part with
+  no matched mark-scheme row. Publishing either group would break the site's
+  promise that topical practice is current and comes with the real scheme.
+- Final database state: **1,442 approved and 96 rejected top-level Mathematics
+  questions; zero `extracted` or `needs_review` Mathematics rows.** The two
+  source papers that could not be segmented (`4024_s26_qp_12` and
+  `4024_w24_qp_21`) remain absent rather than being guessed into the bank.
+- `subjects.is_published` is now **true** for `mathematics-4024`.
+  `sync-public-crops --no-dry-run` copied the 27 newly public question and
+  mark-scheme crops; the verification run reports **12,519 current, 0 to copy,
+  0 to remove**.
+- The seven pre-existing local commits through `15fbd3e` were pushed before
+  this review, as requested.
+
 ---
 
 ## Next steps, in priority order
